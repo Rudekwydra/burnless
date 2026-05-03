@@ -133,6 +133,27 @@ Each layer is independent and additive:
 
 The 88% cost reduction in the benchmark comes primarily from Layer 3 of the *architecture* — shared prefix cache + linear capsule history. Layers 1 and 2 compound on top of that.
 
+## Compression modes
+
+Three modes control the **cost × epistemic fidelity** trade-off — how much of the argumentative trajectory a session preserves:
+
+| Mode | Layers active | Anchor preserved | Friendly output | Savings | Use when |
+|---|---|---|---|---|---|
+| `light` | Minifier only (L1) | **Yes** | On | ~40% | Architecture debates, decisions that may need revisiting |
+| `balanced` *(default)* | Minifier + encoder (L1+L2) | No | On | ~88% | Project execution, multi-step implementation |
+| `extreme` | All layers (L1+L2+L3) | No | **Off** | ~93%+ | CI/CD pipelines, batch automation, no human in the loop |
+
+**Anchor preserved** means the Brain's capsules retain enough argumentative structure that prior decisions remain revisable — you can genuinely reconsider, not just append. `balanced` discards the trajectory and keeps only the semantic result: the Brain knows *what* was decided, not *why*. Workers are always epistemically pure regardless of mode — they receive a clean task without the Brain's debate history.
+
+```yaml
+compression:
+  mode: light   # light | balanced | extreme
+```
+
+Or per-invocation: `burnless --mode light "review this architecture decision"`.
+
+The formal derivation of why capsule compression reduces both cost *and* anchoring bias is in [`MATH.md §10`](MATH.md#10-epistemic-fidelity--a-third-axis).
+
 ## How it works
 
 **Brain.** A thin orchestrator — any model you configure — that holds the plan, decides what to delegate, and reasons over results. Its conversation history contains only capsules — single-line summaries of past turns, ~80 characters each.
@@ -179,6 +200,23 @@ burnless metrics             # token counter + audit ledger
 ```
 
 State lives entirely under `.burnless/` in your project. No hosted backend.
+
+## vs. LangChain / CrewAI / AutoGen
+
+Burnless is not a competing orchestration framework — it is an optimization layer that sits *under* your existing agent logic. The distinction matters:
+
+| | LangChain / CrewAI / AutoGen | Burnless |
+|---|---|---|
+| **Primary focus** | Agent connectivity and orchestration | Cost reduction and cache efficiency |
+| **Memory model** | Sliding window or RAG | Compact capsules, Brain-led |
+| **Cost shape** | `Θ(N²)` — grows quadratically | `Θ(N)` — grows linearly |
+| **Dependencies** | Heavy libraries, many abstractions | Lightweight CLI (`pip install burnless`) |
+| **Hosting** | Local or cloud | 100% self-hosted — zero data retention |
+| **Provider lock-in** | Varies | None — any CLI, any provider, any model |
+
+You can wrap a LangChain agent as a Worker. The Brain→Worker pattern is compatible with any existing agent framework — Burnless manages the context budget and cache strategy; your agent handles the task logic.
+
+**When Burnless is not the right tool:** single-turn queries (`N = 1`), one-off scripts with no repeated context, or workflows where a managed cloud platform is the explicit requirement (in that case: waitlist for Burnless Cloud at [burnless.pro](https://burnless.pro)).
 
 ## Contributing
 
