@@ -73,6 +73,7 @@ DEFAULT_CONFIG: dict = {
     "compression": {
         "mode": "balanced",   # canonical: light | balanced | extreme (aliases: safe→light, aggressive→extreme)
         "friendly": True,      # True = Haiku expands capsule into prose; False = print raw capsule (default for extreme)
+        "voice_match": True,   # True (default) = decoder mirrors user's tone/slang/warmth in response. ~5% extra input tokens. False = robotic prose.
     },
 }
 

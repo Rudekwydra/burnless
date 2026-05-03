@@ -70,6 +70,10 @@ def parse(text: str) -> Intent:
     m = re.fullmatch(r"compression\s+(safe|balanced|aggressive)", lowered)
     if m:
         return Intent("compression", (m.group(1),), raw)
+    m = re.fullmatch(r"voice\s+(on|off|true|false|1|0)", lowered)
+    if m:
+        val = m.group(1) in {"on", "true", "1"}
+        return Intent("voice", (val,), raw)
 
     if lowered.startswith("run "):
         return Intent("run_last", raw=raw)
