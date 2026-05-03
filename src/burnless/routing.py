@@ -40,20 +40,22 @@ _PROMOTE_ONE = {"bronze": "silver", "silver": "silver", "gold": "gold", "diamond
 def modulate_by_compression(tier: str, matched_kw: str, compression_mode: str) -> tuple[str, str]:
     """Adjust tier by compression dial. Returns (final_tier, reason).
 
-    `aggressive` → demote one step (skipping diamond).
-    `safe`       → promote bronze→silver only when no explicit keyword matched.
-    `balanced`   → unchanged.
+    `extreme`  → demote one step (skipping diamond).
+    `light`    → promote bronze→silver only when no explicit keyword matched.
+    `balanced` → unchanged.
     """
+    from . import compression as _comp
+    compression_mode = _comp.normalize_mode(compression_mode)
     if tier == "diamond":
         return tier, ""
     mode = (compression_mode or "balanced").lower()
-    if mode == "aggressive":
+    if mode == "extreme":
         new_tier = _DEMOTE_ONE.get(tier, tier)
         if new_tier != tier:
-            return new_tier, f"compression=aggressive demoted {tier}→{new_tier}"
-    elif mode == "safe":
+            return new_tier, f"compression=extreme demoted {tier}→{new_tier}"
+    elif mode == "light":
         # Only promote when match was a default fallback (no keyword hit).
         # Avoids inflating cost when the user clearly wrote a bronze task.
         if not matched_kw and tier == "bronze":
-            return "silver", "compression=safe promoted bronze→silver (default match)"
+            return "silver", "compression=light promoted bronze→silver (default match)"
     return tier, ""

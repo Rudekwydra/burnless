@@ -406,10 +406,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     deleg_mod.write_summary(p["temp"] / f"{did}.json", summary)
 
     # Automatic Session Compression — generate capsule (operational memory for AI)
-    mode = cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
+    raw_mode = cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
+    mode = compression_mod.normalize_mode(raw_mode)
     if mode not in compression_mod.MODES:
         print(
-            f"burnless: invalid compression.mode={mode!r}; falling back to {compression_mod.DEFAULT_MODE}",
+            f"burnless: invalid compression.mode={raw_mode!r}; falling back to {compression_mod.DEFAULT_MODE}",
             file=sys.stderr,
         )
         mode = compression_mod.DEFAULT_MODE
@@ -588,7 +589,11 @@ def cmd_brain(args: argparse.Namespace) -> int:
                 )
 
             capsule_text = result.get("capsule_text") or ""
-            decoded = decoder_mod.decode(capsule_text, project_root=root.parent)
+            friendly = cfg.get("compression", {}).get("friendly", True)
+            if friendly:
+                decoded = decoder_mod.decode(capsule_text, project_root=root.parent)
+            else:
+                decoded = capsule_text
             if decoded:
                 print(decoded)
 
@@ -760,6 +765,7 @@ def cmd_capsule(args: argparse.Namespace) -> int:
         print(capsule_path.read_text(encoding="utf-8"))
         return 0
 
+    args.mode = compression_mod.normalize_mode(args.mode)
     if args.mode not in compression_mod.MODES:
         print(
             f"burnless: invalid mode {args.mode!r}; pick one of {compression_mod.MODES}",
@@ -964,7 +970,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=list(compression_mod.MODES),
         default=None,
-        help="regenerate capsule under this mode (safe|balanced|aggressive)",
+        help="regenerate capsule under this mode (light|balanced|extreme)",
     )
     sp.set_defaults(func=cmd_capsule)
 
