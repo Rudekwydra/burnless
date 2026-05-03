@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Multi-agent loops cost O(N²). Burnless makes them O(N). 88% cheaper at turn 10. The transparent protocol layer between any user and any LLM. MIT, provider-agnostic.">
+<meta property="og:title" content="Burnless — O(N²) → O(N). 88% cheaper at turn 10.">
+<meta property="og:description" content="Multi-turn agent loops bill quadratic in tokens. Burnless makes them linear. Open source, MIT, any LLM.">
+<meta property="og:url" content="https://burnless.pro">
+<meta property="og:image" content="https://burnless.pro/cost_chart.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://burnless.pro/cost_chart.png">
+<title>Burnless — O(N²) → O(N). 88% cheaper at turn 10.</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --bg-alt: #141414;
+    --fg: #f5f5f5;
+    --muted: #888;
+    --accent: #ff6b35;
+    --accent-glow: rgba(255, 107, 53, 0.15);
+    --border: #222;
+    --mono: ui-monospace, SF Mono, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  .container { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+
+  header { padding: 32px 0; border-bottom: 1px solid var(--border); }
+  header .container { display: flex; justify-content: space-between; align-items: center; }
+  .logo { font-family: var(--mono); font-weight: 600; font-size: 18px; letter-spacing: -0.01em; }
+  .logo span { color: var(--accent); }
+  nav a { color: var(--muted); text-decoration: none; margin-left: 24px; font-size: 14px; }
+  nav a:hover { color: var(--fg); }
+
+  .hero { padding: 96px 0 64px; text-align: center; }
+  h1 {
+    font-size: clamp(40px, 6vw, 72px);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin-bottom: 24px;
+  }
+  h1 .burn { color: var(--accent); }
+  .sub {
+    font-size: clamp(16px, 2vw, 20px);
+    color: var(--muted);
+    max-width: 620px;
+    margin: 0 auto 48px;
+  }
+
+  .counter-card {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 48px 32px;
+    margin: 0 auto 48px;
+    max-width: 720px;
+    box-shadow: 0 0 80px var(--accent-glow);
+  }
+  .counter-label {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 16px;
+  }
+  .counter {
+    font-family: var(--mono);
+    font-size: clamp(36px, 7vw, 64px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .counter-unit {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--muted);
+    margin-top: 12px;
+  }
+
+  .cta-row {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+  }
+  .btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: transform 0.1s ease, opacity 0.2s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  .small { font-size: 13px; color: var(--muted); }
+
+  section { padding: 80px 0; border-top: 1px solid var(--border); }
+  h2 {
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 16px;
+  }
+  .lede { color: var(--muted); font-size: 17px; max-width: 620px; margin-bottom: 40px; }
+
+  .pain-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .pain {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .pain h3 { font-size: 17px; margin-bottom: 8px; }
+  .pain p { color: var(--muted); font-size: 14px; }
+
+  pre {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    font-family: var(--mono);
+    font-size: 14px;
+    overflow-x: auto;
+    line-height: 1.6;
+  }
+  pre .c { color: #6a737d; }
+  pre .ok { color: #50d66c; }
+  pre .a { color: var(--accent); }
+
+  footer {
+    padding: 48px 0;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  footer .footer-counter {
+    font-family: var(--mono);
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+
+  form.waitlist {
+    display: flex;
+    gap: 8px;
+    max-width: 480px;
+    margin: 0 auto;
+    flex-wrap: wrap;
+  }
+  form.waitlist input {
+    flex: 1;
+    min-width: 200px;
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    color: var(--fg);
+    font-size: 15px;
+    font-family: inherit;
+  }
+  form.waitlist input:focus { outline: none; border-color: var(--accent); }
+  form.waitlist .btn { padding: 14px 24px; }
+  .waitlist-msg { color: var(--muted); font-size: 13px; margin-top: 12px; min-height: 18px; }
+
+  .pricing { padding: 64px 0; }
+  .pricing .lede { font-size: 18px; opacity: 0.8; margin-bottom: 32px; }
+  .pricing .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pricing .card {
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .pricing .card.highlight { border-color: var(--burn, var(--accent)); }
+  .pricing .price { font-size: 32px; font-weight: 700; }
+  .pricing .price span { font-size: 14px; opacity: 0.7; }
+  .pricing ul { list-style: none; padding: 0; margin: 16px 0 0; }
+  .pricing ul li { padding: 4px 0; font-size: 14px; }
+  .pricing .btn { display: inline-block; margin-top: 20px; }
+
+  @media (max-width: 719px) {
+    .pricing .cards { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="container">
+    <div class="logo">burn<span>less</span></div>
+    <nav>
+      <a href="#how">How</a>
+      <a href="#pain">Why</a>
+      <a href="#pricing">Editions</a>
+      <a href="https://github.com/rudekwydra/burnless" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/rudekwydra/burnless/blob/main/VISION.md" target="_blank" rel="noopener">Vision</a>
+      <a href="#waitlist">Cloud waitlist</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="container">
+      <h1><span class="burn">Intent-compressed</span><br>intelligence orchestration.</h1>
+      <p class="sub" style="font-size:18px; color:var(--fg); font-weight:500;">A maestro for any LLM. O(N²) → O(N) by math.</p>
+      <p class="sub">Pick any model as the Maestro — Claude, GPT, Gemini, a local Ollama. It orchestrates Workers from any vendor and shares a cached system prompt. <strong style="color:var(--fg);">88% cheaper at turn 10</strong>, not by trick — by arithmetic on the published pricing pages.</p>
+
+      <p class="sub" style="font-style:italic; color:var(--fg);">We compress pages of conversation history into a single 80-character line. Your AI keeps the memory. You stop paying for the excess.</p>
+
+      <div style="margin:24px auto; text-align:center;">
+        <img src="cost_chart.png" alt="Standalone O(N²) vs Burnless O(N) cost curve" style="width:100%; max-width:720px; border-radius:12px;">
+        <p class="small" style="margin-top:8px; opacity:0.75;">Calibrated from real Anthropic API runs. Reproduce: <code>python bench/v2.py --simulate</code></p>
+      </div>
+
+      <div class="counter-card" style="text-align:left;">
+        <div class="counter-label" style="text-align:center;">Calibrated against claude-opus-4-7 — verifiable</div>
+        <pre style="margin:16px 0 0; background:transparent; border:none; padding:0; font-size:14px; color:var(--fg); text-align:left;"><span class="c"> Turns   Standalone   Burnless   Savings</span>
+   2        $0.80       $0.14    <span style="color:var(--accent);">82.7%</span>
+   5        $2.06       $0.29    <span style="color:var(--accent);">86.1%</span>
+  10        $4.34       $0.54    <span style="color:var(--accent);">87.6%</span>
+  20        $9.59       $1.07    <span style="color:var(--accent);">88.9%</span>
+  50       $30.72       $2.83    <span style="color:var(--accent);">90.8%</span></pre>
+        <div class="counter-unit" style="text-align:center;">A=O(N²) standalone. C=O(N) Burnless. Math, not heuristic.</div>
+      </div>
+
+      <div class="counter-card" style="text-align:left; margin-top:24px;">
+        <div class="counter-label" style="text-align:center;">Real case · Customer support agent · 50 messages exchanged</div>
+        <pre style="margin:16px 0 0; background:transparent; border:none; padding:0; font-size:14px; color:var(--fg); text-align:left;"><span class="c"> Without Burnless</span>   $2.45
+<span class="c"> With Burnless</span>      $0.28
+<span class="c"> Real saving</span>        <span style="color:var(--accent);">88%</span></pre>
+        <div class="counter-unit" style="text-align:center;">Same conversation. Same model. Different bill.</div>
+      </div>
+
+      <div class="cta-row">
+        <a href="https://github.com/rudekwydra/burnless" target="_blank" rel="noopener" class="btn">View on GitHub</a>
+        <a href="https://github.com/rudekwydra/burnless/blob/main/MATH.md" target="_blank" rel="noopener" class="btn btn-secondary">Read the math →</a>
+        <a href="#how" class="btn btn-secondary">See how it works</a>
+      </div>
+      <div class="small">MIT licensed · Self-hosted · No backend required · <code>pip install burnless</code></div>
+    </div>
+  </section>
+
+  <section id="protocol">
+    <div class="container">
+      <h2>Beyond cost. The protocol layer.</h2>
+      <p class="lede">A token is not an abstraction. It is compute. Compute is electricity. Electricity is water and infrastructure. O(N²) at the scale LLM inference is heading — 1–5% of global electricity within a decade — is not a pricing quirk. It is a trajectory.</p>
+      <p class="lede">Burnless is the transparent, provider-agnostic layer that sits between any user and any LLM, converting O(N²) context growth into O(N) by design. Not a feature. Not an SDK wrapper. A protocol — like TCP/IP was to packets. The model receives a capsule. The user sends a message. Neither knows the layer exists.</p>
+      <div class="pain-grid" style="margin-top:32px;">
+        <div class="pain">
+          <h3>60–90 TWh/year</h3>
+          <p>Estimated energy saved at 1% of global LLM inference. Denmark's entire electricity consumption is 35 TWh/year. This is not a rounding error.</p>
+        </div>
+        <div class="pain">
+          <h3>Structurally unblockable</h3>
+          <p>You cannot prohibit sending a summary of a conversation. That is indistinguishable from normal behavior. The protocol is invisible by design.</p>
+        </div>
+        <div class="pain">
+          <h3>Inevitable. Open.</h3>
+          <p>This layer will exist. The question is who defines it and in whose interest. Burnless answers: MIT, documented, first.</p>
+        </div>
+      </div>
+      <p style="margin-top:32px; text-align:center;">
+        <a href="https://github.com/rudekwydra/burnless/blob/main/VISION.md" target="_blank" rel="noopener" style="color:var(--accent); text-decoration:none; font-size:15px;">Read the founding vision →</a>
+      </p>
+    </div>
+  </section>
+
+  <section id="pain">
+    <div class="container">
+      <h2>Why the curve is quadratic.</h2>
+      <p class="lede">Every turn in a standalone agent loop replays the full conversation as input. Cost on turn N is proportional to N, so total cost across N turns is Θ(N²). That is arithmetic from the pricing page, not a property of any SDK.</p>
+      <div class="pain-grid">
+        <div class="pain"><h3>1. Capsules, not transcripts</h3><p>Brain history holds ~80-char summaries of each turn, not the raw exchange. Full output stays on disk, read on demand.</p></div>
+        <div class="pain"><h3>2. Shared prefix cache</h3><p>System prompt is byte-identical every turn with <code>cache_control</code>. Read price ($0.15/MTok) instead of write price ($15/MTok). 100× spread.</p></div>
+        <div class="pain"><h3>3. Tiers are roles, not models</h3><p>Any model as Brain. Any model as Worker. GPT-4o, Opus, Sonnet, Codex, Ollama — one-line config change.</p></div>
+        <div class="pain"><h3>4. Three compression layers</h3><p>Deterministic minifier (zero cost) → semantic encoder (Haiku, $0.001/turn) → optional LLMLingua-2 (CPU, no API).</p></div>
+        <div class="pain"><h3>5. Zero data retention</h3><p>State lives in <code>.burnless/</code> on your machine. No dashboard sees your prompts, your keys, or your conversations. Nothing leaves the box.</p></div>
+      </div>
+      <p class="small" style="margin-top:32px; text-align:center;">We don't ask you to trust the table. <strong style="color:var(--fg);">Reproduce it: <code>python bench/run.py --turns 8</code> with your own API key.</strong></p>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="container">
+      <h2>How it looks.</h2>
+      <p class="lede">A small CLI. A folder of compact state under <code>.burnless/</code>. No hosted backend.</p>
+<pre><span class="c"># in any project</span>
+$ pip install burnless
+$ burnless init
+$ burnless brain
+   <span class="c"># interactive Brain — Sonnet by default, escalate to Opus on hard tasks</span>
+
+$ burnless delegate <span class="a">"summarize the failing tests"</span>
+   <span class="ok">→ d001 routed to bronze/haiku  (matched: summarize)</span>
+$ burnless run d001
+   <span class="ok">OK:d001 — cache_read=23,000 tokens (warm)</span></pre>
+      <p class="small" style="margin-top:16px;">All state lives under <code>.burnless/</code>. Brain history, exec_log, capsules — local files you can grep.</p>
+    </div>
+  </section>
+
+  <section id="pricing" class="pricing">
+    <div class="container">
+      <h2>Editions.</h2>
+      <p class="lede">Run it locally for free. Or join the waitlist for hosted features that need a backend.</p>
+      <div class="cards">
+        <div class="card">
+          <h3>Burnless</h3>
+          <p class="price">Free<span> · MIT</span></p>
+          <ul>
+            <li>Full CLI, runs locally</li>
+            <li>Brain + Worker + capsule history</li>
+            <li>Shared prefix cache, all 3 compression layers</li>
+            <li>Provider-agnostic — any LLM as Brain or Worker</li>
+            <li>Reproducible benchmark</li>
+          </ul>
+          <a class="btn" href="https://github.com/rudekwydra/burnless" target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+        <div class="card highlight">
+          <h3>Burnless Cloud</h3>
+          <p class="price">Soon<span> · waitlist</span></p>
+          <ul>
+            <li>Shared cache across machines and teammates</li>
+            <li>Hosted dashboard for token telemetry</li>
+            <li>Centralized audit log of every delegation</li>
+            <li>SSO + team permissions</li>
+            <li>Priority support</li>
+          </ul>
+          <a class="btn" href="#waitlist">Join Cloud waitlist</a>
+        </div>
+      </div>
+      <p class="small" style="margin-top:24px;">Don't trust the table. <code>python bench/run.py --turns 8</code> with your own API key.</p>
+    </div>
+  </section>
+
+  <section id="waitlist">
+    <div class="container" style="text-align:center;">
+      <h2>Burnless Cloud — waitlist.</h2>
+      <p class="lede" style="margin-left:auto; margin-right:auto;">Hosted features for teams: shared cache, dashboards, audit logs, SSO. The CLI is free and open source — Cloud is for orgs that want a backend.</p>
+      <form class="waitlist" id="waitlistForm">
+        <input type="email" name="email" required placeholder="you@domain.com" autocomplete="email">
+        <button type="submit" class="btn" id="waitlistBtn">Join waitlist</button>
+      </form>
+      <p class="waitlist-msg" id="waitlistMsg"></p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="container">
+    <div><a href="https://github.com/rudekwydra/burnless" style="color:var(--accent);text-decoration:none;" target="_blank" rel="noopener">github.com/rudekwydra/burnless</a> · MIT licensed</div>
+    <div style="margin-top:6px;"><a href="https://github.com/rudekwydra/burnless/blob/main/VISION.md" style="color:var(--muted);text-decoration:none;" target="_blank" rel="noopener">Vision</a> · <a href="https://github.com/rudekwydra/burnless/blob/main/MATH.md" style="color:var(--muted);text-decoration:none;" target="_blank" rel="noopener">Math</a> · burnless.pro · 2026</div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  const SUPABASE_URL = 'https://jjgyuemiavydogtpatvj.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_47WJjDxeXcX_BzGrNokRrA_ykZf7HMA';
+
+  const form = document.getElementById('waitlistForm');
+  const btn = document.getElementById('waitlistBtn');
+  const msg = document.getElementById('waitlistMsg');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = form.email.value.trim();
+    if (!email) return;
+    btn.disabled = true;
+    msg.textContent = 'Sending…';
+    try {
+      const res = await fetch(SUPABASE_URL + '/rest/v1/waitlist', {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify({
+          email,
+          source: 'landing',
+          referrer: document.referrer || null,
+          user_agent: navigator.userAgent || null,
+        }),
+      });
+      if (res.ok) {
+        msg.textContent = "You're on the list. We'll be in touch.";
+        form.reset();
+      } else if (res.status === 409) {
+        msg.textContent = "You're already on the list.";
+      } else {
+        msg.textContent = 'Something went wrong. Try again in a moment.';
+      }
+    } catch (err) {
+      msg.textContent = 'Network error. Try again in a moment.';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

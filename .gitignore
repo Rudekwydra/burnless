@@ -21,9 +21,6 @@ exec_log/
 # Cloudflare
 .wrangler/
 
-# Site (landing page — separate deploy)
-site/
-
 # Internal / ops
 docs/ops/
 docs/design/paywall*.md
