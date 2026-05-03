@@ -804,6 +804,70 @@ def cmd_capsule(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_compress(args: argparse.Namespace) -> int:
+    if args.file:
+        text = Path(args.file).read_text(encoding="utf-8")
+    else:
+        text = sys.stdin.read()
+
+    _load_anthropic_key()
+    root = paths_mod.find_root() or paths_mod.root(Path.cwd())
+    cfg = config_mod.load(root / "config.yaml")
+    mode = args.level or cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
+    mode = compression_mod.normalize_mode(mode)
+    try:
+        capsule_text, stats = compression_mod.compress_transcript(
+            text,
+            mode=mode,
+            session_context=[],
+        )
+    except ValueError as e:
+        print(f"burnless: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        from .codec.cipher import unpack
+
+        session_id, key, _ciphertext = unpack(capsule_text)
+    except ValueError as e:
+        print(f"burnless: {e}", file=sys.stderr)
+        return 2
+
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        out_path = root / "sessions" / f"{session_id}.capsule"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(capsule_text, encoding="utf-8")
+    print(
+        f"capsule [{session_id}] — "
+        f"{stats['original_chars']}c → {stats['capsule_chars']}c "
+        f"({stats['ratio']}%) key:{key[:8]}... saved: {out_path}"
+    )
+    return 0
+
+
+def cmd_decode(args: argparse.Namespace) -> int:
+    if args.file:
+        capsule_text = Path(args.file).read_text(encoding="utf-8").strip()
+    elif args.capsule:
+        capsule_text = args.capsule.strip()
+    else:
+        print("burnless: provide a capsule string or --file path", file=sys.stderr)
+        return 2
+
+    try:
+        from .codec.cipher import decode as cipher_decode, unpack
+
+        _session_id, key, ciphertext = unpack(capsule_text)
+        print(cipher_decode(ciphertext, key))
+    except Exception as e:
+        print(f"burnless: decode failed: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     from . import setup_wizard
     return setup_wizard.run(
@@ -973,6 +1037,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="regenerate capsule under this mode (light|balanced|extreme)",
     )
     sp.set_defaults(func=cmd_capsule)
+
+    sp = sub.add_parser("compress", help="compress a transcript into a capsule")
+    sp.add_argument("--file", "-f", default=None)
+    sp.add_argument("--level", default=None, choices=["light", "balanced", "extreme"])
+    sp.add_argument("--out", "-o", default=None)
+    sp.set_defaults(func=cmd_compress)
+
+    sp = sub.add_parser("decode", help="decode a burnless capsule")
+    sp.add_argument("capsule", nargs="?", default=None)
+    sp.add_argument("--file", "-f", default=None)
+    sp.set_defaults(func=cmd_decode)
 
     sp = sub.add_parser("route", help="dry-run routing for a piece of text")
     sp.add_argument("text")

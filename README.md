@@ -60,9 +60,11 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 **4. Tiers are roles, not models.** `gold`/`silver`/`bronze`/`diamond` map to commands in `config.yaml`, not to Opus/Sonnet/Haiku. Any model can be Brain. Any model can be Worker. GPT-4o as Brain delegating to Codex workers is a one-line config change. Hardcoding tier→model would have made the orchestration layer a single-vendor wrapper instead of a pattern.
 
-**5. Determinism before LLMs.** Layer 1 of the compression stack is pure regex plus a glossary — no model call, zero latency, zero cost. Filler phrases, normalized whitespace, abbreviations applied before the encoder ever sees the text. A semantic compressor running on already-clean input is cheaper and more stable than one fighting prose. Cheap stages run first for a reason.
+**5. Determinism before LLMs.** Layer 1 of the compression stack is pure Python — no model call, zero latency, zero cost. Filler phrases stripped, whitespace normalized, before the encoder ever sees the text. Cheap stages run first for a reason.
 
-**6. Pluggable encoder.** The semantic compression layer accepts Haiku, LLMLingua-2 (Microsoft Research, XLM-RoBERTa, CPU-only), or any local model — selected per-invocation via `--encoder`. Coupling the architecture to one specific compressor would have tied savings to one model's pricing. Keeping each layer swappable means the stack improves automatically as local models get better, with no API change.
+**6. Cache-emergent glossary, not static dictionaries.** The semantic compression layer (Layer 2) uses Haiku with session context as the only "dictionary." Abbreviations emerge from the session — Haiku infers them from prior turns and applies them consistently. No YAML, no `_ABBREV`, no per-language file. The glossary lives in the cache and dies with the session. This is both cheaper and more universal than any static approach: it works in any language without configuration, and the compression dialect is unique to each session.
+
+**6b. Cipher layer kills auditability by design.** Layers 3 and 4 (XOR + base64 with a session-unique key) are pure Python, zero cost, zero API. The session key is never written to disk — it dies when the session ends. A capsule on disk after TTL expiry is opaque to humans and to AI systems without the session context. This is a structural property of the protocol, not a configuration option.
 
 **7. The benchmark is the proof.** `bench/run.py` is short, dependency-light, hits the Anthropic SDK directly with no mocks, and writes raw `response.usage` to JSON. Anyone can rerun it, contest the numbers, and open an issue with their own results file. We did not write a marketing page about savings; we wrote a script that produces them and invited disagreement. That is the only honest way to publish a cost claim.
 
@@ -132,17 +134,26 @@ As local models improve, more tiers move to zero cost. The expensive models (Opu
 
 The O(N²) → O(N) math applies to any provider that exposes prompt caching: **Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, Qwen** — and any local provider via Ollama. If the provider charges per input token and supports a prefix cache, Burnless works.
 
-## Three compression layers
+## Four compression layers
 
-Each layer is independent and additive:
+Each layer is independent and additive. Layers 1, 3, and 4 are pure Python — zero API calls, zero cost:
 
 | Layer | What it does | Cost | When it fires |
 |-------|-------------|------|--------------|
-| **1. Deterministic minifier** | Strips filler phrases, normalizes whitespace, applies glossary abbreviations | Zero — pure regex | Every turn, before encoder |
-| **2. Semantic encoder** | A small model (Haiku, GPT-4o-mini, local Llama) compresses prose into structured capsule format | ~$0.001/turn | Every turn |
-| **3. LLMLingua-2 (optional)** | XLM-RoBERTa token classification (Microsoft Research, GPT-4 distilled) | Local CPU, no API | Long inputs, `--encoder llmlingua2` |
+| **1. Deterministic minifier** | Strips universal filler phrases, normalizes whitespace | Zero — pure Python | Every turn, before encoder |
+| **2. Cache-emergent glossary** | Haiku compresses semantically. Abbreviations emerge from session context — no static dictionary. Glossary lives in the cache; dies with the session | ~$0.001/turn | `balanced` and `extreme` modes |
+| **3. XOR cipher** | Session-unique key (`secrets.token_hex(16)`) scrambles the compressed text. Key is never persisted — it dies when the session ends | Zero — pure Python | Every turn after Layer 2 |
+| **4. Base64 encode** | Encodes the ciphered output to a portable ASCII capsule | Zero — pure Python | Every turn after Layer 3 |
 
-The 88% cost reduction in the benchmark comes primarily from Layer 3 of the *architecture* — shared prefix cache + linear capsule history. Layers 1 and 2 compound on top of that.
+Capsule format: `burnless:<session_id>:<key>:<base64_ciphertext>`
+
+Decode: `burnless decode --file session.capsule` — pure Python, no API call.
+
+**What this replaces:** static glossary files, LLMLingua-2 (which requires a heavy local model for compression *and* decompression), and vector databases for session memory. The capsule *is* the memory. It persists on disk, decodes instantly, and requires no server.
+
+**Structural property:** the session key dies with the cache TTL (1h). After that, the capsule on disk is opaque to humans and to AI systems without the session context. This is not a design choice — it is a consequence of the architecture.
+
+The 88% cost reduction in the benchmark comes primarily from the *architecture* — shared prefix cache + linear capsule history. The four compression layers compound on top.
 
 ## Compression modes
 

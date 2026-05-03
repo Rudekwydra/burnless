@@ -33,6 +33,7 @@ def normalize_mode(mode: str) -> str:
     """Map legacy aliases silently to canonical names."""
     return MODE_ALIASES.get(mode, mode)
 
+
 _FIELD_LIMITS = {
     "light":    {"per_field": 150, "list_items": 12},
     "balanced": {"per_field": 80,  "list_items": 8},
@@ -377,3 +378,100 @@ def _slugify_phrase(text: str, *, max_words: int) -> str:
     s = " ".join(parts)
     keep = "".join(_SLUG_KEEP.findall(s))
     return keep.strip()
+
+
+def compress_transcript(
+    text: str,
+    *,
+    mode: str = "balanced",
+    session_context: list[dict] | None = None,
+) -> tuple[str, dict]:
+    """
+    4-layer compression of arbitrary text (chat transcript, briefing, session).
+    Returns (packed_capsule, stats).
+
+    session_context: list of {'raw': str, 'compressed': str} from prior turns.
+    Haiku sees this as cache and builds its own glossary implicitly.
+    Key dies with the caller's session (not persisted outside the capsule).
+    """
+    import secrets
+    import anthropic
+    from .codec.cipher import generate_key, encode as cipher_encode, pack
+
+    mode = normalize_mode(mode)
+    if mode not in MODES:
+        raise ValueError(f"unknown compression mode: {mode!r}; pick one of {MODES}")
+
+    session_id = secrets.token_hex(6)
+    key = generate_key()
+
+    # Layer 1: deterministic filler strip.
+    _UNIVERSAL_FILLERS = (
+        "please", "could you", "would you", "can you", "thank you", "thanks",
+        "great job", "perfect", "if possible", "if you can", "when you get a chance",
+        "I need you to", "I want you to", "I'd like you to",
+    )
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        low = stripped.lower()
+        if any(low == f.lower() for f in _UNIVERSAL_FILLERS):
+            continue
+        for f in _UNIVERSAL_FILLERS:
+            stripped = stripped.replace(f + " ", "").replace(f + ", ", "")
+        lines.append(stripped)
+    minified = "\n".join(lines)
+
+    if mode == "light":
+        ciphertext = cipher_encode(minified, key)
+        capsule = pack(session_id, key, ciphertext)
+        stats = {
+            "session_id": session_id,
+            "original_chars": len(text),
+            "capsule_chars": len(minified),
+            "ratio": round((1 - len(minified) / max(len(text), 1)) * 100, 1),
+            "mode": mode,
+        }
+        return capsule, stats
+
+    # Layer 2: Haiku semantic compression via cache-emergent glossary.
+    try:
+        client = anthropic.Anthropic()
+        messages = []
+        if session_context:
+            for ctx in (session_context or [])[-6:]:
+                messages.append({"role": "user", "content": ctx["raw"]})
+                messages.append({"role": "assistant", "content": ctx["compressed"]})
+        messages.append({"role": "user", "content": minified})
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2048,
+            system=(
+                "You are a lossless semantic compressor. "
+                "Compress the input into a dense capsule preserving ALL decisions, "
+                "tasks, context, and next steps. Use consistent abbreviations — "
+                "infer them from prior turns in this conversation if any. "
+                "Output ONLY the compressed capsule. No preamble, no explanation."
+            ),
+            messages=messages,
+        )
+        compressed = response.content[0].text.strip()
+        if len(compressed) >= len(minified):
+            compressed = minified
+    except Exception:
+        compressed = minified
+
+    # Layers 3 and 4: XOR cipher plus base64.
+    ciphertext = cipher_encode(compressed, key)
+    capsule = pack(session_id, key, ciphertext)
+
+    stats = {
+        "session_id": session_id,
+        "original_chars": len(text),
+        "capsule_chars": len(compressed),
+        "ratio": round((1 - len(compressed) / max(len(text), 1)) * 100, 1),
+        "mode": mode,
+    }
+    return capsule, stats
