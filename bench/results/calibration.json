@@ -1,0 +1,327 @@
+{
+  "timestamp": "20260502T200437Z",
+  "turns": 8,
+  "context_chars": 56119,
+  "scenarios": {
+    "standalone_no_cache": {
+      "calls": [
+        {
+          "turn": 1,
+          "input_tokens": 23255,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.393825
+        },
+        {
+          "turn": 2,
+          "input_tokens": 23898,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.40347
+        },
+        {
+          "turn": 3,
+          "input_tokens": 24537,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.413055
+        },
+        {
+          "turn": 4,
+          "input_tokens": 25168,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.42252
+        },
+        {
+          "turn": 5,
+          "input_tokens": 25810,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.43215
+        },
+        {
+          "turn": 6,
+          "input_tokens": 26447,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.441705
+        },
+        {
+          "turn": 7,
+          "input_tokens": 27079,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.451185
+        },
+        {
+          "turn": 8,
+          "input_tokens": 27723,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.460845
+        }
+      ],
+      "totals": {
+        "input_tokens": 203917,
+        "output_tokens": 4800,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "billed_tokens": 208717,
+        "cost_usd": 3.418755,
+        "calls": 8
+      },
+      "final_text_preview": "## Action plan \u2014 6 bullets\n\n1. **Validate `--timeout` in `cmd_run`.** In `build_parser()`, replace `type=int` with a small helper that rejects values `<= 0` (raise `argparse.ArgumentTypeError`). Add a test: `burnless run d001 --timeout 0` exits non-zero with a clear message, no traceback. ~10 lines, zero risk.\n\n2. **Add the routing contract test from Turn 6.** Drop `tests/test_routing.py` in place using `DEFAULT_CONFIG[\"routing\"]` as the fixture. Even before reading `routing.py`, the four contract tests (tuple shape, valid tier, falsy default keyword, keyword\u2192tier mapping for one word per tier) lock in behavior `cli.py` already depends on. Run `pytest -k routing` and commit green.\n\n3. **Collapse the bilingual paywall messages (Turn 5).** Extract `_TRANSLATIONS` dict, rewrite `_paywall_message_v2` / `_project_assets_lines` / `_post_extend_lines` as one builder that does key lookups + `.format(**ctx)`. Target: -30 lines from `cli.py`, identical stdout. Verify with a snapshot test that captures current output for both `pt-BR` and `en-US` *before* the refactor.\n\n4. **De-duplicate codex flag insertion in `agents.py` (Turn 3).** Introduce one `_insert_after_exec(parts, flags)` helper and call it for `--sandbox`, `--full-auto`, and `--cd` so placement is consistent. Decide explicitly whether env-var sandbox should suppress `--full-auto` and document it in the function docstring. Add two tests: env-only sandbox, and `allow_net=True` with no"
+    },
+    "standalone_cache": {
+      "calls": [
+        {
+          "turn": 1,
+          "input_tokens": 36,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 23219,
+          "cache_read_input_tokens": 0,
+          "cost_usd": 0.480896
+        },
+        {
+          "turn": 2,
+          "input_tokens": 679,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 23219,
+          "cost_usd": 0.090013
+        },
+        {
+          "turn": 3,
+          "input_tokens": 682,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 636,
+          "cache_read_input_tokens": 23219,
+          "cost_usd": 0.101984
+        },
+        {
+          "turn": 4,
+          "input_tokens": 670,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 1249,
+          "cache_read_input_tokens": 23249,
+          "cost_usd": 0.113342
+        },
+        {
+          "turn": 5,
+          "input_tokens": 673,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 1245,
+          "cache_read_input_tokens": 23892,
+          "cost_usd": 0.114277
+        },
+        {
+          "turn": 6,
+          "input_tokens": 679,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 1237,
+          "cache_read_input_tokens": 24531,
+          "cost_usd": 0.115175
+        },
+        {
+          "turn": 7,
+          "input_tokens": 668,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 1248,
+          "cache_read_input_tokens": 25162,
+          "cost_usd": 0.116163
+        },
+        {
+          "turn": 8,
+          "input_tokens": 675,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 1242,
+          "cache_read_input_tokens": 25804,
+          "cost_usd": 0.117119
+        }
+      ],
+      "totals": {
+        "input_tokens": 4762,
+        "output_tokens": 4800,
+        "cache_creation_input_tokens": 30076,
+        "cache_read_input_tokens": 169076,
+        "billed_tokens": 208714,
+        "cost_usd": 1.248969,
+        "calls": 8
+      },
+      "final_text_preview": "# Turn 8/8: Action Plan for Tomorrow\n\nA junior dev can pick these up in order; each is scoped to ~half a day or less.\n\n- **1. Validate `--timeout` in `cmd_run`.** Replace `type=int` with a small `positive_int` callable that rejects `<= 0` via `argparse.ArgumentTypeError`. Add the same guard at the top of `agents_mod.run` so library callers can't bypass it. Cover with two pytest cases: `--timeout 0` and `--timeout -5` both exit cleanly with a clear message, no traceback.\n\n- **2. Refactor `_apply_codex_overrides` in `agents.py`.** Extract a single helper `_insert_after_exec(parts, flags: list[str]) -> list[str]` and route all three branches (`--sandbox`, `--full-auto`, `--cd`) through it. Fixes the `--cd`-appended-instead-of-inserted inconsistency and the latent `allow_net` bug where `--full-auto` lands next to a now-missing `--sandbox`. Add a unit test per branch asserting argv order.\n\n- **3. Move paywall presentation to `burnless/paywall.py`.** Lift `_paywall_message_v2`, `_project_assets_lines`, `_post_extend_lines`, `_count_capsules`, `_count_memory_entries`, `STRIPE_CHECKOUT_URL`, and `cmd_license_buy`'s body into the new module. `cli.py` keeps only thin command handlers that call `paywall.render_message(...)`. Target: shrink `cli.py` by \u2265100 lines, no behavior change. Snapshot-test the rendered string in both `pt-BR` and `en-US`.\n\n- **4. Land the routing test suite from Turn 6."
+    },
+    "burnless_maestro": {
+      "calls": [
+        {
+          "turn": 1,
+          "model": "claude-opus-4-7",
+          "role": "main",
+          "input_tokens": 37,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 23239,
+          "cache_read_input_tokens": 0,
+          "ttl_writes": {},
+          "billed_usd": 0.481286
+        },
+        {
+          "turn": 2,
+          "model": "claude-haiku-4-5-20251001",
+          "role": "post_compact",
+          "input_tokens": 525,
+          "output_tokens": 238,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "ttl_writes": {},
+          "billed_usd": 0.001715
+        },
+        {
+          "turn": 3,
+          "model": "claude-opus-4-7",
+          "role": "main",
+          "input_tokens": 39,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 342,
+          "cache_read_input_tokens": 23239,
+          "ttl_writes": {},
+          "billed_usd": 0.086856
+        },
+        {
+          "turn": 4,
+          "model": "claude-opus-4-7",
+          "role": "main",
+          "input_tokens": 35,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 655,
+          "cache_read_input_tokens": 23581,
+          "ttl_writes": {},
+          "billed_usd": 0.093178
+        },
+        {
+          "turn": 5,
+          "model": "claude-haiku-4-5-20251001",
+          "role": "post_compact",
+          "input_tokens": 518,
+          "output_tokens": 300,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "ttl_writes": {},
+          "billed_usd": 0.002018
+        },
+        {
+          "turn": 6,
+          "model": "claude-opus-4-7",
+          "role": "main",
+          "input_tokens": 27,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 422,
+          "cache_read_input_tokens": 24236,
+          "ttl_writes": {},
+          "billed_usd": 0.089672
+        },
+        {
+          "turn": 7,
+          "model": "claude-haiku-4-5-20251001",
+          "role": "post_compact",
+          "input_tokens": 510,
+          "output_tokens": 284,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "ttl_writes": {},
+          "billed_usd": 0.00193
+        },
+        {
+          "turn": 8,
+          "model": "claude-opus-4-7",
+          "role": "main",
+          "input_tokens": 38,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 418,
+          "cache_read_input_tokens": 24658,
+          "ttl_writes": {},
+          "billed_usd": 0.090395
+        },
+        {
+          "turn": 9,
+          "model": "claude-opus-4-7",
+          "role": "main",
+          "input_tokens": 33,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 654,
+          "cache_read_input_tokens": 25076,
+          "ttl_writes": {},
+          "billed_usd": 0.095371
+        },
+        {
+          "turn": 10,
+          "model": "claude-opus-4-7",
+          "role": "main",
+          "input_tokens": 28,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 648,
+          "cache_read_input_tokens": 25731,
+          "ttl_writes": {},
+          "billed_usd": 0.096167
+        },
+        {
+          "turn": 11,
+          "model": "claude-haiku-4-5-20251001",
+          "role": "post_compact",
+          "input_tokens": 501,
+          "output_tokens": 300,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "ttl_writes": {},
+          "billed_usd": 0.002001
+        },
+        {
+          "turn": 12,
+          "model": "claude-opus-4-7",
+          "role": "main",
+          "input_tokens": 40,
+          "output_tokens": 600,
+          "cache_creation_input_tokens": 454,
+          "cache_read_input_tokens": 26379,
+          "ttl_writes": {},
+          "billed_usd": 0.093681
+        },
+        {
+          "turn": 13,
+          "model": "claude-haiku-4-5-20251001",
+          "role": "post_compact",
+          "input_tokens": 493,
+          "output_tokens": 300,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "ttl_writes": {},
+          "billed_usd": 0.001993
+        }
+      ],
+      "totals": {
+        "input_tokens": 2824,
+        "output_tokens": 6222,
+        "cache_creation_input_tokens": 26832,
+        "cache_read_input_tokens": 172900,
+        "billed_tokens": 208778,
+        "cost_usd": 1.136263,
+        "calls": 13
+      }
+    }
+  },
+  "ratios": {
+    "b_over_a": 0.3653286064663891,
+    "c_over_a": 0.33236163457164963,
+    "c_over_b": 0.9097607706836599
+  },
+  "models": {
+    "main": "claude-opus-4-7"
+  }
+}
