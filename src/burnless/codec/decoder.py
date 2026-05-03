@@ -33,19 +33,40 @@ def decode(
     project_root: Path | None = None,
     model: str = DEFAULT_DECODER_MODEL,
     client: anthropic.Anthropic | None = None,
+    voice_sample: str | None = None,
 ) -> str:
+    """Convert capsule → prose. If `voice_sample` (last user raw message) is
+    provided, the decoder is instructed to mirror the user's tone, slang and
+    register — same content, but spoken back in *their* voice. Costs a few
+    extra input tokens; massively warmer UX. Default of cmd_brain/shell is
+    to pass it; pass `voice_sample=None` to skip (faster, more robotic)."""
     capsule = (capsule or "").strip()
     if not capsule:
         return ""
     client = client or anthropic.Anthropic()
+    base_tone = (
+        "Tone: friendly, direct, no fluff. Respond in 1 to 4 sentences. "
+        "No headings, markdown, bullets, emoji or meta-commentary. "
+        "Do not explain that conversion, glossary, capsule or protocol happened."
+    )
+    voice_block: list[str] = []
+    if voice_sample and voice_sample.strip():
+        sample_clip = voice_sample.strip()[:400]
+        voice_block = [
+            "[USER_VOICE_SAMPLE — match this register/slang/warmth]",
+            sample_clip,
+            (
+                "Match the user's writing voice from the sample above: same language, "
+                "same level of formality, same use of slang/diminutives/emoticons if any. "
+                "Keep the content faithful to [CAPSULE], but speak it back in their voice. "
+                "Do NOT echo the sample literally."
+            ),
+        ]
     prompt = "\n\n".join(
         [
             "Convert Burnless capsules into natural prose in the user's language.",
-            (
-                "Tone: friendly, direct, no fluff. Respond in 1 to 4 sentences. "
-                "No headings, markdown, bullets, emoji or meta-commentary. "
-                "Do not explain that conversion, glossary, capsule or protocol happened."
-            ),
+            base_tone,
+            *voice_block,
             "[GLOSSARY]",
             load_glossary(project_root),
             "[STYLE_GUIDE]",

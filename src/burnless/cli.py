@@ -147,7 +147,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     root = paths_mod.root(cwd)
     p = paths_mod.paths_for(root)
     if root.exists() and not args.force:
-        print(f"burnless: already initialized at {root}")
+        print(f"✓ Already initialized at {root}")
+        print("  Likely created by `burnless setup` (which already runs init).")
+        print("  Try `burnless` to enter the shell, or `--force` to re-init from scratch.")
         return 0
     for key in ("delegations", "logs", "temp", "capsules", "archive", "chat"):
         p[key].mkdir(parents=True, exist_ok=True)
@@ -589,9 +591,14 @@ def cmd_brain(args: argparse.Namespace) -> int:
                 )
 
             capsule_text = result.get("capsule_text") or ""
-            friendly = cfg.get("compression", {}).get("friendly", True)
+            comp_cfg = cfg.get("compression", {})
+            friendly = comp_cfg.get("friendly", True)
+            voice_match = comp_cfg.get("voice_match", True)  # V1 default ON
             if friendly:
-                decoded = decoder_mod.decode(capsule_text, project_root=root.parent)
+                # Pass raw user message as voice_sample so decoder mirrors tone.
+                # Set voice_match=false in config.yaml pra desligar (decoder fica robotic, ~5% cheaper).
+                vs = message if voice_match else None
+                decoded = decoder_mod.decode(capsule_text, project_root=root.parent, voice_sample=vs)
             else:
                 decoded = capsule_text
             if decoded:

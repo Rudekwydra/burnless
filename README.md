@@ -72,9 +72,12 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 ```bash
 pip install burnless
-burnless setup               # one-time, detects local agents and keys
-burnless init                # inside any project directory
+cd <your-project>
+burnless setup               # one-time per project: detects CLIs/keys + initializes .burnless/
+burnless                     # enter the shell
 ```
+
+`burnless setup` writes `.burnless/config.yaml` and creates the project structure in one shot — no separate `init` needed unless you want a minimal config without auto-detection (then run `burnless init` instead).
 
 Python 3.10+. Tiers map to whatever models you configure — mix providers freely.
 
@@ -84,6 +87,8 @@ Or install from source:
 git clone https://github.com/rudekwydra/burnless.git
 cd burnless && pip install -e .
 ```
+
+To remove from a project: `rm -rf .burnless/` (no built-in `uninstall` command yet — `pip uninstall burnless` removes the package but leaves your project state untouched, which is intentional).
 
 ## Any model. Any role. Full control.
 

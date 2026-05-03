@@ -33,6 +33,7 @@ Commands:
   /log d002             print the raw log
   /capsule d002         show or regenerate the operational capsule
   /compression safe|balanced|aggressive
+  /voice on|off         mirror user's tone in replies (default on, ~5% extra tokens)
   /agents               list configured agents
   /setup                detect CLIs and write a sensible config
   /import               index your existing AI memories (folders)
@@ -159,6 +160,8 @@ def handle_input(text: str, p: dict[str, Path]) -> bool:
         return _respond(p, text, out.strip(), error=rc != 0)
     if intent.kind == "compression":
         return _set_compression(p, text, intent.args[0])
+    if intent.kind == "voice":
+        return _set_voice_match(p, text, bool(intent.args[0]))
     if intent.kind == "fix":
         return _fix(p, text, intent.args[0])
     if intent.kind == "continue":
@@ -181,15 +184,22 @@ def _print_banner(p: dict[str, Path]) -> None:
     cfg = _config(p)
     m = _metrics(p)
     root = p["root"].parent
-    compression = cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
+    comp_cfg = cfg.get("compression", {})
+    compression = comp_cfg.get("mode", compression_mod.DEFAULT_MODE)
+    voice_match = comp_cfg.get("voice_match", True)
     tier = state.get("active_tier") or "auto"
     project = state.get("project") or root.name
     burnless_tokens = int(m.get("burnless_tokens", 0))
     delegations = int(state.get("delegation_counter", 0) or 0)
 
-    print(f"🔥 Burnless v{__version__}   tier: {tier}   compression: {compression}")
+    voice_tag = "voice:on" if voice_match else "voice:off"
+    print(f"\033[33m🔥 Burnless v{__version__}\033[0m   tier: {tier}   compression: {compression}   \033[2m{voice_tag}\033[0m")
     print(f"{project} · {_display_path(root)}")
     print(f"{burnless_tokens:,} burnless tokens · {delegations} delegations · /help")
+    if voice_match:
+        print("\033[2m  tip: replies mirror your tone (~5% extra tokens). `/voice off` for robotic prose.\033[0m")
+    else:
+        print("\033[2m  tip: voice-match off — replies are pragmatic. `/voice on` to mirror your tone.\033[0m")
     print()
 
 
@@ -367,6 +377,18 @@ def _set_compression(p: dict[str, Path], user_text: str, mode: str) -> bool:
     state["compression"] = mode
     state_mod.save(p["state"], state)
     return _respond(p, user_text, f"Compression set to {mode}.\n\n{int(_metrics(p).get('burnless_tokens', 0)):,} burnless tokens")
+
+
+def _set_voice_match(p: dict[str, Path], user_text: str, on: bool) -> bool:
+    cfg = _config(p)
+    cfg.setdefault("compression", {})["voice_match"] = on
+    config_mod.save(p["config"], cfg)
+    state_repr = "on" if on else "off"
+    explain = (
+        "Replies will mirror your tone (~5% extra tokens)."
+        if on else "Replies will be pragmatic prose (no voice mirroring, ~5% cheaper)."
+    )
+    return _respond(p, user_text, f"voice-match {state_repr}. {explain}")
 
 
 def _render_agents(p: dict[str, Path]) -> str:
