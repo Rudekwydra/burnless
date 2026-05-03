@@ -1,0 +1,52 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Burnless local state
+.burnless/
+exec_log/
+
+# Credentials / local config
+.stripe-products.json
+.env
+*.env
+*.key
+
+# Cloudflare
+.wrangler/
+
+# Site (landing page — separate deploy)
+site/
+
+# Internal / ops
+docs/ops/
+docs/design/paywall*.md
+scripts/cf_mint_tokens.py
+
+# Internal launch / marketing notes
+LAUNCH_PACKAGE.md
+PITCH_PT.md
+
+# Internal codex prompts (working notes; runtime artifacts in _design/maestro_v1/ stay)
+_design/*_prompt.md
+_design/maestro_v1/codex_*.md
+
+# Bench legacy (superseded by bench/run.py)
+bench/v4_maestro.py
+bench/benchmark.py
+bench/tasks/
+bench/results/maestro_*.jsonl
+bench/results/run_*.json
+bench/results/report.md
+bench/results/v4_*.json
+# Old experimental result files (pre-Maestro, contradicted by current README)
+bench/results/2026*.json
+
+# macOS
+.DS_Store

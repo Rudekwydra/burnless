@@ -1,0 +1,429 @@
+from __future__ import annotations
+
+import argparse
+import contextlib
+import io
+import json
+import os
+import sys
+from pathlib import Path
+
+from . import TAGLINE, __version__
+from . import chat_history
+from . import compression as compression_mod
+from . import config as config_mod
+from . import dashboard
+from . import delegations as deleg_mod
+from . import metrics as metrics_mod
+from . import paths as paths_mod
+from . import routing as routing_mod
+from . import state as state_mod
+from . import cli as cli_mod
+
+
+HELP = """\
+Commands:
+  /help
+  /status               project + headline metric
+  /metrics              counters and estimated cost avoided
+  /plan <text>          set the project plan (compact state)
+  /delegate <text>      create a numbered delegation
+  /run d002             execute the delegation
+  /read d002            print the compact summary
+  /log d002             print the raw log
+  /capsule d002         show or regenerate the operational capsule
+  /compression safe|balanced|aggressive
+  /agents               list configured agents
+  /setup                detect CLIs and write a sensible config
+  /import               index your existing AI memories (folders)
+  /chat                 enter persistent chat mode
+  /use diamond|gold|silver|bronze|auto    sticky tier for next runs
+  :gold | :silver | :bronze | :diamond | :auto    same, shorter
+  /clear                clear screen
+  /exit                 leave the shell
+
+Natural language works too:
+  fix d002
+  continue
+  ver status
+  mostrar métricas
+  abrir capsule d002
+"""
+
+
+def main() -> int:
+    root = paths_mod.find_root()
+    if root is None:
+        print("No Burnless project found here.")
+        answer = input("Initialize one? [Y/n] ").strip().lower()
+        if answer in {"n", "no", "nao", "não"}:
+            return 1
+        cli_mod.cmd_init(argparse.Namespace(project=None, force=False))
+        root = paths_mod.require_root()
+
+    p = paths_mod.paths_for(root)
+    chat_history.ensure(p["history"])
+    _clear_screen()
+    _print_banner(p)
+
+    while True:
+        try:
+            text = input(_prompt(p)).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not text:
+            continue
+        done = handle_input(text, p)
+        if done:
+            return 0
+
+
+def _prompt(p: dict[str, Path]) -> str:
+    tier = _state(p).get("active_tier")
+    label = tier or "auto"
+    return f"burnless [{label}] › "
+
+
+def handle_input(text: str, p: dict[str, Path]) -> bool:
+    from . import intents
+
+    intent = intents.parse(text)
+    if intent.kind == "exit":
+        chat_history.append(p["history"], user=text, burnless="Session closed.")
+        return True
+    if intent.kind == "help":
+        return _respond(p, text, HELP)
+    if intent.kind == "status":
+        return _respond(p, text, dashboard.render_status(_state(p), _metrics(p)))
+    if intent.kind == "metrics":
+        cfg = _config(p)
+        return _respond(
+            p,
+            text,
+            dashboard.render_metrics(
+                _metrics(p),
+                show_cost=bool(cfg.get("metrics", {}).get("show_estimated_cost", True)),
+            ),
+        )
+    if intent.kind == "agents":
+        return _respond(p, text, _render_agents(p))
+    if intent.kind == "setup":
+        rc = cli_mod.cmd_setup(
+            argparse.Namespace(non_interactive=False, yes=False, project=None)
+        ) or 0
+        chat_history.append(
+            p["history"], user=text,
+            burnless=("Setup wizard finished." if rc == 0 else "Setup wizard aborted."),
+        )
+        return False
+    if intent.kind == "clear":
+        _clear_screen()
+        _print_banner(p)
+        return False
+    if intent.kind == "use_tier":
+        return _set_active_tier(p, text, intent.args[0])
+    if intent.kind == "chat":
+        from . import chat_mode
+        chat_mode.run_chat(p)
+        _clear_screen()
+        _print_banner(p)
+        chat_history.append(p["history"], user=text, burnless="Chat session closed.")
+        return False
+    if intent.kind == "import":
+        return _import_memories(p, text)
+    if intent.kind == "plan":
+        return _respond(p, text, "Write a plan after the command, for example:\n/plan validate compression in a real workflow")
+    if intent.kind == "plan_text":
+        out, _ = _capture(cli_mod.cmd_plan, argparse.Namespace(text=intent.args[0]))
+        return _respond(p, text, out.strip())
+    if intent.kind == "delegate":
+        return _respond(p, text, "Write an objective after the command, for example:\n/delegate fix the failing benchmark")
+    if intent.kind == "objective":
+        return _new_objective(p, text, intent.args[0])
+    if intent.kind == "run_last":
+        last = _state(p).get("last_delegation")
+        if not last:
+            return _respond(p, text, "No delegation has been created yet.")
+        return _run(p, text, last)
+    if intent.kind == "run":
+        return _run(p, text, intent.args[0])
+    if intent.kind == "read":
+        out, rc = _capture(cli_mod.cmd_read, argparse.Namespace(id=intent.args[0]))
+        return _respond(p, text, out.strip(), error=rc != 0)
+    if intent.kind == "log":
+        out, rc = _capture(cli_mod.cmd_log, argparse.Namespace(id=intent.args[0]))
+        return _respond(p, text, out.strip(), error=rc != 0)
+    if intent.kind == "capsule":
+        out, rc = _capture(cli_mod.cmd_capsule, argparse.Namespace(id=intent.args[0], mode=None))
+        return _respond(p, text, out.strip(), error=rc != 0)
+    if intent.kind == "compression":
+        return _set_compression(p, text, intent.args[0])
+    if intent.kind == "fix":
+        return _fix(p, text, intent.args[0])
+    if intent.kind == "continue":
+        return _continue(p, text)
+    return _new_objective(p, text, text)
+
+
+def _clear_screen() -> None:
+    if not sys.stdout.isatty():
+        return
+    if os.name == "nt":
+        os.system("cls")
+    else:
+        sys.stdout.write("\x1b[2J\x1b[H")
+        sys.stdout.flush()
+
+
+def _print_banner(p: dict[str, Path]) -> None:
+    state = _state(p)
+    cfg = _config(p)
+    m = _metrics(p)
+    root = p["root"].parent
+    compression = cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
+    tier = state.get("active_tier") or "auto"
+    project = state.get("project") or root.name
+    burnless_tokens = int(m.get("burnless_tokens", 0))
+    delegations = int(state.get("delegation_counter", 0) or 0)
+
+    print(f"🔥 Burnless v{__version__}   tier: {tier}   compression: {compression}")
+    print(f"{project} · {_display_path(root)}")
+    print(f"{burnless_tokens:,} burnless tokens · {delegations} delegations · /help")
+    print()
+
+
+def _new_objective(p: dict[str, Path], user_text: str, objective: str) -> bool:
+    cfg = _config(p)
+    tier, matched = routing_mod.route(objective, cfg["routing"])
+    agent = cfg["agents"][tier]["name"]
+    response = (
+        "Objective captured.\n\n"
+        "Suggested delegation:\n"
+        f"{tier}/{agent}\n\n"
+        "Task:\n"
+        f"{objective}\n\n"
+        "Run now? [Y/n/edit]"
+    )
+    print(response)
+    answer = input().strip().lower()
+    if answer in {"n", "no", "nao", "não"}:
+        return _record_only(p, user_text, "Objective captured. Delegation was not created.")
+    task = objective
+    if answer in {"e", "edit"}:
+        edited = input("Task: ").strip()
+        if edited:
+            task = edited
+    did = _create_delegation(p, task, goal=objective, tier=None)
+    created = f"Delegation {did} created for {tier}/{agent}."
+    print(created)
+    if answer in {"n", "no", "nao", "não"}:
+        chat_history.append(p["history"], user=user_text, burnless=created)
+        return False
+    return _run(p, user_text, did, prefix=created)
+
+
+def _fix(p: dict[str, Path], user_text: str, did: str) -> bool:
+    log_path = p["logs"] / f"{did}.log"
+    if not log_path.exists():
+        return _respond(p, user_text, f"I could not find a log for {did}.", error=True)
+    snippet = _tail(log_path.read_text(encoding="utf-8"), 2500)
+    task = (
+        f"Inspect .burnless/logs/{did}.log and fix the failure from delegation {did}. "
+        "Patch the command, template, or code that caused the error, then validate the fix.\n\n"
+        f"Relevant log tail:\n{snippet}"
+    )
+    print(
+        f"I found the failure in {did}.\n\n"
+        "Suggested repair:\n"
+        "Use codex to inspect the error log and patch the command/template.\n\n"
+        "Create and run now? [Y/n/edit]"
+    )
+    answer = input().strip().lower()
+    if answer in {"n", "no", "nao", "não"}:
+        return _record_only(p, user_text, f"Suggested repair for {did}. Delegation was not created.")
+    if answer in {"e", "edit"}:
+        edited = input("Task: ").strip()
+        if edited:
+            task = edited
+    new_id = _create_delegation(p, task, goal=f"Fix {did}", tier="diamond")
+    created = f"Delegation {new_id} created for diamond/codex."
+    print(created)
+    return _run(p, user_text, new_id, prefix=created)
+
+
+def _continue(p: dict[str, Path], user_text: str) -> bool:
+    state = _state(p)
+    did = state.get("last_capsule") or state.get("last_delegation")
+    capsule = {}
+    if did:
+        capsule_path = p["capsules"] / f"{did}.json"
+        if capsule_path.exists():
+            capsule = json.loads(capsule_path.read_text(encoding="utf-8"))
+    next_step = state.get("next") or capsule.get("next") or "Inspect the last capsule and continue the useful next step."
+    task = (
+        f"Continue from the current Burnless state. Last delegation: {did or 'none'}. "
+        f"Next useful step: {next_step}"
+    )
+    print(
+        "Based on the last capsule, the next useful step is:\n"
+        f"{next_step}\n\n"
+        "Suggested agent:\n"
+        "diamond/codex\n\n"
+        "Create and run now? [Y/n/edit]"
+    )
+    answer = input().strip().lower()
+    if answer in {"n", "no", "nao", "não"}:
+        return _record_only(p, user_text, "Suggested next delegation. Delegation was not created.")
+    if answer in {"e", "edit"}:
+        edited = input("Task: ").strip()
+        if edited:
+            task = edited
+    new_id = _create_delegation(p, task, goal="Continue from last capsule", tier="diamond")
+    created = f"Delegation {new_id} created for diamond/codex."
+    print(created)
+    return _run(p, user_text, new_id, prefix=created)
+
+
+def _run(p: dict[str, Path], user_text: str, did: str, *, prefix: str = "") -> bool:
+    mode = "watch" if sys.stdout.isatty() else "plain"
+    rc = cli_mod.cmd_run(argparse.Namespace(id=did, dry_run=False, timeout=600, mode=mode)) or 0
+    response = _friendly_run_result(p, did, rc)
+    if prefix:
+        response = f"{prefix}\n{response}"
+    chat_history.append(p["history"], user=user_text, burnless=response)
+    return False
+
+
+def _friendly_run_result(p: dict[str, Path], did: str, rc: int) -> str:
+    summary_path = p["temp"] / f"{did}.json"
+    capsule_path = p["capsules"] / f"{did}.json"
+    m = _metrics(p)
+    if rc == 0 and summary_path.exists():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        nxt = summary.get("next") or _state(p).get("next") or "(none)"
+        return f"OK:{did}\nNext: {nxt}\n\n{int(m.get('burnless_tokens', 0)):,} burnless tokens"
+    if summary_path.exists() or capsule_path.exists():
+        return (
+            "Worker failed.\n\n"
+            "I saved:\n"
+            "- raw log\n"
+            "- compact summary\n"
+            "- capsule\n\n"
+            "No burnless tokens were created from this capsule because the output was already short.\n\n"
+            "Suggested next step:\n"
+            f"fix {did}\n\n"
+            f"{int(m.get('burnless_tokens', 0)):,} burnless tokens"
+        )
+    return f"Worker failed before saving a capsule.\n\nSuggested next step:\nfix {did}"
+
+
+def _create_delegation(p: dict[str, Path], task: str, *, goal: str, tier: str | None) -> str:
+    if tier is None:
+        sticky = _state(p).get("active_tier")
+        if sticky:
+            tier = sticky
+    args = argparse.Namespace(
+        text=task,
+        goal=goal,
+        success="task completed; final JSON block emitted as required.",
+        tier=tier,
+    )
+    _capture(cli_mod.cmd_delegate, args)
+    return _state(p).get("last_delegation")
+
+
+def _set_active_tier(p: dict[str, Path], user_text: str, tier: str) -> bool:
+    state = _state(p)
+    if tier == "auto":
+        state["active_tier"] = None
+        msg = "Tier set to auto (router will choose per task)."
+    else:
+        state["active_tier"] = tier
+        agent = _config(p)["agents"][tier]["name"]
+        msg = f"Tier sticky: {tier}/{agent}. Reset with `:auto`."
+    state_mod.save(p["state"], state)
+    return _respond(p, user_text, msg)
+
+
+def _import_memories(p: dict[str, Path], user_text: str) -> bool:
+    from . import setup_wizard
+    det = setup_wizard.detect(scan_memory=True)
+    if not det.memory_paths:
+        return _respond(p, user_text, "No memory folders found in the usual places.")
+    indexed = setup_wizard._index_memories(det.memory_paths, p)
+    return _respond(
+        p, user_text,
+        f"Indexed {indexed} memory file(s) from {len(det.memory_paths)} location(s).\n"
+        f"Index: {p['root'] / 'memories' / 'index.json'}",
+    )
+
+
+def _set_compression(p: dict[str, Path], user_text: str, mode: str) -> bool:
+    cfg = _config(p)
+    cfg.setdefault("compression", {})["mode"] = mode
+    config_mod.save(p["config"], cfg)
+    state = _state(p)
+    state["compression"] = mode
+    state_mod.save(p["state"], state)
+    return _respond(p, user_text, f"Compression set to {mode}.\n\n{int(_metrics(p).get('burnless_tokens', 0)):,} burnless tokens")
+
+
+def _render_agents(p: dict[str, Path]) -> str:
+    cfg = _config(p)
+    lines = []
+    for tier, agent in cfg.get("agents", {}).items():
+        lines.append(f"{tier}/{agent.get('name')} - {agent.get('role')}")
+    return "\n".join(lines)
+
+
+def _respond(p: dict[str, Path], user_text: str, response: str, *, error: bool = False) -> bool:
+    if error and not response:
+        response = "Command failed."
+    print(response)
+    chat_history.append(p["history"], user=user_text, burnless=response)
+    return False
+
+
+def _record_only(p: dict[str, Path], user_text: str, response: str) -> bool:
+    print(response)
+    chat_history.append(p["history"], user=user_text, burnless=response)
+    return False
+
+
+def _capture(func, args: argparse.Namespace) -> tuple[str, int]:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        try:
+            rc = func(args) or 0
+        except SystemExit as e:
+            rc = int(e.code) if isinstance(e.code, int) else 1
+            if not isinstance(e.code, int) and e.code:
+                print(e.code)
+    return buf.getvalue(), rc
+
+
+def _state(p: dict[str, Path]) -> dict:
+    return state_mod.load(p["state"])
+
+
+def _metrics(p: dict[str, Path]) -> dict:
+    return metrics_mod.load(p["metrics"])
+
+
+def _config(p: dict[str, Path]) -> dict:
+    return config_mod.load(p["config"])
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return "~/" + str(path.expanduser().relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
+def _tail(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
