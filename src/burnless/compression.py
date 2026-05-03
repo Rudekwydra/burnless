@@ -6,9 +6,9 @@ JSON summary the agent emitted. The capsule is what feeds back into state.json
 and what the next delegation will see — not the raw log.
 
 Three modes:
-  safe       — preserves everything; ~150 chars per field; dedupe only
-  balanced   — basename paths; ~80 chars per field; dedupe + drop empties (default)
-  aggressive — slugs/short bullets; ~40 chars per field; only essentials
+  light     — preserves everything; ~150 chars per field; dedupe only
+  balanced  — basename paths; ~80 chars per field; dedupe + drop empties (default)
+  extreme   — slugs/short bullets; ~40 chars per field; only essentials
 
 A capsule preserves these fields (always present, even if empty):
   objective, status, files, decisions, validations, errors, risks, next
@@ -24,13 +24,19 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 
-MODES = ("safe", "balanced", "aggressive")
+MODES = ("light", "balanced", "extreme")
 DEFAULT_MODE = "balanced"
+MODE_ALIASES = {"safe": "light", "aggressive": "extreme"}
+
+
+def normalize_mode(mode: str) -> str:
+    """Map legacy aliases silently to canonical names."""
+    return MODE_ALIASES.get(mode, mode)
 
 _FIELD_LIMITS = {
-    "safe":       {"per_field": 150, "list_items": 12},
-    "balanced":   {"per_field": 80,  "list_items": 8},
-    "aggressive": {"per_field": 40,  "list_items": 5},
+    "light":    {"per_field": 150, "list_items": 12},
+    "balanced": {"per_field": 80,  "list_items": 8},
+    "extreme":  {"per_field": 40,  "list_items": 5},
 }
 
 _DECISION_PATTERNS = [
@@ -90,6 +96,7 @@ def compress(
     mode: str = DEFAULT_MODE,
 ) -> Capsule:
     """Build a capsule from goal + summary + raw_log under the given mode."""
+    mode = normalize_mode(mode)
     if mode not in MODES:
         raise ValueError(f"unknown compression mode: {mode!r}; pick one of {MODES}")
 
@@ -125,7 +132,7 @@ def compress(
 
     next_step = _trim(summary.get("next") or "", per_field)
 
-    if mode == "aggressive":
+    if mode == "extreme":
         objective = _slugify_phrase(objective, max_words=10)
         next_step = _slugify_phrase(next_step, max_words=8)
         decisions = [_slugify_phrase(d, max_words=8) for d in decisions]
@@ -206,12 +213,13 @@ def _cap_list(items: list[str], *, max_items: int, per_item: int) -> list[str]:
 
 
 def _normalize_files(items: list, *, mode: str) -> list[str]:
+    mode = normalize_mode(mode)
     out: list[str] = []
     for f in items:
         if not f:
             continue
         s = str(f)
-        if mode in ("balanced", "aggressive"):
+        if mode in ("balanced", "extreme"):
             s = Path(s).name or s
         out.append(s)
     return _dedupe(out)

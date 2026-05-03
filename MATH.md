@@ -216,3 +216,49 @@ For the simulation in `bench/v2.py`, sessions are treated as contiguous within t
 No API calls. No keys. `python bench/v2.py --simulate` reproduces the published table on any laptop.
 
 For real-API validation: `bench/v2.py --real --runs 1` exists but is not advertised on the landing. Contributors who want to spend their own credit can run it and submit the JSON via PR — that's how the published numbers get audited.
+
+---
+
+## 10. Epistemic fidelity — a third axis
+
+Sections 2–9 treat cost as the only axis. There is a second property that capsule compression affects and that cost math cannot capture: **how much of the argumentative trajectory a session preserves**.
+
+### The anchoring problem in standard chat
+
+In a full-transcript loop, the model at turn `k` sees not only what was decided at turn `j < k`, but *why* — the arguments, the concessions, the explicit agreements. This creates anchoring bias: the model defends prior decisions not because they are correct, but because the argumentative context makes reversal costly. Changing course requires relitigating the original argument inside the same session, against a model that participated in constructing it.
+
+The same content, summarized into a compact document and presented to the same model in a *fresh* session, can produce a different evaluation. The model's position on the document is not anchored to the trajectory that produced it. This is not inconsistency — it is evidence that the prior session's output was shaped by its own history, not only by the content.
+
+**The anchoring is proportional to argumentative richness.** A full transcript anchors strongly. A capsule — "cfg db → postgres :: OK" — anchors weakly: the Brain knows the result, not the argument. Weak anchoring makes past decisions more revisable.
+
+### Workers are always pure
+
+Workers receive a task, a cached system prompt, and the capsules relevant to that task. They do not receive the argumentative history of the Brain session. Every Worker call is epistemically fresh. This is not a limitation — it is the correct design for execution. An executor that inherits the Brain's accumulated debate would defend architectural decisions when its job is to implement them.
+
+### Compression modes as an epistemic trade-off
+
+The three compression modes (`light`, `balanced`, `extreme`) are not only cost settings. They control where on the **cost × epistemic fidelity** plane the session runs.
+
+| Mode | Compression layers active | Anchor preserved | Friendly | Savings vs standalone | Use when |
+|---|---|---|---|---|---|
+| `light` | Minifier only (L1) | **Yes** | On | ~40% | Design sessions, architecture debates, decisions that may need revisiting |
+| `balanced` *(default)* | Minifier + semantic encoder (L1 + L2) | No | On | ~88% | Project execution, multi-step implementation, standard workflows |
+| `extreme` | All layers (L1 + L2 + L3 opt-in) | No | **Off** | ~93%+ | CI/CD pipelines, batch automation, no human in the loop |
+
+`light` mode preserves the argumentative structure in capsules — the encoder is bypassed and only deterministic minification runs. The Brain accumulates context that a human would recognize as reasoning, not just state. The cost is a fatter history and lower savings; the benefit is that the session can genuinely reconsider.
+
+`balanced` discards the trajectory and retains only the semantic result. The Brain knows what was decided; it does not know how. This is the correct default for execution-heavy sessions where continuity of *state* matters but continuity of *argument* does not.
+
+`extreme` adds maximum compression and disables natural-language expansion (friendly mode off). Output is machine-readable capsules without prose wrapping. Appropriate for pipelines where no human reads the intermediate output.
+
+### Setting the mode
+
+```yaml
+# .burnless/config.yaml
+compression:
+  mode: light       # light | balanced | extreme
+```
+
+Or per-invocation: `burnless --mode light "review this architecture decision"`.
+
+The choice is not about how much you trust the model. It is about what the task requires: **decisions need anchoring; execution needs purity.**

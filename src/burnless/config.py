@@ -71,12 +71,8 @@ DEFAULT_CONFIG: dict = {
         "expensive_model_usd_per_million": 15.0,
     },
     "compression": {
-        # one of: safe | balanced | aggressive
-        # also acts as a tier dial during delegate:
-        #   safe       -> may promote bronze→silver on default match
-        #   balanced   -> use natural routing as-is
-        #   aggressive -> demote one tier (gold→silver, silver→bronze)
-        "mode": "balanced",
+        "mode": "balanced",   # canonical: light | balanced | extreme (aliases: safe→light, aggressive→extreme)
+        "friendly": True,      # True = Haiku expands capsule into prose; False = print raw capsule (default for extreme)
     },
 }
 
@@ -86,7 +82,14 @@ def load(path: Path) -> dict:
         return DEFAULT_CONFIG
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    return _deep_merge(DEFAULT_CONFIG, data)
+    user_comp = data.get("compression", {}) if isinstance(data.get("compression"), dict) else {}
+    data = _deep_merge(DEFAULT_CONFIG, data)
+    from . import compression as _comp
+    comp = data.setdefault("compression", {})
+    comp["mode"] = _comp.normalize_mode(comp.get("mode", "balanced"))
+    if "friendly" not in user_comp:
+        comp["friendly"] = comp["mode"] != "extreme"
+    return data
 
 
 def write_default(path: Path) -> None:
