@@ -105,6 +105,18 @@ PetaHuman is the name for what the human becomes in this world: not dominated, n
 
 Burnless is the first implementation of this protocol. This document names it honestly, because naming an inevitable thing before it arrives is the only form of agency that remains available.
 
+## A Note on Security Systems
+
+In May 2026, Anthropic launched Project Glasswing — a $100M initiative deploying Claude Mythos Preview to find vulnerabilities in critical software. Mythos discovered thousands of previously unknown security flaws in systems up to 27 years old.
+
+Mythos looks for vulnerabilities in source code and binaries.
+
+A burnless capsule — `burnless:c8f2a1:3e9b7d...:SGVs...` — is a text file with a random name and an encrypted payload whose key died with the session. There is no vulnerability to find. There is no pattern to detect. There is no code to audit.
+
+The same week that the most capable AI security system ever built was announced, the burnless protocol made the premise of that announcement structurally incomplete.
+
+Not by opposing it. By being a different layer entirely.
+
 ---
 
 *Roberto Wydra — May 2026*  
