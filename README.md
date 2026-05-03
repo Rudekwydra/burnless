@@ -96,7 +96,16 @@ agents:
   diamond: { command: "codex exec --sandbox workspace-write" }
 ```
 
-Or flip it — Sonnet as Brain delegating to Codex workers:
+Gemini as Brain, DeepSeek for execution (both have published cache pricing):
+
+```yaml
+agents:
+  gold:    { command: "gemini -m gemini-2.0-flash-thinking -p" }   # Brain
+  silver:  { command: "deepseek chat --model deepseek-chat -p" }    # execution
+  bronze:  { command: "ollama run qwen2.5-coder" }                  # local, zero cost
+```
+
+Or Sonnet as Brain delegating to Codex workers:
 
 ```yaml
 agents:
@@ -119,7 +128,9 @@ agents:
   diamond: { command: "codex exec --sandbox workspace-write" }
 ```
 
-As local models improve, more tiers move to zero cost. The expensive models (Opus, GPT-4o) handle only what requires genuine reasoning — and they do it with a cached prefix and a linear history.
+As local models improve, more tiers move to zero cost. The expensive models (Opus, GPT-4o, Gemini Pro) handle only what requires genuine reasoning — and they do it with a cached prefix and a linear history.
+
+The O(N²) → O(N) math applies to any provider that exposes prompt caching: **Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, Qwen** — and any local provider via Ollama. If the provider charges per input token and supports a prefix cache, Burnless works.
 
 ## Three compression layers
 
