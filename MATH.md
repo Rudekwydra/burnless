@@ -1,7 +1,8 @@
 # The Math
 
-> **Burnless is intent-compressed intelligence orchestration.**
-> The math below derives the cost shape that follows from that definition.
+> **Burnless is the TCP/IP of agentic LLM orchestration.**
+> Just as TCP/IP separated the application layer from network routing, Burnless separates Cognitive Execution (Workers) from State Management (Capsules/Maestro).
+> The math below derives the cost shape that follows from that architecture.
 
 Burnless makes one claim: multi-turn agent loops cost `Θ(N²)` in the standalone case and `Θ(N)` in the Burnless case. This document derives both, then composes them with per-model pricing into a single dollar formula you can parameterize against any provider.
 

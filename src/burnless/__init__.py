@@ -1,2 +1,2 @@
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 TAGLINE = "Intent-compressed orchestration for multi-turn LLM loops."
