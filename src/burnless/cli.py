@@ -934,8 +934,16 @@ def cmd_capsule(args: argparse.Namespace) -> int:
 def cmd_compress(args: argparse.Namespace) -> int:
     if args.file:
         text = Path(args.file).read_text(encoding="utf-8")
-    else:
+    elif not sys.stdin.isatty():
         text = sys.stdin.read()
+    else:
+        print(
+            "burnless compress: no input. Pipe a transcript or pass --file <path>.\n"
+            "  Example: cat session.log | burnless compress\n"
+            "           burnless compress --file session.log",
+            file=sys.stderr,
+        )
+        return 2
 
     _load_anthropic_key()
     root = paths_mod.find_root() or paths_mod.root(Path.cwd())
