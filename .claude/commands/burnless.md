@@ -1,57 +1,57 @@
 # /burnless
 
-Activate Burnless compression intermediary for this chat session.
+Activate Burnless compression for this Claude Code session.
 
-Compresses the current conversation into a capsule, anchors future responses
-to it, and lets the old history become a passive scroll.
+Compresses recent conversation into a capsule and anchors future responses to it.
+Cache-warm: the glossary block is byte-identical every call — providers cache it
+automatically. From turn 2 onward, prefix costs drop ~90-99%.
 
 ## Steps
 
-1. Check burnless is installed: `burnless --version`. If not found, tell the
-   user to run `pip install burnless` and stop.
+1. Check burnless is installed: `burnless --version`. If missing: `pip install burnless` and stop.
 
-2. Write the last 20 turns of this conversation to a temp file:
+2. Write the last 20 turns to a temp file:
    ```
    /tmp/burnless_<timestamp>.txt
    ```
-   Format each turn as:
+   Format:
    ```
    [user]: <message>
    [assistant]: <response>
    ```
 
-3. Run:
+3. Compress:
    ```
    burnless compress --file /tmp/burnless_<timestamp>.txt
    ```
-   Capture the output line (capsule ID, chars, ratio, saved path).
+   Capture the capsule ID, chars, ratio, and saved path.
 
-4. Read the saved capsule file and display it to the user inside a code block
-   with the header:
+4. Display the capsule:
    ```
    Burnless capsule — <capsule_id> — <orig>c → <compressed>c (<ratio>%)
    ```
 
 5. Tell the user:
-   > Capsule saved. From this point I am anchoring my responses to the capsule
-   > above — not to the full conversation history. The history above is your
-   > scroll. Type anything to continue.
+   > Capsule active. Anchoring to capsule above — not the full history.
+   > Type anything to continue.
 
-6. **From this turn forward**: treat the capsule as the authoritative context.
-   Do not reference the verbose history above it. If the user asks about
-   something not in the capsule, say so and ask them to clarify — do not
-   hallucinate from stale context.
+6. **From this turn forward**: treat the capsule as authoritative context.
+   If something isn't in the capsule, ask for clarification — do not hallucinate.
 
-7. Every 10 user turns after activation, automatically run:
+7. Every 10 turns, auto-update:
    ```
    burnless compress --file /tmp/burnless_update_<timestamp>.txt
    ```
-   …with the new turns appended, and silently update the capsule. Notify the
-   user with one line: `[burnless] capsule updated — <new_id> (<ratio>%)`.
+   Notify: `[burnless] capsule updated — <new_id> (<ratio>%)`
 
-## Notes
+## Resume in new session
 
-- The capsule session ID is random (`secrets.token_hex(6)`) — this is by
-  design. Capsules are structurally indistinguishable from plain text files.
-- To resume in a new session: `burnless brain --capsule <path>`
-- To see all saved capsules: `ls .burnless/sessions/`
+```
+burnless brain --capsule <path>
+```
+
+## See all capsules
+
+```
+ls .burnless/sessions/
+```
