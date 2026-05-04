@@ -459,10 +459,34 @@ def cmd_run(args: argparse.Namespace) -> int:
     state["next"] = capsule.next or None
     state_mod.save(p["state"], state)
 
+    # Roundtrip decode: capsule → natural prose (Haiku, voice_match).
+    # Brain sees ~100-200 tokens of decoded prose instead of raw worker stdout.
+    decoded_result: str | None = None
+    no_decode = getattr(args, "no_decode", False)
+    if not no_decode and _load_anthropic_key():
+        try:
+            from .codec.decoder import decode as _decode
+            cap_lines = [f"{capsule.id} :: {capsule.status} {capsule.objective}"]
+            if capsule.files:
+                cap_lines.append("files: " + ", ".join(capsule.files[:4]))
+            if capsule.decisions:
+                cap_lines.append("decided: " + "; ".join(capsule.decisions[:2]))
+            if capsule.errors:
+                cap_lines.append("errors: " + "; ".join(capsule.errors[:2]))
+            if capsule.next:
+                cap_lines.append(f"next: {capsule.next}")
+            cap_text = "\n".join(cap_lines)
+            decoded_result = _decode(cap_text, project_root=root.parent, voice_sample=goal)
+        except Exception:
+            pass
+
     bt = metrics_mod.load(p["metrics"])["burnless_tokens"]
     status_str = summary.get("status", "?")
     next_str = capsule.next or "(none)"
-    if status_str == "OK":
+
+    if decoded_result:
+        print(f"\n── Result ──\n{decoded_result}\n")
+    elif status_str == "OK":
         print(f"\nOK:{did}")
         print(f"Next: {next_str}")
     elif interrupted:
@@ -1112,6 +1136,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-maestro",
         action="store_true",
         help="skip Maestro session backend; force the legacy subprocess agent",
+    )
+    sp.add_argument(
+        "--no-decode",
+        action="store_true",
+        help="skip Haiku roundtrip decode; print terse capsule status instead",
     )
     modes = sp.add_mutually_exclusive_group()
     modes.add_argument("--watch", action="store_const", const="watch", dest="mode", help="show a live worker panel")
