@@ -7,10 +7,18 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
 
 # Burnless local state
 .burnless/
 exec_log/
+scratch/
+ai_scratch/
+tmp/
 
 # Credentials / local config
 .stripe-products.json
@@ -23,6 +31,10 @@ exec_log/
 *.pem
 *.p12
 *.p8
+*.log
+*.local.md
+*.scratch.md
+*.tmp.md
 
 # Cloudflare
 .wrangler/

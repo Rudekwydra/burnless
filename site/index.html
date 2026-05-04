@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="88% cheaper at turn 10. Burnless turns O(N²) LLM context replay into O(N) capsule memory, with cache-warm orchestration across any Maestro and Worker.">
-<meta property="og:title" content="Burnless — O(N²) → O(N). 88% cheaper at turn 10.">
+<meta name="description" content="88% cheaper at turn 10. Burnless turns O(N²) LLM context replay into practical-linear capsule memory, with cache-warm orchestration across any Maestro and Worker.">
+<meta property="og:title" content="Burnless — practical-linear LLM agent loops. 88% cheaper at turn 10.">
 <meta property="og:description" content="88% cheaper at turn 10 by turning long LLM conversations into compact capsule memory. Open source, MIT, any LLM.">
 <meta property="og:url" content="https://burnless.pro">
 <meta property="og:image" content="https://burnless.pro/cost_chart.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://burnless.pro/cost_chart.png">
-<title>Burnless — O(N²) → O(N). 88% cheaper at turn 10.</title>
+<title>Burnless — practical-linear LLM agent loops. 88% cheaper at turn 10.</title>
 <style>
   :root {
     --bg: #0a0a0a;
@@ -214,6 +214,7 @@
       <a href="#pain">Why</a>
       <a href="#pricing">Editions</a>
       <a href="https://github.com/rudekwydra/burnless" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/rudekwydra/burnless/blob/main/BURNLESS_FOR_LLMS.md" target="_blank" rel="noopener">For LLMs</a>
       <a href="https://github.com/rudekwydra/burnless/blob/main/VISION.md" target="_blank" rel="noopener">Vision</a>
       <a href="#waitlist">Cloud waitlist</a>
     </nav>
@@ -224,8 +225,8 @@
   <section class="hero">
     <div class="container">
       <h1><span class="burn">Intent-compressed</span><br>intelligence orchestration.</h1>
-      <p class="sub" style="font-size:18px; color:var(--fg); font-weight:500;">88% cheaper at turn 10. A maestro for any LLM. O(N²) → O(N) by math.</p>
-      <p class="sub">Pick any model as the Maestro — Claude, GPT, Gemini, or a local Ollama. It orchestrates gold/silver/bronze Workers from any vendor and shares a cached protocol prefix. <strong style="color:var(--fg);">88% cheaper at turn 10</strong>, not by trick — by arithmetic on the published pricing pages.</p>
+      <p class="sub" style="font-size:18px; color:var(--fg); font-weight:500;">88% cheaper at turn 10. A maestro for any LLM. Practical-linear cost by math.</p>
+      <p class="sub">Pick any model as the Maestro — Claude, GPT, Gemini, or a local Ollama. It orchestrates gold/silver/bronze Workers from any vendor and shares a cached protocol prefix. <strong style="color:var(--fg);">88% cheaper at turn 10</strong> by arithmetic on the published pricing pages.</p>
       <p class="sub">Burnless turns long LLM conversations into compact capsule memory. Under the hood, it is evolving into a candidate protocol layer for human-LLM and LLM-LLM communication: a living, compressed, privacy-aware language between humans, maestros, and workers.</p>
       <p class="sub" style="color:var(--accent); font-weight:500;">Real-world: 16× reduction in API consumption measured by the protocol author — heaviest development day (spec + PyPI + benchmark), 1% of weekly quota used.</p>
 
@@ -275,8 +276,8 @@
           <p>Estimated energy saved at 1% of global LLM inference. Denmark's entire electricity consumption is 35 TWh/year. This is not a rounding error.</p>
         </div>
         <div class="pain">
-          <h3>Structurally unblockable</h3>
-          <p>You cannot prohibit sending a summary of a conversation. That is indistinguishable from normal behavior. The protocol is invisible by design.</p>
+          <h3>Structurally unblockable by design</h3>
+          <p>A semantic capsule is a dense summary of session state sent as ordinary text. The protocol needs no provider-specific feature to carry compact state.</p>
         </div>
         <div class="pain">
           <h3>Inevitable. Open.</h3>

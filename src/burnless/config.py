@@ -41,7 +41,9 @@ DEFAULT_CONFIG: dict = {
             "texto", "readme", "código", "codigo", "code", "erro", "bug",
             "debug", "terminal", "arquivo", "repo", "teste", "test",
             "build", "compilar", "compile", "stack trace", "exception",
-            "compression", "simulator",
+            "compression", "simulator", "projeto", "repositorio",
+            "repositório", "pasta", "diretorio", "diretório", "memoria",
+            "memória", "anotacoes", "anotações",
         ],
         "bronze": [
             "resumir", "resumo", "summarize", "summary", "limpar", "clean",
@@ -51,6 +53,9 @@ DEFAULT_CONFIG: dict = {
         # Opt-in hardcore filter: blocks --tier override upgrades when the
         # natural route resolved to a smaller tier.
         "hardcore_filter": False,
+    },
+    "audit": {
+        "auditors": ["bronze", "silver", "gold"],
     },
     "metrics": {
         "token_estimation_ratio": 4,
@@ -85,9 +90,11 @@ def load(path: Path) -> dict:
         return DEFAULT_CONFIG
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
+    user_agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
+    legacy_diamond_only = "diamond" in user_agents and "silver" not in user_agents
     user_comp = data.get("compression", {}) if isinstance(data.get("compression"), dict) else {}
     data = _deep_merge(DEFAULT_CONFIG, data)
-    _normalize_legacy_tiers(data)
+    _normalize_legacy_tiers(data, prefer_diamond=legacy_diamond_only)
     from . import compression as _comp
     comp = data.setdefault("compression", {})
     comp["mode"] = _comp.normalize_mode(comp.get("mode", "balanced"))
@@ -118,7 +125,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
-def _normalize_legacy_tiers(data: dict) -> None:
+def _normalize_legacy_tiers(data: dict, *, prefer_diamond: bool = False) -> None:
     """Drop the legacy diamond key — it's not a real tier (dispatcher maps dia→silver).
     Only migrates diamond→silver when silver isn't already defined.
     """
@@ -126,7 +133,7 @@ def _normalize_legacy_tiers(data: dict) -> None:
     if isinstance(agents, dict) and isinstance(agents.get("diamond"), dict):
         diamond = dict(agents["diamond"])
         silver = agents.get("silver")
-        if not isinstance(silver, dict):
+        if prefer_diamond or not isinstance(silver, dict):
             agents["silver"] = diamond
         agents.pop("diamond", None)
 

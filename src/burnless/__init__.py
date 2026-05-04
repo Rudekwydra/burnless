@@ -1,2 +1,2 @@
-__version__ = "0.6.0"
-TAGLINE = "Stop burning tokens on repeated context."
+__version__ = "0.6.1"
+TAGLINE = "Intent-compressed orchestration for multi-turn LLM loops."

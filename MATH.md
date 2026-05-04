@@ -253,7 +253,7 @@ The three compression modes (`light`, `balanced`, `extreme`) are not only cost s
 | `balanced` *(default)* | Minifier + semantic encoder (L1 + L2) | No | On | ~88% | Project execution, multi-step implementation, standard workflows |
 | `extreme` | All layers (L1 + L2 + L3 opt-in) | No | **Off** | ~93%+ | CI/CD pipelines, batch automation, no human in the loop |
 
-`light` mode preserves the argumentative structure in capsules — the encoder is bypassed and only deterministic minification runs. The Brain accumulates context that a human would recognize as reasoning, not just state. The cost is a fatter history and lower savings; the benefit is that the session can genuinely reconsider.
+`light` mode preserves the argumentative structure in capsules — the encoder is skipped and only deterministic minification runs. The Brain accumulates context that a human would recognize as reasoning, not just state. The cost is a fatter history and lower savings; the benefit is that the session can genuinely reconsider.
 
 `balanced` discards the trajectory and retains only the semantic result. The Brain knows what was decided; it does not know how. This is the correct default for execution-heavy sessions where continuity of *state* matters but continuity of *argument* does not.
 

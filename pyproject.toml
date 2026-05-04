@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "burnless"
-version = "0.6.0"
-description = "Stop burning tokens on repeated context."
+version = "0.6.1"
+description = "Intent-compressed orchestration for multi-turn LLM loops."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Roberto Monticelli Wydra" }]
@@ -30,7 +30,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "build>=1.2", "twine>=6"]
+release = ["build>=1.2", "twine>=6"]
 
 [project.urls]
 Homepage = "https://burnless.pro"
