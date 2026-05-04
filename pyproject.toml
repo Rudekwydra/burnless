@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "burnless"
-version = "0.5.7"
+version = "0.5.8"
 description = "Stop burning tokens on repeated context."
 readme = "README.md"
 requires-python = ">=3.10"
