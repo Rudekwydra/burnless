@@ -52,5 +52,5 @@ source ~/.config/burnless/pypi.env
 set +a
 .venv/bin/python -m build --no-isolation
 .venv/bin/python -m twine check dist/burnless-*
-.venv/bin/python -m twine upload dist/burnless-0.5.2*
+.venv/bin/python -m twine upload dist/burnless-<version>*
 ```

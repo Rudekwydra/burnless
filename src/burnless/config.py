@@ -72,6 +72,11 @@ DEFAULT_CONFIG: dict = {
         "estimated_compaction_ratio": 0.30,
         "keep_recent_capsules": 8,
     },
+    "privacy": {
+        "mode": "cost",       # cost | redact | audit | opaque
+        "raw_retention": "plain",  # current default: plain | none | encrypted (planned)
+        "key_store": "memory",     # memory | local (planned for audit mode)
+    },
 }
 
 

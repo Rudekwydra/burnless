@@ -14,7 +14,7 @@ The asymmetry is mechanical, not heuristic. Any provider that charges per input 
 
 1. **Independence.** Any model as Maestro. Any model as Worker. Switch providers in one line.
 2. **User-enforced rules, not LLM goodwill.** You write the routing keywords, the per-tier `allowedTools`, and the cost budgets in `.burnless/config.yaml`. With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro **cannot escape** to a higher tier than the keyword router resolved — no quiet upgrades to Opus for tasks the rules said belong to Haiku. `allowedTools` is enforced by the worker CLI itself, not hinted at in the prompt: when bronze ships with `Read,Bash`, it physically cannot `Edit`. Bypass requires an explicit `--force` from the human.
-3. **Four compression layers.** Deterministic minifier (regex, zero cost), semantic encoder (small model, ~$0.001/turn), XOR cipher, and base64 capsule packing. Each layer is independent and additive.
+3. **Four compression layers.** Deterministic minifier (regex, zero cost), semantic encoder (small model, ~$0.001/turn), lightweight capsule envelope, and base64 capsule packing. Each layer is independent and additive.
 4. **Math, not marketing.** 88% cheaper at turn 10 by arithmetic on the published pricing pages. Verify with `python bench/run.py --turns 8` and your own API key.
 
 ## The numbers
@@ -64,7 +64,7 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 **6. Cache-emergent glossary, not static dictionaries.** The semantic compression layer (Layer 2) uses Haiku with session context as the only "dictionary." Abbreviations emerge from the session — Haiku infers them from prior turns and applies them consistently. No YAML, no `_ABBREV`, no per-language file. The glossary lives in the cache and dies with the session. This is both cheaper and more universal than any static approach: it works in any language without configuration, and the compression dialect is unique to each session.
 
-**6b. Cipher layer kills auditability by design.** Layers 3 and 4 (XOR + base64 with a session-unique key) are pure Python, zero cost, zero API. The session key is never written to disk — it dies when the session ends. A capsule on disk after TTL expiry is opaque to humans and to AI systems without the session context. This is a structural property of the protocol, not a configuration option.
+**6b. Capsule privacy is a mode, not a slogan.** Burnless v0.5 proves the cost and orchestration layer. Capsule v2 no longer embeds the key in the capsule; the key lives in the local in-memory keyring for the current process. Strong enterprise privacy requires the next protocol layer: local key custody, redaction maps, raw-retention policy, and an explicit audit mode. The current XOR/base64 layer is a lightweight protocol envelope, not a claim of enterprise cryptography.
 
 **7. The benchmark is the proof.** `bench/run.py` is short, dependency-light, hits the Anthropic SDK directly with no mocks, and writes raw `response.usage` to JSON. Anyone can rerun it, contest the numbers, and open an issue with their own results file. We did not write a marketing page about savings; we wrote a script that produces them and invited disagreement. That is the only honest way to publish a cost claim.
 
@@ -139,22 +139,24 @@ The O(N²) → O(N) math applies to any provider that exposes prompt caching: **
 
 ## Four compression layers
 
-Each layer is independent and additive. Layers 1, 3, and 4 are pure Python — zero API calls, zero cost:
+Each layer is independent and additive. Layers 1, 3, and 4 are pure Python — zero API calls, zero cost. In v0.5, this is primarily a cost/context protocol. Treat privacy as experimental until `privacy.mode` lands.
 
 | Layer | What it does | Cost | When it fires |
 |-------|-------------|------|--------------|
 | **1. Deterministic minifier** | Strips universal filler phrases, normalizes whitespace | Zero — pure Python | Every turn, before encoder |
 | **2. Cache-emergent glossary** | Haiku compresses semantically. Abbreviations emerge from session context — no static dictionary. Glossary lives in the cache; dies with the session | ~$0.001/turn | `balanced` and `extreme` modes |
-| **3. XOR cipher** | Session-unique key (`secrets.token_hex(16)`) scrambles the compressed text. Key is never persisted — it dies when the session ends | Zero — pure Python | Every turn after Layer 2 |
-| **4. Base64 encode** | Encodes the ciphered output to a portable ASCII capsule | Zero — pure Python | Every turn after Layer 3 |
+| **3. Capsule envelope** | Scrambles the compressed text with a session key held in local memory by default. This is not enterprise-grade encryption yet | Zero — pure Python | Every turn after Layer 2 |
+| **4. Base64 pack** | Encodes the envelope to a portable ASCII capsule | Zero — pure Python | Every turn after Layer 3 |
 
-Capsule format: `burnless:<session_id>:<key>:<base64_ciphertext>`
+Capsule format v2: `burnless:v2:<session_id>:<key_id>:<base64_ciphertext>`
 
-Decode: `burnless decode --file session.capsule` — pure Python, no API call.
+Legacy v1 capsules used `burnless:<session_id>:<key>:<base64_ciphertext>` and remain decodable for compatibility, but v1 should not be used for privacy claims because the key is embedded.
+
+Decode: `burnless decode --file session.capsule` — pure Python, no API call. v2 decode requires the local key to still be available in the current process unless future audit mode stores it in a local keystore.
 
 **What this replaces:** static glossary files, LLMLingua-2 (which requires a heavy local model for compression *and* decompression), and vector databases for session memory. The capsule *is* the memory. It persists on disk, decodes instantly, and requires no server.
 
-**Structural property:** the session key dies with the cache TTL (1h). After that, the capsule on disk is opaque to humans and to AI systems without the session context. This is not a design choice — it is a consequence of the architecture.
+**Privacy roadmap:** `cost` mode minimizes repeated context exposure. `redact` mode will keep sensitive values local and send placeholders to providers. `audit` mode will store keys locally for controlled review. `opaque` mode will keep keys memory-only and make old capsules intentionally undecodable after the process/session dies.
 
 The 88% cost reduction in the benchmark comes primarily from the *architecture* — shared prefix cache + linear capsule history. The four compression layers compound on top.
 
@@ -255,7 +257,7 @@ The architecture is provider-agnostic by design. Current implementation status:
 - ✅ **Routing, capsules, exec_log, three compression layers, shared system prompt**: provider-neutral, work today.
 - ✅ **Reference benchmark**: uses Anthropic SDK because their cache pricing is published and easiest to reproduce. The math reproduces wherever a provider exposes prompt caching.
 - ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. If you want to skip the in-process Brain, `burnless delegate` + `burnless run` already cover the full Brain→Worker loop using whatever CLI you configured.
-- ✅ **PyPI release**: `pip install burnless` — version 0.5.2 live at https://pypi.org/project/burnless/.
+- ✅ **PyPI release**: `pip install burnless` — version 0.5.3 live at https://pypi.org/project/burnless/.
 
 Honest about gaps. PRs welcome — especially for the OpenAI/Gemini Brain adapter.
 
