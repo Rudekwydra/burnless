@@ -1,2 +1,2 @@
-__version__ = "0.5.9"
+__version__ = "0.6.0"
 TAGLINE = "Stop burning tokens on repeated context."

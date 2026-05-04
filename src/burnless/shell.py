@@ -8,6 +8,13 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from prompt_toolkit import prompt as _pt_prompt
+    from prompt_toolkit.formatted_text import ANSI
+    _HAS_PROMPT_TOOLKIT = True
+except ImportError:
+    _HAS_PROMPT_TOOLKIT = False
+
 from . import TAGLINE, __version__
 from . import chat_history
 from . import compression as compression_mod
@@ -69,7 +76,7 @@ def main() -> int:
 
     while True:
         try:
-            text = input(_prompt(p)).strip()
+            text = _read_input(_prompt(p)).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
@@ -80,10 +87,48 @@ def main() -> int:
             return 0
 
 
+_pt_session: "PromptSession | None" = None  # type: ignore[name-defined]
+
+
+def _get_pt_session() -> "PromptSession":  # type: ignore[name-defined]
+    global _pt_session
+    if _pt_session is not None:
+        return _pt_session
+    from prompt_toolkit import PromptSession
+
+    paste_len: list[int] = [0]
+
+    def bottom_toolbar():
+        n = paste_len[0]
+        return f" [paste {n:,} chars — press Enter to send]" if n > 80 else ""
+
+    _pt_session = PromptSession(bottom_toolbar=bottom_toolbar)
+
+    def _on_text_changed(_):
+        paste_len[0] = len(_pt_session.default_buffer.text)  # type: ignore[union-attr]
+
+    _pt_session.default_buffer.on_text_changed += _on_text_changed
+    return _pt_session
+
+
 def _prompt(p: dict[str, Path]) -> str:
     tier = _state(p).get("active_tier")
     label = tier or "auto"
-    return f"burnless [{label}] › "
+    # orange fire color for the prefix, dim brackets, bold ›
+    return f"\033[33mburnless\033[0m \033[2m[{label}]\033[0m \033[33m›\033[0m "
+
+
+def _read_input(prompt_str: str) -> str:
+    """Read one line of input with bracketed-paste support.
+
+    prompt_toolkit buffers pasted text and only submits on a real Enter —
+    no mid-paste line-by-line processing. Large pastes show a char count
+    in the status bar, mirroring Claude Code's paste indicator. Falls back
+    to plain input() when not a tty or prompt_toolkit is unavailable.
+    """
+    if not _HAS_PROMPT_TOOLKIT or not sys.stdout.isatty():
+        return input(prompt_str)
+    return _get_pt_session().prompt(ANSI(prompt_str))
 
 
 def handle_input(text: str, p: dict[str, Path]) -> bool:
@@ -207,30 +252,9 @@ def _new_objective(p: dict[str, Path], user_text: str, objective: str) -> bool:
     cfg = _config(p)
     tier, matched = routing_mod.route(objective, cfg["routing"])
     agent = cfg["agents"][tier]["name"]
-    response = (
-        "Objective captured.\n\n"
-        "Suggested delegation:\n"
-        f"{tier}/{agent}\n\n"
-        "Task:\n"
-        f"{objective}\n\n"
-        "Run now? [Y/n/edit]"
-    )
-    print(response)
-    answer = input().strip().lower()
-    if answer in {"n", "no", "nao", "não"}:
-        return _record_only(p, user_text, "Objective captured. Delegation was not created.")
-    task = objective
-    if answer in {"e", "edit"}:
-        edited = input("Task: ").strip()
-        if edited:
-            task = edited
-    did = _create_delegation(p, task, goal=objective, tier=None)
-    created = f"Delegation {did} created for {tier}/{agent}."
-    print(created)
-    if answer in {"n", "no", "nao", "não"}:
-        chat_history.append(p["history"], user=user_text, burnless=created)
-        return False
-    return _run(p, user_text, did, prefix=created)
+    did = _create_delegation(p, objective, goal=objective, tier=None)
+    prefix = f"\033[2m→ {did} · {tier}/{agent}\033[0m"
+    return _run(p, user_text, did, prefix=prefix)
 
 
 def _fix(p: dict[str, Path], user_text: str, did: str) -> bool:
@@ -243,23 +267,9 @@ def _fix(p: dict[str, Path], user_text: str, did: str) -> bool:
         "Patch the command, template, or code that caused the error, then validate the fix.\n\n"
         f"Relevant log tail:\n{snippet}"
     )
-    print(
-        f"I found the failure in {did}.\n\n"
-        "Suggested repair:\n"
-        "Use codex to inspect the error log and patch the command/template.\n\n"
-        "Create and run now? [Y/n/edit]"
-    )
-    answer = input().strip().lower()
-    if answer in {"n", "no", "nao", "não"}:
-        return _record_only(p, user_text, f"Suggested repair for {did}. Delegation was not created.")
-    if answer in {"e", "edit"}:
-        edited = input("Task: ").strip()
-        if edited:
-            task = edited
     new_id = _create_delegation(p, task, goal=f"Fix {did}", tier="silver")
-    created = f"Delegation {new_id} created for silver/code."
-    print(created)
-    return _run(p, user_text, new_id, prefix=created)
+    prefix = f"\033[2m→ {new_id} · fix {did}\033[0m"
+    return _run(p, user_text, new_id, prefix=prefix)
 
 
 def _continue(p: dict[str, Path], user_text: str) -> bool:
@@ -275,24 +285,9 @@ def _continue(p: dict[str, Path], user_text: str) -> bool:
         f"Continue from the current Burnless state. Last delegation: {did or 'none'}. "
         f"Next useful step: {next_step}"
     )
-    print(
-        "Based on the last capsule, the next useful step is:\n"
-        f"{next_step}\n\n"
-        "Suggested agent:\n"
-        "silver/code\n\n"
-        "Create and run now? [Y/n/edit]"
-    )
-    answer = input().strip().lower()
-    if answer in {"n", "no", "nao", "não"}:
-        return _record_only(p, user_text, "Suggested next delegation. Delegation was not created.")
-    if answer in {"e", "edit"}:
-        edited = input("Task: ").strip()
-        if edited:
-            task = edited
     new_id = _create_delegation(p, task, goal="Continue from last capsule", tier="silver")
-    created = f"Delegation {new_id} created for silver/code."
-    print(created)
-    return _run(p, user_text, new_id, prefix=created)
+    prefix = f"\033[2m→ {new_id} · continue\033[0m"
+    return _run(p, user_text, new_id, prefix=prefix)
 
 
 def _run(p: dict[str, Path], user_text: str, did: str, *, prefix: str = "") -> bool:
