@@ -1,10 +1,9 @@
 # /burnless-delegate
 
-Delegate a task via Burnless Maestro from inside Claude Code.
+Delegate a task through the Burnless protocol from inside Claude Code.
 
-## What this does
-
-Routes your task to the right tier (gold/silver/bronze/diamond) based on routing keywords in `.burnless/config.yaml`, spawns the worker, streams output to a live panel, and writes a capsule to the Brain history.
+Routes to the right tier (gold/silver/bronze) via keywords in `.burnless/config.yaml`,
+executes the worker, and writes a capsule to session history.
 
 ## Usage
 
@@ -14,18 +13,36 @@ Routes your task to the right tier (gold/silver/bronze/diamond) based on routing
 
 ## Steps
 
-1. Check that Burnless is installed: run `burnless --version`. If not found, tell the user to run `pip install burnless` and stop.
+1. Check burnless is installed: `burnless --version`. If missing, tell user `pip install burnless` and stop.
 
-2. Check that `.burnless/config.yaml` exists in the current directory. If not, tell the user to run `burnless init` first and stop.
+2. Check `.burnless/config.yaml` exists. If missing, tell user `burnless init` and stop.
 
-3. Run: `burnless delegate "$ARGUMENTS"` and show the output.
+3. Run:
+   ```
+   burnless delegate "$ARGUMENTS"
+   ```
+   Note the delegation ID (e.g. `d042`).
 
-4. If the delegation was created (dNNN), immediately run: `burnless run dNNN` and stream the output.
+4. Immediately run:
+   ```
+   burnless run d042
+   ```
+   Stream the output.
 
-5. After completion, run `burnless status` and show the capsule summary.
+5. After completion show: `burnless status`
+
+## Tiers
+
+| Tier | Default agent | Use for |
+|------|--------------|---------|
+| gold | claude-opus-4-7 | Architecture, strategy, complex reasoning |
+| silver | claude-sonnet-4-6 | Implementation, docs, code |
+| bronze | claude-haiku-4-5 | Summarize, classify, extract |
+
+Tier is chosen automatically. Override: `burnless delegate --tier gold "<task>"`
 
 ## Notes
 
-- Workers shell out to whatever CLI is configured in `config.yaml` — Claude, Codex, GPT-4o, Gemini, Ollama, anything.
-- Raw logs are written to `.burnless/logs/dNNN.log` — never replayed into context.
-- This skill itself is the Brain. The worker is what gets delegated.
+- This Claude Code session IS the Brain. Workers are what get delegated.
+- Raw logs in `.burnless/logs/dNNN.log` — never replayed into context.
+- Worker output is compressed into a capsule for the next turn.
