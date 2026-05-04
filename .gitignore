@@ -15,8 +15,14 @@ exec_log/
 # Credentials / local config
 .stripe-products.json
 .env
+.env.*
+!.env.example
+.pypirc
 *.env
 *.key
+*.pem
+*.p12
+*.p8
 
 # Cloudflare
 .wrangler/
@@ -33,6 +39,9 @@ PITCH_PT.md
 # Internal codex prompts (working notes; runtime artifacts in _design/maestro_v1/ stay)
 _design/*_prompt.md
 _design/maestro_v1/codex_*.md
+
+# Blindless — private design + legal reviews; never commit
+_design/blindless/
 
 # Bench legacy (superseded by bench/run.py)
 bench/v4_maestro.py
