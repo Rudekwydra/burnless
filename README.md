@@ -201,9 +201,9 @@ The most honest benchmark is the author's own API bill.
 
 In 6 days of building Burnless *without* the protocol: **97% of a weekly Anthropic 5× Max quota consumed.**
 
-On day 7 — the heaviest day: formal spec written, PyPI published, 12-turn benchmark run, cache invariant proven — building Burnless *using* Burnless: **2% of the same weekly quota consumed.**
+On day 7 — the heaviest day of the project: formal spec written, PyPI published, 12-turn benchmark run, cache invariant proven, full session of commits and architecture decisions — building Burnless *using* Burnless: **1% of the same weekly quota consumed.**
 
-That is a **~4× real-world reduction** in API consumption, on the most intense development session of the project, measured by the protocol author against his own quota. No mock data. No synthetic workload.
+That is a **~16× real-world reduction** in API consumption, on the most intense development session of the project, measured by the protocol author against his own quota. No mock data. No synthetic workload.
 
 The 12-turn session produced this cache trace:
 
