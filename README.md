@@ -283,7 +283,7 @@ The architecture is provider-agnostic by design. Current implementation status:
 - ✅ **Routing, capsules, exec_log, three compression layers, shared system prompt**: provider-neutral, work today.
 - ✅ **Reference benchmark**: uses Anthropic SDK because their cache pricing is published and easiest to reproduce. The math reproduces wherever a provider exposes prompt caching.
 - ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. If you want to skip the in-process Brain, `burnless delegate` + `burnless run` already cover the full Brain→Worker loop using whatever CLI you configured.
-- ✅ **PyPI release**: `pip install burnless` — version 0.5.3 live at https://pypi.org/project/burnless/.
+- ✅ **PyPI release**: `pip install burnless` — version 0.6.0 live at https://pypi.org/project/burnless/.
 
 Honest about gaps. PRs welcome — especially for the OpenAI/Gemini Brain adapter.
 
