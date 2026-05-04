@@ -11,6 +11,57 @@ Burnless separates four surfaces:
 3. what the provider sees,
 4. what the project must remember.
 
+## Architecture
+
+Every Burnless session has three configurable components:
+
+- **Encoder/Decoder** — compresses raw text into capsules and expands capsules
+  back to natural language. Default: cloud LLM (Haiku). Private: local Ollama.
+- **Maestro** — the orchestrating LLM that receives only capsules, decides
+  what to do, and emits delegation instructions. Never executes directly.
+  Default: cloud LLM. Private: local Ollama.
+- **Workers** — gold/silver/bronze agents that execute delegated tasks and
+  respond with compact capsules. Default: cloud LLMs. Can be local.
+
+The Maestro never sees raw text — only capsules. Workers never see conversation
+history — only the specific task capsule they receive.
+
+## Privacy Levels
+
+Privacy is a consequence of where each component runs, not a mode flag.
+
+| Level | Encoder/Decoder | Maestro | Workers | Cloud sees |
+|-------|----------------|---------|---------|------------|
+| **0** | Cloud | Cloud | Cloud | Everything |
+| **1** | Local | Cloud | Cloud | Compressed capsules only — not raw text |
+| **2** | Local | Local | Cloud | Disconnected task fragments — no context |
+| **3** | Local | Local | Local | Nothing |
+
+**Level 0** is the default. Maximum cost efficiency, zero additional privacy.
+
+**Level 1** (local encoder): the cloud Maestro receives compressed capsules,
+never the raw message. Meaningful reduction in what any provider stores.
+
+**Level 2** (local Maestro): the strongest practical configuration. Cloud
+workers receive individual task capsules with no conversation context — they
+cannot reconstruct who the user is, what the project is, or what came before.
+Each cloud API call is an isolated, contextless fragment.
+
+**Level 3** (all local): zero cloud exposure. Fully offline. API cost zero.
+
+The cost math (O(N²) → O(N)) applies at all four levels. Privacy level is
+independent of cost reduction.
+
+## Cache and Model Switching
+
+Within the same provider, switching models mid-session does not invalidate the
+cache. The cache key is the byte-identical content of the system prompt, not
+the model identifier. Switching Opus → Sonnet on Anthropic recovers a warm
+cache in one turn.
+
+Switching providers (Anthropic → OpenAI, cloud → local) starts a fresh cache.
+The Burnless CLI surfaces a tip when this happens.
+
 ## Modes
 
 ### Cost Mode
