@@ -921,9 +921,9 @@ def cmd_compress(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        from .codec.cipher import unpack
+        from .codec.cipher import unpack_metadata
 
-        session_id, key, _ciphertext = unpack(capsule_text)
+        version, session_id, key_ref = unpack_metadata(capsule_text)
     except ValueError as e:
         print(f"burnless: {e}", file=sys.stderr)
         return 2
@@ -936,10 +936,12 @@ def cmd_compress(args: argparse.Namespace) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(capsule_text, encoding="utf-8")
     print(
-        f"capsule [{session_id}] — "
+        f"capsule [{session_id}] {version}/{key_ref} — "
         f"{stats['original_chars']}c → {stats['capsule_chars']}c "
-        f"({stats['ratio']}%) key:{key[:8]}... saved: {out_path}"
+        f"({stats['ratio']}%) saved: {out_path}"
     )
+    if version == "v2":
+        print("note: v2 decode requires the local in-memory keyring for this process.")
     return 0
 
 

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3] — 2026-05-04
+### Added
+- `PROTOCOL.md` with explicit cost/redact/audit/opaque privacy modes.
+- Capsule v2 envelope: `burnless:v2:<session_id>:<key_id>:<ciphertext>`.
+- In-memory keyring for v2 capsules and compatibility decoding for v1 capsules.
+- Tests proving v2 capsules do not embed the key.
+
+### Changed
+- README/VISION now distinguish cost compression from enterprise privacy claims.
+- `privacy` config now exposes planned `mode`, `raw_retention`, and `key_store` knobs.
+
 ## [0.5.2] — 2026-05-04
 ### Added
 - Burnless Chat opens by default in initialized projects.

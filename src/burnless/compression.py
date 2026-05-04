@@ -392,7 +392,8 @@ def compress_transcript(
 
     session_context: list of {'raw': str, 'compressed': str} from prior turns.
     Haiku sees this as cache and builds its own glossary implicitly.
-    Key dies with the caller's session (not persisted outside the capsule).
+    v2 capsule keys are kept in the local in-memory keyring by default; they are
+    not embedded in the capsule. v1 capsules with embedded keys are legacy only.
     """
     import secrets
     import anthropic
@@ -463,7 +464,7 @@ def compress_transcript(
     except Exception:
         compressed = minified
 
-    # Layers 3 and 4: XOR cipher plus base64.
+    # Layers 3 and 4: lightweight capsule envelope plus base64.
     ciphertext = cipher_encode(compressed, key)
     capsule = pack(session_id, key, ciphertext)
 

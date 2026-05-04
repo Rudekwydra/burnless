@@ -111,7 +111,7 @@ In May 2026, Anthropic launched Project Glasswing — a $100M initiative deployi
 
 Mythos looks for vulnerabilities in source code and binaries.
 
-A burnless capsule — `burnless:c8f2a1:3e9b7d...:SGVs...` — is a text file with a random name and an encrypted payload whose key died with the session. There is no vulnerability to find. There is no pattern to detect. There is no code to audit.
+A burnless capsule — for example `burnless:v2:c8f2a1:k9d2...:SGVs...` — is a compact protocol object, not a transcript. In cost mode it minimizes repeated context exposure. In privacy modes, the capsule must pair with local key custody and/or local redaction maps so sensitive raw text does not become the provider's durable memory.
 
 Mythos arrived to inspect source code and binaries. Burnless moves the relevant surface to a different layer: a capsule whose interpretation depends on session context that may no longer exist. The result is not an exploit to patch, but an audit boundary to acknowledge.
 
@@ -119,17 +119,19 @@ The same week that Glasswing was announced, the burnless protocol made the premi
 
 ---
 
-## Structural Privacy by TTL
+## Structural Privacy by Mode
 
-This is not strong cryptography. This is not zero-knowledge. This is simpler and more disorienting than both.
+Burnless must be honest about modes. Cost compression is not the same thing as enterprise privacy. The protocol becomes privacy-preserving only when key custody, raw-retention policy, and local redaction are explicit.
 
-The session key — generated per session — lives only in RAM, in a single process, for the duration of one conversation. When the cache expires (1 hour by default), the key is gone. Not transmitted. Not stored. Not derivable from the capsule alone.
+In opaque mode, a session key lives only in RAM for the duration of one conversation. When the process/session ends, the key is gone. Not transmitted. Not stored. Not derivable from the capsule alone.
 
-There is no hosted Burnless server to subpoena. No Burnless key escrow to compromise. The thing required to interpret the capsule is intentionally ephemeral.
+In audit mode, the key is stored locally or in an explicit customer-controlled keystore. Auditability is a product choice, not an accident.
+
+There is no hosted Burnless server by default. No Burnless key escrow by default. The thing required to interpret the capsule is either intentionally ephemeral or intentionally customer-custodied.
 
 A government can require a company to produce encryption keys. A company can require an employee to unlock a device. Neither can require the production of a key that ceased to exist when a process exited.
 
-This is not privacy as resistance to surveillance. It is privacy as the absence of a surface to surveil. The deliberation happened. The capsule remains. The interpretation is gone forever.
+This is not privacy as a marketing adjective. It is a protocol boundary: separate what the human says, what the model needs, what the provider sees, and what the project must remember.
 
 That is a different category of property — not a stronger lock, but a door that was never installed.
 
