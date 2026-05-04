@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "burnless"
-version = "0.6.2"
-description = "Intent-compressed orchestration for multi-turn LLM loops."
+version = "0.6.3"
+description = "The TCP/IP of agentic LLM orchestration. Separates cognitive execution from state management to make multi-turn agent loops practically linear in cost."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Roberto Monticelli Wydra" }]

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.3] — 2026-05-04
+### Changed
+- TCP/IP framing propagated to all public-facing surfaces: pyproject.toml
+  description, site title/meta/hero, MATH.md opening, llms.txt, and
+  BURNLESS_FOR_LLMS.md. Any LLM or human encountering Burnless cold now
+  sees the correct architectural frame before anything else.
+
 ## [0.6.2] — 2026-05-04
 ### Fixed
 - Version bump to resolve PyPI conflict (0.6.1 was published without a matching git tag).
