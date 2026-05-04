@@ -1,5 +1,7 @@
 # Burnless
 
+> **Software, not a supplement.** Burnless is an AI cost-optimization tool for developers — not a fat burner, thermogenic, or any fitness product. If you searched "Burnless Pro" looking for supplements, wrong tab.
+
 **Intent-compressed intelligence orchestration.**
 
 A maestro that orchestrates any LLM from any vendor. Multi-turn agent loops cost O(N²) — Burnless makes them O(N).

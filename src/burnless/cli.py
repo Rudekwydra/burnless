@@ -491,33 +491,17 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"Next: {next_str}")
     elif interrupted:
         print("\nWorker stopped by user.")
-        print("Partial log saved.")
+    elif status_str == "BLK":
+        print(f"\nBLK:{did}")
+        print("\nWorker blocked — task needs more context to proceed.")
+        print(f"\nSuggested: fix {did}")
     else:
         print(f"\nERR:{did}")
         print("\nWorker failed.")
-        print("Raw log saved.")
-        print("Capsule created.")
-        print("\nSuggested:")
-        print(f"fix {did}")
+        print(f"\nSuggested: fix {did}")
     if savings["saved_tokens"] > 0:
         print(f"\nCapsule created. Saved {savings['saved_tokens']} burnless tokens.")
-    else:
-        print("\nCapsule created. Output was already compact.")
     print(f"\n{bt:,} burnless tokens")
-    if backend_used == "maestro":
-        u = result.get("_maestro_usage") or {}
-        print(
-            "backend: maestro    "
-            f"cache_read={u.get('cache_read_input_tokens', 0)} "
-            f"cache_write={u.get('cache_creation_input_tokens', 0)} "
-            f"input={u.get('input_tokens', 0)} "
-            f"output={u.get('output_tokens', 0)}"
-        )
-    else:
-        print("backend: subprocess")
-    print(f"\nlog:     {log_path}")
-    print(f"summary: {p['temp'] / f'{did}.json'}")
-    print(f"capsule: {capsule_path}")
     return 0 if status_str == "OK" else 1
 
 
@@ -1217,11 +1201,8 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if not argv:
-        if paths_mod.find_root() is None:
-            from . import shell
-
-            return shell.main()
-        return cmd_brain(argparse.Namespace(message=None, model=None))
+        from . import shell
+        return shell.main()
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args) or 0
