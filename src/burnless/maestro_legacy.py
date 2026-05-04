@@ -235,6 +235,7 @@ class MaestroSession:
             max_tokens=max_tokens,
             system=self._system_blocks(),
             messages=messages,
+            extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},
         )
         text = _response_text(response)
         usage = self._record(response, role=role, model=chosen_model)
