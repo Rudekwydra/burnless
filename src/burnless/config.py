@@ -119,16 +119,14 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def _normalize_legacy_tiers(data: dict) -> None:
-    """Map the old diamond/code tier into the current silver band in memory."""
+    """Drop the legacy diamond key — it's not a real tier (dispatcher maps dia→silver).
+    Only migrates diamond→silver when silver isn't already defined.
+    """
     agents = data.get("agents")
     if isinstance(agents, dict) and isinstance(agents.get("diamond"), dict):
         diamond = dict(agents["diamond"])
         silver = agents.get("silver")
-        if str(diamond.get("name", "")).lower() == "codex" or "codex" in str(
-            diamond.get("command", "")
-        ):
-            agents["silver"] = diamond
-        elif not isinstance(silver, dict):
+        if not isinstance(silver, dict):
             agents["silver"] = diamond
         agents.pop("diamond", None)
 
