@@ -15,6 +15,8 @@ from typing import Any, Iterable
 
 import anthropic
 
+from .cache_policy import estimate_compacted_tokens, should_compact
+
 
 DEFAULT_MAIN_MODEL = "claude-opus-4-7"
 DEFAULT_COMPACTOR_MODEL = "claude-haiku-4-5-20251001"
@@ -30,8 +32,14 @@ CACHE_WRITE_1H_MULT = 2.0
 CACHE_READ_MULT = 0.10
 
 OLD_CAPSULES_FROZEN_AT = 10
-META_COMPACT_TRIGGER = 30
 PRE_COMPACT_INPUT_THRESHOLD = 400
+DEFAULT_CACHE_POLICY = {
+    "cache_read_ratio": 0.10,
+    "cache_write_ratio": 2.0,
+    "expected_future_turns": 8,
+    "min_hot_tail_tokens": 1500,
+    "estimated_compaction_ratio": 0.30,
+}
 
 
 @dataclass
@@ -123,6 +131,7 @@ class MaestroSession:
         client: anthropic.Anthropic | None = None,
         main_model: str = DEFAULT_MAIN_MODEL,
         compactor_model: str = DEFAULT_COMPACTOR_MODEL,
+        cache_policy: dict[str, Any] | None = None,
     ) -> None:
         self.path = path
         self.system = system
@@ -131,6 +140,7 @@ class MaestroSession:
         self.client = client or anthropic.Anthropic()
         self.main_model = main_model
         self.compactor_model = compactor_model
+        self.cache_policy = {**DEFAULT_CACHE_POLICY, **(cache_policy or {})}
         self.capsules: list[Capsule] = []
         self.usages: list[TurnUsage] = []
         self._load()
@@ -234,7 +244,7 @@ class MaestroSession:
         self.capsules.append(capsule)
         self._append_jsonl("capsule", capsule.to_dict())
 
-        if len(self.capsules) >= META_COMPACT_TRIGGER:
+        if self._should_meta_compact():
             self._meta_compact()
         return text, usage
 
@@ -296,6 +306,28 @@ class MaestroSession:
         self.capsules = [super_capsule] + self.capsules[cutoff:]
         self._append_jsonl("meta_compact", super_capsule.to_dict())
 
+    def _should_meta_compact(self) -> bool:
+        cutoff = len(self.capsules) - OLD_CAPSULES_FROZEN_AT
+        if cutoff <= 0:
+            return False
+        old = self.capsules[:cutoff]
+        old_tokens = _estimate_tokens("\n\n".join(_render_capsule(c) for c in old))
+        estimated_compacted = estimate_compacted_tokens(
+            old_tokens,
+            float(self.cache_policy.get("estimated_compaction_ratio", 0.30)),
+        )
+        decision = should_compact(
+            old_tokens=old_tokens,
+            compacted_tokens=estimated_compacted,
+            expected_future_turns=int(self.cache_policy.get("expected_future_turns", 8)),
+            cache_read_ratio=float(self.cache_policy.get("cache_read_ratio", 0.10)),
+            cache_write_ratio=float(self.cache_policy.get("cache_write_ratio", 2.0)),
+            min_hot_tail_tokens=int(self.cache_policy.get("min_hot_tail_tokens", 1500)),
+        )
+        if decision.should_compact:
+            self._append_jsonl("cache_policy", decision.__dict__)
+        return decision.should_compact
+
     # ---- usage recording ------------------------------------------------
 
     def _record(self, response: Any, *, role: str, model: str) -> TurnUsage:
@@ -342,6 +374,10 @@ class MaestroSession:
 
 def _render_capsule(c: Capsule) -> str:
     return f"[capsule turn={c.turn} role={c.role}]\n{c.text}"
+
+
+def _estimate_tokens(text: str, chars_per_token: int = 4) -> int:
+    return max(0, (len(text or "") + chars_per_token - 1) // chars_per_token)
 
 
 def _response_text(response: Any) -> str:

@@ -134,24 +134,15 @@ def suggest(det: Detection) -> dict:
     """Map detection to a recommended agents config block.
 
     Strategy:
-      diamond → codex if present, else strongest available
-      gold    → claude opus if claude CLI present, else best available
-      silver  → claude sonnet, else fallback
-      bronze  → claude haiku, else cheapest available
+      gold    → strongest available strategic model
+      silver  → everyday execution/coding model (Codex if present)
+      bronze  → cheapest summarization/classification model
 
     Falls back gracefully when nothing's available — returns the package
     defaults unchanged so the user can edit later.
     """
     base = config_mod.DEFAULT_CONFIG["agents"]
     out = {tier: dict(base[tier]) for tier in base}
-
-    if det.clis.get("codex", CliInfo("codex")).available:
-        out["diamond"]["name"] = "codex"
-        out["diamond"]["command"] = det.clis["codex"].default_command
-    elif det.clis.get("claude", CliInfo("claude")).available:
-        out["diamond"]["name"] = "opus"
-        out["diamond"]["command"] = "claude --model opus -p"
-        out["diamond"]["role"] = "code_debug_execution"
 
     if det.clis.get("claude", CliInfo("claude")).available:
         out["gold"]["name"] = "opus"
@@ -160,6 +151,10 @@ def suggest(det: Detection) -> dict:
         out["silver"]["command"] = "claude --model sonnet -p"
         out["bronze"]["name"] = "haiku"
         out["bronze"]["command"] = "claude --model haiku -p"
+    if det.clis.get("codex", CliInfo("codex")).available:
+        out["silver"]["name"] = "codex"
+        out["silver"]["command"] = det.clis["codex"].default_command
+        out["silver"]["role"] = "everyday_code_execution"
     elif det.clis.get("gemini", CliInfo("gemini")).available:
         out["gold"]["name"] = "gemini-pro"
         out["gold"]["command"] = "gemini -p --model gemini-pro"
@@ -198,7 +193,7 @@ def render_detection(det: Detection) -> str:
 
 def render_recommendation(rec: dict) -> str:
     lines = ["Recommended tier mapping:"]
-    for tier in ("diamond", "gold", "silver", "bronze"):
+    for tier in ("gold", "silver", "bronze"):
         a = rec[tier]
         lines.append(f"  {tier:<8} → {a['name']:<14} ({a['command']})")
     return "\n".join(lines)

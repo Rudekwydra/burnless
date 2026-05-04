@@ -7,18 +7,9 @@ DEFAULT_CONFIG: dict = {
     "language": "pt-BR",
     "mode": "local_first",
     "agents": {
-        # Tiers are abstract roles, not models. Map any provider/CLI here.
-        "diamond": {
-            "name": "codex",
-            "command": "codex exec --skip-git-repo-check --sandbox workspace-write",
-            "role": "code_debug_execution",
-            "use_for": ["code", "debug", "tests", "repo_changes"],
-            # Declarative overrides (also via env: BURNLESS_SANDBOX,
-            # BURNLESS_WORKSPACE_ROOT, BURNLESS_ALLOW_NET=1):
-            #   sandbox: read-only | workspace-write | danger-full-access
-            #   allow_net: true   -> uses codex --full-auto (network ON)
-            #   workspace_root: /abs/path  -> codex --cd <path> (cross-project)
-        },
+        # Tiers are quality/cost bands, not vendors. Map any provider/CLI here:
+        # Claude gold, Codex silver, Ollama bronze; or GPT gold/silver/bronze;
+        # or any other mix the user wants.
         "gold": {
             "name": "opus",
             "command": "claude --model opus -p",
@@ -39,11 +30,6 @@ DEFAULT_CONFIG: dict = {
         },
     },
     "routing": {
-        "diamond": [
-            "código", "codigo", "code", "erro", "bug", "debug", "terminal",
-            "arquivo", "repo", "teste", "test", "build", "compilar", "compile",
-            "stack trace", "exception", "compression", "simulator",
-        ],
         "gold": [
             "arquitetura", "architecture", "estratégia", "estrategia", "strategy",
             "decisão", "decisao", "decision", "risco", "risk", "conceito",
@@ -52,7 +38,10 @@ DEFAULT_CONFIG: dict = {
         "silver": [
             "documentação", "documentacao", "documentation", "briefing",
             "prd", "prompt", "especificação", "especificacao", "spec",
-            "texto", "readme",
+            "texto", "readme", "código", "codigo", "code", "erro", "bug",
+            "debug", "terminal", "arquivo", "repo", "teste", "test",
+            "build", "compilar", "compile", "stack trace", "exception",
+            "compression", "simulator",
         ],
         "bronze": [
             "resumir", "resumo", "summarize", "summary", "limpar", "clean",
@@ -75,6 +64,14 @@ DEFAULT_CONFIG: dict = {
         "friendly": True,      # True = Haiku expands capsule into prose; False = print raw capsule (default for extreme)
         "voice_match": True,   # True (default) = decoder mirrors user's tone/slang/warmth in response. ~5% extra input tokens. False = robotic prose.
     },
+    "cache_policy": {
+        "cache_read_ratio": 0.10,
+        "cache_write_ratio": 2.0,
+        "expected_future_turns": 8,
+        "min_hot_tail_tokens": 1500,
+        "estimated_compaction_ratio": 0.30,
+        "keep_recent_capsules": 8,
+    },
 }
 
 
@@ -85,6 +82,7 @@ def load(path: Path) -> dict:
         data = yaml.safe_load(f) or {}
     user_comp = data.get("compression", {}) if isinstance(data.get("compression"), dict) else {}
     data = _deep_merge(DEFAULT_CONFIG, data)
+    _normalize_legacy_tiers(data)
     from . import compression as _comp
     comp = data.setdefault("compression", {})
     comp["mode"] = _comp.normalize_mode(comp.get("mode", "balanced"))
@@ -113,3 +111,28 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             out[k] = v
     return out
+
+
+def _normalize_legacy_tiers(data: dict) -> None:
+    """Map the old diamond/code tier into the current silver band in memory."""
+    agents = data.get("agents")
+    if isinstance(agents, dict) and isinstance(agents.get("diamond"), dict):
+        diamond = dict(agents["diamond"])
+        silver = agents.get("silver")
+        if str(diamond.get("name", "")).lower() == "codex" or "codex" in str(
+            diamond.get("command", "")
+        ):
+            agents["silver"] = diamond
+        elif not isinstance(silver, dict):
+            agents["silver"] = diamond
+        agents.pop("diamond", None)
+
+    routing = data.get("routing")
+    if isinstance(routing, dict):
+        legacy = routing.pop("diamond", None)
+        if isinstance(legacy, list):
+            silver_rules = routing.setdefault("silver", [])
+            if isinstance(silver_rules, list):
+                for kw in legacy:
+                    if kw not in silver_rules:
+                        silver_rules.append(kw)

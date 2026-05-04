@@ -9,7 +9,8 @@ DEFAULT_STATE: dict = {
     "last_status": None,
     "next": None,
     "delegation_counter": 0,
-    "active_tier": None,  # None = auto routing; "diamond"|"gold"|"silver"|"bronze" = sticky
+    "active_tier": None,  # None = auto routing; "gold"|"silver"|"bronze" = sticky
+    "brain_model": None,
     "updated_at": None,
 }
 

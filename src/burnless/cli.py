@@ -16,6 +16,7 @@ from . import agents as agents_mod
 from . import delegations as deleg_mod
 from . import compression as compression_mod
 from . import lifetime as lifetime_mod
+from . import brain_adapters
 from . import dashboard
 from . import live_runner
 from .estimator import estimate_tokens
@@ -89,6 +90,7 @@ def _run_with_maestro(
             plan=plan,
             client=client,
             main_model=model,
+            cache_policy=(config_mod.load(p["config"]).get("cache_policy") or {}),
         )
         text, usage = session.run(prompt, model=model, max_tokens=2048)
     except Exception as e:
@@ -198,7 +200,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-TIER_RANK = {"bronze": 1, "silver": 2, "gold": 3, "diamond": 4}
+TIER_RANK = {"bronze": 1, "silver": 2, "gold": 3, "diamond": 2}
 
 
 def _hardcore_blocked(
@@ -529,6 +531,44 @@ def cmd_brain(args: argparse.Namespace) -> int:
     model = args.model or state.get("brain_model") or "claude-opus-4-7"
     history_path = p["root"] / "maestro" / "brain_history.jsonl"
 
+    def slash_help() -> str:
+        return brain_adapters.render_commands()
+
+    def available_maestro_models() -> list[str]:
+        return brain_adapters.available_maestro_models(cfg, model)
+
+    def render_maestro() -> str:
+        adapter = brain_adapters.current_anthropic_adapter(model)
+        models = available_maestro_models()
+        lines = [
+            f"Current Maestro: {model}",
+            f"Brain adapter: {adapter.label} ({adapter.status})",
+            "",
+            "Available models:",
+        ]
+        for candidate in models:
+            marker = "*" if candidate == model else " "
+            lines.append(f"  {marker} {candidate}")
+        lines.extend(
+            [
+                "",
+                adapter.note,
+                "Use /workers to see Generic CLI worker adapters.",
+            ]
+        )
+        return "\n".join(lines)
+
+    def set_maestro(next_model: str) -> str:
+        nonlocal model
+        next_model = next_model.strip()
+        if not next_model:
+            return render_maestro()
+        model = next_model
+        state = state_mod.load(p["state"])
+        state["brain_model"] = model
+        state_mod.save(p["state"], state)
+        return f"Maestro set to: {model}"
+
     def run_one(message: str) -> int:
         from .codec import decoder as decoder_mod
         from .codec import encoder as encoder_mod
@@ -647,20 +687,49 @@ def cmd_brain(args: argparse.Namespace) -> int:
             next_extra = {"source": "worker_results", "delegate_depth": delegate_depth}
             print()
 
+    def handle_slash(message: str) -> int | None:
+        if message in {"/exit", "/quit", "exit", "quit"}:
+            return 0
+        if message == "/clear":
+            os.system("clear")
+            return None
+        if message in {"/help", "/commands"}:
+            print(slash_help())
+            return None
+        if message == "/workers":
+            print(brain_adapters.render_workers(cfg))
+            return None
+        if message == "/native":
+            print(brain_adapters.render_native(root.parent))
+            return None
+        if message == "/maestro" or message.startswith("/maestro "):
+            print(set_maestro(message.removeprefix("/maestro").strip()))
+            return None
+        if message == "/model" or message.startswith("/model "):
+            print(set_maestro(message.removeprefix("/model").strip()))
+            return None
+        return 2
+
     if args.message:
+        message = args.message.strip()
+        slash_result = handle_slash(message)
+        if message.startswith("/") and slash_result in (0, None):
+            return 0
         return run_one(args.message)
 
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.completion import WordCompleter
         try:
             import prompt_toolkit.input.bracketed_paste  # noqa: F401
         except Exception:
             pass
     except ImportError:
-        return _run_basic_brain_repl(run_one)
+        return _run_basic_brain_repl(run_one, handle_slash=handle_slash, model=model)
 
-    print("Burnless Maestro brain — /exit to leave, /clear to reset display.")
+    print("Burnless Maestro chat — /help for commands, /exit to leave.")
+    print(f"Maestro: {model}")
     print("Submit with Ctrl-D or Enter on an empty trailing line.")
     kb = KeyBindings()
 
@@ -680,7 +749,17 @@ def cmd_brain(args: argparse.Namespace) -> int:
         else:
             event.app.exit(exception=EOFError)
 
-    session = PromptSession(multiline=True, prompt_continuation="  ", key_bindings=kb)
+    session = PromptSession(
+        multiline=True,
+        prompt_continuation="  ",
+        key_bindings=kb,
+        completer=WordCompleter(
+            list(brain_adapters.slash_commands(model)),
+            ignore_case=True,
+            match_middle=False,
+        ),
+        complete_while_typing=True,
+    )
     while True:
         try:
             message = session.prompt("brain › ")
@@ -690,10 +769,10 @@ def cmd_brain(args: argparse.Namespace) -> int:
         message = message.strip()
         if not message:
             continue
-        if message in {"/exit", "/quit", "exit", "quit"}:
+        slash_result = handle_slash(message)
+        if slash_result == 0:
             return 0
-        if message == "/clear":
-            os.system("clear")
+        if slash_result is None:
             continue
         code = run_one(message)
         if code:
@@ -701,8 +780,10 @@ def cmd_brain(args: argparse.Namespace) -> int:
         print()
 
 
-def _run_basic_brain_repl(run_one) -> int:
-    print("Burnless Maestro brain — /exit to leave, /clear to reset display.")
+def _run_basic_brain_repl(run_one, *, handle_slash=None, model: str | None = None) -> int:
+    print("Burnless Maestro chat — /help for commands, /exit to leave.")
+    if model:
+        print(f"Maestro: {model}")
     print("prompt_toolkit unavailable; using basic multiline input.")
     print("Submit with an empty trailing line or Ctrl-D.")
     while True:
@@ -723,11 +804,18 @@ def _run_basic_brain_repl(run_one) -> int:
         message = "\n".join(lines).strip()
         if not message:
             continue
-        if message in {"/exit", "/quit", "exit", "quit"}:
-            return 0
-        if message == "/clear":
-            os.system("clear")
-            continue
+        if handle_slash is not None:
+            slash_result = handle_slash(message)
+            if slash_result == 0:
+                return 0
+            if slash_result is None:
+                continue
+        else:
+            if message in {"/exit", "/quit", "exit", "quit"}:
+                return 0
+            if message == "/clear":
+                os.system("clear")
+                continue
         code = run_one(message)
         if code:
             return code
@@ -884,6 +972,12 @@ def cmd_setup(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_shell(args: argparse.Namespace) -> int:
+    from . import shell
+
+    return shell.main()
+
+
 def cmd_route(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
@@ -992,7 +1086,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("text", help="task description")
     sp.add_argument("--goal", help="overall goal (defaults to task)")
     sp.add_argument("--success", help="success criteria")
-    sp.add_argument("--tier", choices=["diamond", "gold", "silver", "bronze"], help="force tier")
+    sp.add_argument("--tier", choices=["gold", "silver", "bronze"], help="force tier")
     sp.add_argument(
         "--force",
         action="store_true",
@@ -1066,6 +1160,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--non-interactive", action="store_true", help="no prompts")
     sp.set_defaults(func=cmd_setup)
 
+    sp = sub.add_parser("shell", help="open the legacy delegation shell")
+    sp.set_defaults(func=cmd_shell)
+
     return p
 
 
@@ -1073,9 +1170,11 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if not argv:
-        from . import shell
+        if paths_mod.find_root() is None:
+            from . import shell
 
-        return shell.main()
+            return shell.main()
+        return cmd_brain(argparse.Namespace(message=None, model=None))
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args) or 0
