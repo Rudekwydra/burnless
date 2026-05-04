@@ -113,9 +113,25 @@ Mythos looks for vulnerabilities in source code and binaries.
 
 A burnless capsule — `burnless:c8f2a1:3e9b7d...:SGVs...` — is a text file with a random name and an encrypted payload whose key died with the session. There is no vulnerability to find. There is no pattern to detect. There is no code to audit.
 
-The same week that the most capable AI security system ever built was announced, the burnless protocol made the premise of that announcement structurally incomplete.
+Mythos arrived to inspect source code and binaries. Burnless moves the relevant surface to a different layer: a capsule whose interpretation depends on session context that may no longer exist. The result is not an exploit to patch, but an audit boundary to acknowledge.
 
-Not by opposing it. By being a different layer entirely.
+The same week that Glasswing was announced, the burnless protocol made the premise of that announcement structurally incomplete — not by opposing it, but by existing below it.
+
+---
+
+## Structural Privacy by TTL
+
+This is not strong cryptography. This is not zero-knowledge. This is simpler and more disorienting than both.
+
+The session key — generated per session — lives only in RAM, in a single process, for the duration of one conversation. When the cache expires (1 hour by default), the key is gone. Not transmitted. Not stored. Not derivable from the capsule alone.
+
+There is no hosted Burnless server to subpoena. No Burnless key escrow to compromise. The thing required to interpret the capsule is intentionally ephemeral.
+
+A government can require a company to produce encryption keys. A company can require an employee to unlock a device. Neither can require the production of a key that ceased to exist when a process exited.
+
+This is not privacy as resistance to surveillance. It is privacy as the absence of a surface to surveil. The deliberation happened. The capsule remains. The interpretation is gone forever.
+
+That is a different category of property — not a stronger lock, but a door that was never installed.
 
 ---
 
