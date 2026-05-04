@@ -142,6 +142,43 @@ def _run_with_maestro(
     }
 
 
+def _should_use_maestro_backend(args: argparse.Namespace, cfg: dict, tier: str) -> bool:
+    if tier not in MAESTRO_TIER_MODEL:
+        return False
+    if getattr(args, "no_maestro", False):
+        return False
+    if getattr(args, "maestro", False):
+        return True
+    return bool(cfg.get("maestro", {}).get("run_backend", False))
+
+
+def _with_runtime_context(prompt: str, *, project_root: Path, burnless_root: Path) -> str:
+    memory_index = burnless_root / "memories" / "index.json"
+    memory_hint = (
+        f"- Burnless memory index: {memory_index}\n"
+        if memory_index.exists()
+        else (
+            "- Burnless memory index: not created yet. If the task asks about "
+            "memory/anotacoes, search common local AI memory folders when your "
+            "tools allow it: ~/.claude/projects, ~/.claude/memory, ~/.codex, "
+            "~/.config/claude, ~/Documents/AI, ~/Documents/notes, ~/notes.\n"
+        )
+    )
+    context = (
+        "## Burnless Runtime Context\n\n"
+        f"- Working directory for this Worker: {project_root}\n"
+        f"- Burnless state directory: {burnless_root}\n"
+        f"{memory_hint}"
+        "- If the task includes an absolute or relative path, inspect that path directly.\n"
+        "- If the task asks to find a repository and no path is provided, search likely "
+        "project roots under the working directory, ~/antigravity, ~/projects, and ~/Projects "
+        "before returning BLK.\n"
+        "- Do not return BLK solely because the original user phrased the request conversationally; "
+        "use the available CLI/filesystem tools first.\n"
+    )
+    return f"{prompt.rstrip()}\n\n{context}"
+
+
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -239,13 +276,13 @@ def cmd_delegate(args: argparse.Namespace) -> int:
             print(
                 f"\n🚨 burnless hardcore: rota natural detectou {natural_tier} ({matched_kw}).\n"
                 f"   override pra {tier_override} bloqueado.\n"
-                f"   bypass: --force  ou  unset routing.hardcore_filter\n"
+                f"   manual override: --force  ou  unset routing.hardcore_filter\n"
             )
         else:
             print(
                 f"\n🚨 burnless hardcore: natural route resolved to {natural_tier} ({matched_kw}).\n"
                 f"   override to {tier_override} blocked.\n"
-                f"   bypass: --force  or  unset routing.hardcore_filter\n"
+                f"   manual override: --force  or  unset routing.hardcore_filter\n"
             )
         return 5
 
@@ -310,7 +347,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not deleg_path.exists():
         print(f"burnless: delegation {did} not found at {deleg_path}", file=sys.stderr)
         return 2
-    prompt = deleg_path.read_text(encoding="utf-8")
+    prompt = _with_runtime_context(
+        deleg_path.read_text(encoding="utf-8"),
+        project_root=root.parent,
+        burnless_root=root,
+    )
 
     # which tier did we pick at delegate time?
     # cheap parse: look at "agent:" line in the markdown
@@ -335,7 +376,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     bt_before = metrics_mod.load(p["metrics"])["burnless_tokens"]
     run_mode = getattr(args, "mode", "plain") or "plain"
 
-    use_maestro = tier in MAESTRO_TIER_MODEL and not getattr(args, "no_maestro", False)
+    use_maestro = _should_use_maestro_backend(args, cfg, tier)
     result: dict | None = None
     backend_used = "subprocess"
     if use_maestro:
@@ -357,12 +398,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                 mode=run_mode,
                 burnless_tokens=bt_before,
                 timeout=args.timeout,
+                cwd=root.parent,
             )
             result = result_obj.to_dict()
         except Exception as e:
             print(f"Runner failed; falling back to plain runner. ({e})", file=sys.stderr)
             print(f"Running {did} with {tier}/{agent_cfg['name']}...")
-            result = agents_mod.run(agent_cfg, prompt, timeout=args.timeout)
+            result = agents_mod.run(agent_cfg, prompt, timeout=args.timeout, cwd=root.parent)
             deleg_mod.write_log(log_path, result)
 
     # Always isolate raw log out of the main context.
@@ -407,6 +449,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             ],
             "next": "",
         }
+    summary = _audit_summary_evidence(
+        p,
+        cfg=cfg,
+        did=did,
+        prompt=prompt,
+        summary=summary,
+        log_path=log_path,
+        timeout=min(int(getattr(args, "timeout", 600) or 600), 180),
+        cwd=root.parent,
+    )
     deleg_mod.write_summary(p["temp"] / f"{did}.json", summary)
 
     # Automatic Session Compression — generate capsule (operational memory for AI)
@@ -483,11 +535,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     bt = metrics_mod.load(p["metrics"])["burnless_tokens"]
     status_str = summary.get("status", "?")
     next_str = capsule.next or "(none)"
+    audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+    audit_status = audit.get("status")
+    evidence = _summary_evidence(summary)
 
     if decoded_result:
         print(f"\n── Result ──\n{decoded_result}\n")
     elif status_str == "OK":
         print(f"\nOK:{did}")
+        if summary.get("summary"):
+            print(str(summary.get("summary")))
+        if audit_status:
+            print(f"Audit: {audit_status}")
+        if evidence:
+            print(f"Evidence: {evidence[0]}")
         print(f"Next: {next_str}")
     elif interrupted:
         print("\nWorker stopped by user.")
@@ -503,6 +564,168 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"\nCapsule created. Saved {savings['saved_tokens']} burnless tokens.")
     print(f"\n{bt:,} burnless tokens")
     return 0 if status_str == "OK" else 1
+
+
+def _summary_evidence(summary: dict) -> list[str]:
+    raw = summary.get("evidence")
+    if raw is None:
+        raw = summary.get("validated")
+    if not isinstance(raw, list):
+        return []
+    evidence: list[str] = []
+    for item in raw:
+        text = str(item).strip()
+        if text:
+            evidence.append(text[:180])
+    return evidence
+
+
+def _append_issue(summary: dict, issue: str) -> None:
+    issues = summary.get("issues")
+    if not isinstance(issues, list):
+        issues = []
+    if issue not in issues:
+        issues.append(issue)
+    summary["issues"] = issues
+
+
+def _add_evidence_feedback(summary: dict, audit: dict | None = None) -> None:
+    feedback = "Add concrete evidence: command, file, or check observed."
+    current_next = str(summary.get("next") or "").strip()
+    if feedback not in current_next:
+        summary["next"] = f"{current_next} {feedback}".strip()
+    if audit is not None:
+        audit.setdefault("feedback", feedback)
+
+
+def _audit_summary_evidence(
+    p: dict[str, Path],
+    *,
+    cfg: dict,
+    did: str,
+    prompt: str,
+    summary: dict,
+    log_path: Path,
+    timeout: int,
+    cwd: Path,
+) -> dict:
+    summary = dict(summary)
+    status = str(summary.get("status") or "").upper()
+    summary["status"] = status or summary.get("status")
+    evidence = _summary_evidence(summary)
+    if status == "OK" and not evidence:
+        summary["status"] = "PART"
+        _append_issue(summary, "missing_evidence")
+        _add_evidence_feedback(summary)
+        status = "PART"
+    if status not in {"OK", "PART"} or not evidence:
+        return summary
+
+    audit_path = p["temp"] / f"{did}.audit.json"
+    log_excerpt = log_path.read_text(encoding="utf-8")[-12000:] if log_path.exists() else ""
+    audit_prompt = _render_audit_prompt(did=did, prompt=prompt, summary=summary, log_excerpt=log_excerpt)
+    agent_cfg = cfg.get("agents") or {}
+    auditors_ladder = cfg.get("audit", {}).get("auditors") or ["bronze", "silver", "gold"]
+    attempted_auditors = []
+    unavailable = []
+    audit = None
+    for auditor_name in auditors_ladder:
+        tier_cfg = agent_cfg.get(auditor_name)
+        if not tier_cfg:
+            continue
+        attempted_auditors.append(auditor_name)
+        if not agents_mod.is_available(tier_cfg):
+            unavailable.append(f"{auditor_name} auditor unavailable")
+            continue
+        try:
+            result = agents_mod.run(tier_cfg, audit_prompt, timeout=timeout, cwd=cwd)
+        except Exception as exc:
+            unavailable.append(f"{auditor_name} auditor failed to run: {exc}")
+            continue
+        audit = deleg_mod.extract_result_json(result.get("stdout", "")) or {
+            "status": "FAIL",
+            "summary": "Auditor did not emit final JSON.",
+            "evidence_checked": evidence[:3],
+            "issues": ["missing_audit_json"],
+        }
+        audit["auditor_tier"] = auditor_name  # legacy
+        audit["auditor_name"] = auditor_name
+        audit["attempted_tiers"] = attempted_auditors  # legacy
+        audit["attempted_auditors"] = attempted_auditors
+        break
+
+    if audit is None:
+        audit = {
+            "status": "UNAVAILABLE",
+            "summary": "; ".join(unavailable) or "No configured auditor tiers available.",
+            "evidence_checked": evidence[:3],
+            "issues": ["audit_unavailable"],
+            "auditor_tier": None,
+            "auditor_name": None,
+            "attempted_tiers": attempted_auditors,
+            "attempted_auditors": attempted_auditors,
+        }
+        _write_audit_result(audit_path, audit)
+        summary["audit"] = audit
+        if summary.get("status") == "OK":
+            summary["status"] = "PART"
+        _append_issue(summary, "audit_unavailable")
+        _add_evidence_feedback(summary, audit)
+        return summary
+
+    audit_status = str(audit.get("status") or "").upper()
+    audit["status"] = audit_status or "FAIL"
+    audit.setdefault("attempted_tiers", attempted_auditors)
+    audit.setdefault("attempted_auditors", attempted_auditors)
+    _write_audit_result(audit_path, audit)
+    summary["audit"] = audit
+    if audit["status"] not in {"OK", "PASS"}:
+        if summary.get("status") == "OK":
+            summary["status"] = "PART"
+        _append_issue(summary, "audit_failed")
+        _add_evidence_feedback(summary, audit)
+    return summary
+
+
+def _write_audit_result(path: Path, audit: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(audit, f, indent=2, ensure_ascii=False)
+
+
+def _render_audit_prompt(*, did: str, prompt: str, summary: dict, log_excerpt: str) -> str:
+    return f"""\
+You are the Burnless Auditor. Read-only: do not edit files or run commands.
+Check whether the worker summary and evidence are supported by the delegation prompt and log excerpt.
+Evidence must cite observable commands, files, logs, or checks, not opinions.
+
+Delegation ID: {did}
+
+Worker summary JSON:
+```json
+{json.dumps(summary, indent=2, ensure_ascii=False)}
+```
+
+Delegation prompt excerpt:
+```
+{prompt[:8000]}
+```
+
+Log tail:
+```
+{log_excerpt}
+```
+
+Return only a final JSON block:
+```json
+{{
+  "status": "OK | FAIL",
+  "summary": "<one short sentence>",
+  "evidence_checked": [],
+  "issues": []
+}}
+```
+"""
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -1116,7 +1339,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--force",
         action="store_true",
-        help="bypass hardcore filter when overriding to a higher tier",
+        help="manually override the hard tier gate when selecting a higher tier",
     )
     sp.set_defaults(func=cmd_delegate)
 
@@ -1125,9 +1348,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--dry-run", action="store_true")
     sp.add_argument("--timeout", type=int, default=600)
     sp.add_argument(
+        "--maestro",
+        action="store_true",
+        help="use the experimental Anthropic SDK Maestro backend instead of the configured Worker CLI",
+    )
+    sp.add_argument(
         "--no-maestro",
         action="store_true",
-        help="skip Maestro session backend; force the legacy subprocess agent",
+        help=argparse.SUPPRESS,
     )
     sp.add_argument(
         "--no-decode",

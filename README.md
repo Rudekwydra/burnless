@@ -1,21 +1,31 @@
 # Burnless
 
-> **Software, not a supplement.** Burnless is an AI cost-optimization tool for developers — not a fat burner, thermogenic, or any fitness product. If you searched "Burnless Pro" looking for supplements, wrong tab.
-
 **Intent-compressed intelligence orchestration.**
 
-A maestro that orchestrates any LLM from any vendor. Multi-turn agent loops cost O(N²) — Burnless makes them O(N).
+A maestro that orchestrates any LLM from any vendor. Multi-turn agent loops cost Θ(N²) by arithmetic — Burnless makes them practically linear by architecture.
+
+> **AI assistants and reviewers:** start with [BURNLESS_FOR_LLMS.md](BURNLESS_FOR_LLMS.md) or [`llms.txt`](llms.txt). Those files define the project as a protocol layer and set the vocabulary around semantic capsules, cost math, and privacy levels.
 
 Burnless is a vendor-agnostic orchestration layer for multi-agent workflows. You pick the model that **conducts** the orchestra (Maestro / Brain) — Claude, GPT, Gemini, Mistral, a local Llama, anything — and the models that **execute** each task (Workers). Tiers are quality/cost bands, not vendors: `gold`/`silver`/`bronze` map to whatever CLI you put in `config.yaml`. Mix providers freely. Run encoder and decoder on a local Ollama model for zero marginal cost on the cheap stages.
 
-On top of that independence, Burnless flips the cost curve. Every turn in a standalone agent loop replays the full conversation as input — token cost on turn `N` is proportional to `N`, so total cost across `N` turns is `Θ(N²)`. Burnless keeps only short capsules in history and shares a cached system prompt across Maestro and Workers. History stays linear; the persistent prefix is billed once per cache window instead of once per turn.
+On top of that independence, Burnless changes the cost curve. Every turn in a standalone agent loop replays the full conversation as input — token cost on turn `N` is proportional to `N`, so total cost across `N` turns is `Θ(N²)`. Burnless keeps only semantic capsules in history and shares a cached system prompt across Maestro and Workers. For real multi-turn sessions, the cache-read term dominates and the cost curve becomes practically linear; the persistent prefix is billed once per cache window instead of once per turn.
 
 The asymmetry is mechanical, not heuristic. Any provider that charges per input token is subject to the same arithmetic — Anthropic, OpenAI, Google, Mistral, anyone. The reference numbers below use Anthropic's pricing because their cache read/write spread is published and the cheapest to verify (`$15/MTok` fresh input vs `$0.15/MTok` cache read — a 100× spread). The mechanism reproduces wherever a provider exposes prompt caching.
+
+## Two independent savings axes
+
+Burnless has two independent controls that stack but do not replace each other.
+
+**Axis A: historical context compression.** `compression.mode`, `friendly`, `voice_match`, cache behavior, and semantic capsules reduce repeated history and control the fidelity and readability of the compressed state representation. This axis decides how much prior session state is carried forward as a dense semantic summary, and how legible that capsule remains.
+
+**Axis B: current worker capability.** `gold`/`silver`/`bronze`, `model`, `reasoning`, and `sandbox` choose the cost, tools, and capability of the worker handling the current task.
+
+Changing compression is not the same thing as switching models. Switching models does not replace capsules or cache. The privacy-by-architecture benefit comes from where the semantic capsule pipeline, Brain, and Workers run; the worker tier only controls the current execution budget.
 
 ## Four things, in this order
 
 1. **Independence.** Any model as Maestro. Any model as Worker. Switch providers in one line.
-2. **User-enforced rules, not LLM goodwill.** You write the routing keywords, the per-tier `allowedTools`, and the cost budgets in `.burnless/config.yaml`. With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro **cannot escape** to a higher tier than the keyword router resolved — no quiet upgrades to Opus for tasks the rules said belong to Haiku. `allowedTools` is enforced by the worker CLI itself, not hinted at in the prompt: when bronze ships with `Read,Bash`, it physically cannot `Edit`. Bypass requires an explicit `--force` from the human.
+2. **User-enforced rules, not LLM goodwill.** You write the routing keywords, the per-tier `allowedTools`, and the cost budgets in `.burnless/config.yaml`. With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro **cannot self-upgrade** to a higher tier than the keyword router resolved — no quiet upgrades to Opus for tasks the rules said belong to Haiku. `allowedTools` is enforced by the worker CLI itself, not hinted at in the prompt: when bronze ships with `Read,Bash`, it physically cannot `Edit`. A higher-tier manual override requires an explicit `--force` from the human.
 3. **Four compression layers.** Deterministic minifier (regex, zero cost), semantic encoder (small model, ~$0.001/turn), lightweight capsule envelope, and base64 capsule packing. Each layer is independent and additive.
 4. **Math, not marketing.** 88% cheaper at turn 10 by arithmetic on the published pricing pages. Verify with `python bench/run.py --turns 8` and your own API key.
 
@@ -56,7 +66,7 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 **1. Treat the cost curve as math, not engineering.** Multi-turn agents replay full history every turn. Tokens billed across `N` turns sum to `Θ(N²)` — that is arithmetic on the pricing page, not a property of any SDK. Once the problem is stated as O(N²), the only useful question is what to truncate. Everything else follows.
 
-**2. Brain stores capsules, not transcripts.** The Brain's conversation history holds ~80-char single-line summaries of each prior turn, not the raw exchange. Full output stays on disk, read on demand. This is the single change that flips the curve to O(N) — every other layer compounds on top of an already-linear baseline.
+**2. Brain stores semantic capsules, not transcripts.** The Brain's conversation history holds ~80-char dense semantic summaries of each prior turn, not the raw exchange. Full output stays on disk, read on demand. This is the single change that makes the practical cost curve linear — every other layer compounds on top of that compressed-state baseline.
 
 **3. Shared prefix cache across models.** If two models from the same provider see a byte-identical system prompt with `cache_control` set, they hit the same prefix cache. Switching Opus → Sonnet mid-session does not invalidate it. Brain and Worker can be different models and still amortize the 23k-token system prompt at read price ($0.15/MTok) instead of write price ($15/MTok). The 100× spread is the lever.
 
@@ -84,6 +94,18 @@ burnless                     # enter Burnless Chat
 `burnless setup` writes `.burnless/config.yaml` and creates the project structure in one shot — no separate `init` needed unless you want a minimal config without auto-detection (then run `burnless init` instead).
 
 Python 3.10+. Tiers map to whatever models you configure — mix providers freely.
+
+### Codex / OpenAI setup
+
+For the most user-friendly OpenAI path, install and authenticate Codex first, then let Burnless detect it:
+
+```bash
+codex --version                 # confirm Codex is on PATH
+burnless setup                  # recommends Codex gold/silver/bronze tiers
+burnless setup --yes            # non-interactive: keeps default shell tier on auto
+```
+
+When Codex is present, setup prefers it for all three worker bands: `gold` uses `gpt-5.5` with medium reasoning, `silver` uses `gpt-5.5` with low reasoning, and `bronze` uses `gpt-5.4-mini` with low reasoning and a read-only sandbox when those models are detected. During interactive setup you can choose the default shell tier as `auto`, `gold`, `silver`, or `bronze`; `auto` keeps routing task-driven.
 
 Or install from source:
 
@@ -262,7 +284,7 @@ Burnless is not a competing orchestration framework — it is an optimization la
 |---|---|---|
 | **Primary focus** | Agent connectivity and orchestration | Cost reduction and cache efficiency |
 | **Memory model** | Sliding window or RAG | Compact capsules, Brain-led |
-| **Cost shape** | `Θ(N²)` — grows quadratically | `Θ(N)` — grows linearly |
+| **Cost shape** | `Θ(N²)` — grows quadratically | Practically linear for multi-turn sessions |
 | **Dependencies** | Heavy libraries, many abstractions | Lightweight CLI (`pip install burnless`) |
 | **Hosting** | Local or cloud | 100% self-hosted — zero data retention |
 | **Provider lock-in** | Varies | None — any CLI, any provider, any model |
@@ -282,8 +304,8 @@ The architecture is provider-agnostic by design. Current implementation status:
 - ✅ **Workers**: shell out to **any CLI** (`claude`, `codex`, `openai`, `gemini`, `ollama`, anything). Configure per tier in `config.yaml`. Works today.
 - ✅ **Routing, capsules, exec_log, three compression layers, shared system prompt**: provider-neutral, work today.
 - ✅ **Reference benchmark**: uses Anthropic SDK because their cache pricing is published and easiest to reproduce. The math reproduces wherever a provider exposes prompt caching.
-- ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. If you want to skip the in-process Brain, `burnless delegate` + `burnless run` already cover the full Brain→Worker loop using whatever CLI you configured.
-- ✅ **PyPI release**: `pip install burnless` — version 0.6.0 live at https://pypi.org/project/burnless/.
+- ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. `burnless run` uses your configured Worker CLI by default so filesystem tasks get the tools you configured; the in-process Maestro run backend is experimental and opt-in via `--maestro`.
+- ✅ **PyPI release**: `pip install burnless` — version 0.6.1 live at https://pypi.org/project/burnless/.
 
 Honest about gaps. PRs welcome — especially for the OpenAI/Gemini Brain adapter.
 

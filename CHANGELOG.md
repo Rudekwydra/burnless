@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] — 2026-05-04
+### Added
+- `BURNLESS_FOR_LLMS.md`, a one-page entry point for AI assistants and
+  reviewers that defines Burnless as intent-compressed orchestration and sets
+  the correct vocabulary around semantic capsules, cost math, and privacy
+  levels.
+
+### Changed
+- Public docs and package metadata now use the protocol vocabulary consistently:
+  semantic capsule, compressed state representation, dense semantic summary,
+  and privacy-by-architecture.
+
+### Fixed
+- `burnless run` now uses the configured Worker CLI by default. The Anthropic
+  SDK Maestro backend is opt-in via `--maestro`, preventing local filesystem
+  tasks from being sent to an in-process model with no tools.
+- Natural-language requests that mention local paths, projects, repositories,
+  or memory notes now route to `silver` instead of falling back to `bronze`.
+- Worker prompts now include runtime context: working directory, `.burnless`
+  state location, memory-index hints, and instructions to search local project
+  roots before returning `BLK`.
+- Legacy `diamond`-only configs migrate correctly to `silver` after defaults
+  are merged.
+
 ## [0.5.9] — 2026-05-04
 ### Fixed
 - `burnless compress` no longer hangs when called without arguments in a non-interactive context (CI, scripts, `|| true` chains). Now exits with a clear error message and usage hint instead of blocking on stdin.

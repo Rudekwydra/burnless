@@ -24,7 +24,9 @@ Burnless is to LLM context what TCP/IP was to network packets:
 - Sits below any application, above any model
 - Provider-agnostic: works with Anthropic, OpenAI, Gemini, Mistral, local Ollama
 - Transparent: the model receives a capsule, not a transcript; the user sends a message, not a compression request
-- Structurally unblockable: you cannot prohibit "sending a summary of a conversation" — that is indistinguishable from normal behavior, and a session-unique capsule identifier makes it unremarkable by design
+- Structurally unblockable by design: a semantic capsule is a dense summary of
+  session state sent as ordinary text. This is a compatibility property of
+  summaries, not an adversarial claim.
 
 The layer did not exist. Now it does.
 
@@ -73,7 +75,9 @@ Invention is not conjuring from nothing. Invention is combining existing things 
 
 LLMLingua demonstrated token compression. Multi-agent orchestration established delegation patterns. Capsule history is an append-only structure. The O(N) guarantee is a mathematical formalization of what happens when context stops growing.
 
-Each component existed. The protocol layer — transparent, provider-agnostic, unblockable, with a formal O(N) guarantee — did not.
+Each component existed. The protocol layer — transparent, provider-agnostic,
+structurally unblockable by design, with a formal practical-linear cost model
+— did not.
 
 That is the invention.
 

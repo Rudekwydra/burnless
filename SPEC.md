@@ -238,7 +238,9 @@ turn.
   capsule compression alone.
 - The XOR/base64 cipher in v0.5 is a lightweight protocol envelope, not
   enterprise-grade cryptography.
-- Capsule compression is obfuscation, not confidentiality.
+- A capsule is a compressed state representation, not a confidentiality
+  guarantee. Strong confidentiality requires local redaction and/or explicit
+  key custody modes.
 
 ---
 

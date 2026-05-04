@@ -22,6 +22,7 @@ from . import config as config_mod
 from . import dashboard
 from . import delegations as deleg_mod
 from . import metrics as metrics_mod
+from . import natural_planner
 from . import paths as paths_mod
 from . import routing as routing_mod
 from . import state as state_mod
@@ -250,9 +251,11 @@ def _print_banner(p: dict[str, Path]) -> None:
 
 def _new_objective(p: dict[str, Path], user_text: str, objective: str) -> bool:
     cfg = _config(p)
-    tier, matched = routing_mod.route(objective, cfg["routing"])
+    planned = natural_planner.plan_objective(objective, project_root=p["root"].parent)
+    task = planned.task
+    tier, matched = routing_mod.route(task, cfg["routing"])
     agent = cfg["agents"][tier]["name"]
-    did = _create_delegation(p, objective, goal=objective, tier=None)
+    did = _create_delegation(p, task, goal=planned.original, tier=None)
     prefix = f"\033[2m→ {did} · {tier}/{agent}\033[0m"
     return _run(p, user_text, did, prefix=prefix)
 
@@ -292,7 +295,16 @@ def _continue(p: dict[str, Path], user_text: str) -> bool:
 
 def _run(p: dict[str, Path], user_text: str, did: str, *, prefix: str = "") -> bool:
     mode = "watch" if sys.stdout.isatty() else "plain"
-    rc = cli_mod.cmd_run(argparse.Namespace(id=did, dry_run=False, timeout=600, mode=mode)) or 0
+    rc = cli_mod.cmd_run(
+        argparse.Namespace(
+            id=did,
+            dry_run=False,
+            timeout=600,
+            mode=mode,
+            maestro=False,
+            no_maestro=False,
+        )
+    ) or 0
     response = _friendly_run_result(p, did, rc)
     if prefix:
         response = f"{prefix}\n{response}"
@@ -307,14 +319,34 @@ def _friendly_run_result(p: dict[str, Path], did: str, rc: int) -> str:
     if rc == 0 and summary_path.exists():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         nxt = summary.get("next") or _state(p).get("next") or "(none)"
-        return f"OK:{did}\nNext: {nxt}\n\n{int(m.get('burnless_tokens', 0)):,} burnless tokens"
+        text = (summary.get("summary") or "").strip()
+        head = f"OK:{did}"
+        if text:
+            head = f"{head}\n{text}"
+        audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+        if audit.get("status"):
+            head = f"{head}\nAudit: {audit.get('status')}"
+        if audit.get("feedback"):
+            head = f"{head}\nReason: {str(audit.get('feedback')).strip()[:180]}"
+        evidence = summary.get("evidence") if isinstance(summary.get("evidence"), list) else summary.get("validated")
+        if isinstance(evidence, list) and evidence:
+            head = f"{head}\nEvidence: {str(evidence[0]).strip()[:180]}"
+        return f"{head}\nNext: {nxt}\n\n{int(m.get('burnless_tokens', 0)):,} burnless tokens"
     if summary_path.exists() or capsule_path.exists():
+        reason = ""
+        if summary_path.exists():
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+            feedback = str(audit.get("feedback") or summary.get("next") or "").strip()
+            if feedback:
+                reason = f"\nReason: {feedback[:180]}\n"
         return (
             "Worker failed.\n\n"
             "I saved:\n"
             "- raw log\n"
             "- compact summary\n"
             "- capsule\n\n"
+            f"{reason}"
             "No burnless tokens were created from this capsule because the output was already short.\n\n"
             "Suggested next step:\n"
             f"fix {did}\n\n"

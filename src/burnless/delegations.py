@@ -25,6 +25,7 @@ DELEGATION_TEMPLATE = """\
 - Be concise. No preamble.
 - Output a final JSON block matching the success schema below; nothing else after it.
 - Do not include logs in the JSON. Logs go to stdout, JSON last.
+- Include `evidence`: short, verifiable items citing commands, files, logs, or checks observed. Evidence must not be opinion.
 
 ## Success criteria
 
@@ -39,6 +40,7 @@ DELEGATION_TEMPLATE = """\
   "summary": "<one short sentence>",
   "files_touched": [],
   "validated": [],
+  "evidence": ["<command/file/log/check observed>"],
   "issues": [],
   "next": "<short hint or empty string>"
 }}
