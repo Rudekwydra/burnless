@@ -28,11 +28,14 @@ if [[ -z "${TWINE_USERNAME:-}" || -z "${TWINE_PASSWORD:-}" ]]; then
   exit 2
 fi
 
+VERSION="$("$PYTHON_BIN" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+DIST_GLOB="dist/burnless-${VERSION}*"
+
 "$PYTHON_BIN" -m build --no-isolation
-"$PYTHON_BIN" -m twine check dist/burnless-*
+"$PYTHON_BIN" -m twine check $DIST_GLOB
 
 if [[ "${1:-}" == "--upload" ]]; then
-  "$PYTHON_BIN" -m twine upload dist/burnless-*
+  "$PYTHON_BIN" -m twine upload --skip-existing $DIST_GLOB
 else
-  echo "release: build/check complete. Re-run with --upload to publish."
+  echo "release: build/check complete for burnless ${VERSION}. Re-run with --upload to publish."
 fi
