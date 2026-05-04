@@ -34,24 +34,29 @@ The API key is read only from `ANTHROPIC_API_KEY`. The script never prints it.
 
 ## Reference Run
 
-Calibration: `bench/results/calibration.json` (8 turns, claude-opus-4-7).
+10 turns, `claude-opus-4-7`, 23k-token prefix, raw `response.usage` — no mocks.
+Source files: `bench/results/run_20260503T03*.json`.
 
-| Scenario | Cost |
-| --- | ---: |
-| standalone_no_cache | $3.42 |
-| standalone_cache | $1.25 |
-| burnless_maestro | $1.14 |
+| Scenario | Cost | vs no-cache |
+| --- | ---: | ---: |
+| A — standalone_no_cache | $4.66 | — |
+| B — standalone_cache | $0.65 | −86.0% |
+| C — burnless_maestro | **$0.45** | **−90.3%** |
 
 Headline:
 
-- **66.8% cheaper than naive Claude (no cache)**
-- **9.1% cheaper than Claude with prompt caching alone**
+- **90.3% cheaper than naive Claude (no cache)**
+- **30.8% cheaper than Claude with prompt caching alone**
 
 For projected savings at any N without API calls:
 
 ```bash
 python bench/run.py --project 50
 ```
+
+> **Note:** `bench/results/calibration.json` is an older 8-turn run with an
+> incomplete `burnless_maestro` scenario (run was interrupted). It is kept for
+> historical reference only — the canonical numbers are above.
 
 ## Methodology
 
@@ -81,8 +86,9 @@ Costs are calculated from `response.usage` exactly, including:
 - `cache_read_input_tokens`
 
 The task turns come from a built-in scenario inside `bench/run.py`. You can
-pass your own task content with `--task path/to/file.md` if you'd rather
-benchmark a workload that mirrors your real prompts.
+benchmark a workload that mirrors your real prompts. (Custom task files are
+not yet supported by the current `bench/run.py`; the built-in scenario is
+used for all runs.)
 
 ## Reproduce
 
