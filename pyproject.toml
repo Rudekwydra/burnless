@@ -29,6 +29,9 @@ dependencies = [
     "rich>=13.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
 [project.urls]
 Homepage = "https://burnless.pro"
 Repository = "https://github.com/Rudekwydra/burnless"
