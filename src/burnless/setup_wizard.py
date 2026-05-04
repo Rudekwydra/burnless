@@ -146,16 +146,16 @@ def suggest(det: Detection) -> dict:
 
     if det.clis.get("claude", CliInfo("claude")).available:
         out["gold"]["name"] = "opus"
-        out["gold"]["command"] = "claude --model opus -p"
+        out["gold"]["command"] = "claude --model claude-opus-4-7 --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS,WebFetch -p"
         out["silver"]["name"] = "sonnet"
-        out["silver"]["command"] = "claude --model sonnet -p"
+        out["silver"]["command"] = "claude --model claude-sonnet-4-6 --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS -p"
         out["bronze"]["name"] = "haiku"
-        out["bronze"]["command"] = "claude --model haiku -p"
-    if det.clis.get("codex", CliInfo("codex")).available:
+        out["bronze"]["command"] = "claude --model claude-haiku-4-5-20251001 --allowedTools Read,Bash,Glob,Grep,LS -p"
+    if det.clis.get("codex", CliInfo("codex")).available and not det.clis.get("claude", CliInfo("claude")).available:
         out["silver"]["name"] = "codex"
         out["silver"]["command"] = det.clis["codex"].default_command
         out["silver"]["role"] = "everyday_code_execution"
-    elif det.clis.get("gemini", CliInfo("gemini")).available:
+    elif not det.clis.get("claude", CliInfo("claude")).available and det.clis.get("gemini", CliInfo("gemini")).available:
         out["gold"]["name"] = "gemini-pro"
         out["gold"]["command"] = "gemini -p --model gemini-pro"
         out["silver"]["name"] = "gemini-flash"
