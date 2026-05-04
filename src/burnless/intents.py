@@ -21,13 +21,13 @@ def parse(text: str) -> Intent:
 
     if lowered in {"q", "quit", "exit", "sair"}:
         return Intent("exit", raw=raw)
-    if lowered in {"help", "ajuda"}:
+    if lowered in {"help", "ajuda", "commands", "comandos"}:
         return Intent("help", raw=raw)
     if lowered in {"status", "ver status", "mostrar status"}:
         return Intent("status", raw=raw)
     if lowered in {"metrics", "metricas", "métricas", "mostrar métricas", "mostrar metricas", "burnless tokens"}:
         return Intent("metrics", raw=raw)
-    if lowered in {"agents", "agentes"}:
+    if lowered in {"agents", "agentes", "workers", "tiers"}:
         return Intent("agents", raw=raw)
     if lowered in {"setup", "configurar", "instalar", "wizard"}:
         return Intent("setup", raw=raw)
