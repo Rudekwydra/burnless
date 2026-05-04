@@ -539,21 +539,21 @@ def cmd_brain(args: argparse.Namespace) -> int:
 
     def render_maestro() -> str:
         adapter = brain_adapters.current_anthropic_adapter(model)
-        models = available_maestro_models()
+        brain_models = brain_adapters.available_brain_models(model)
         lines = [
-            f"Current Maestro: {model}",
-            f"Brain adapter: {adapter.label} ({adapter.status})",
+            f"Current Brain: {model}",
+            f"Adapter: {adapter.label} ({adapter.status})",
             "",
-            "Available models:",
+            "Switch with /maestro <model>  (Anthropic SDK only):",
         ]
-        for candidate in models:
+        for candidate in brain_models:
             marker = "*" if candidate == model else " "
             lines.append(f"  {marker} {candidate}")
         lines.extend(
             [
                 "",
-                adapter.note,
-                "Use /workers to see Generic CLI worker adapters.",
+                "Codex / Ollama as Brain: planned for v0.6.",
+                "Use /workers to see configured worker adapters.",
             ]
         )
         return "\n".join(lines)
@@ -563,6 +563,14 @@ def cmd_brain(args: argparse.Namespace) -> int:
         next_model = next_model.strip()
         if not next_model:
             return render_maestro()
+        if not next_model.startswith("claude-"):
+            return (
+                f"'{next_model}' não é um modelo válido para o Brain.\n"
+                "O Brain usa o Anthropic SDK — passe um modelo claude-* "
+                "(ex: claude-sonnet-4-6, claude-haiku-4-5-20251001).\n"
+                "Codex e Ollama como Brain são planejados para v0.6. "
+                "Use /workers para ver os worker adapters configurados."
+            )
         model = next_model
         state = state_mod.load(p["state"])
         state["brain_model"] = model

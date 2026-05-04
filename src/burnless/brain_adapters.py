@@ -118,13 +118,16 @@ def configured_worker_adapters(cfg: dict) -> list[BrainAdapter]:
     return adapters
 
 
+def available_brain_models(current_model: str) -> list[str]:
+    """Only models usable as Brain today (Anthropic SDK)."""
+    return list(current_anthropic_adapter(current_model).models)
+
+
 def available_maestro_models(cfg: dict, current_model: str) -> list[str]:
-    models = list(current_anthropic_adapter(current_model).models)
-    for adapter in configured_worker_adapters(cfg):
-        for model in adapter.models:
-            if model and model not in models:
-                models.append(model)
-    return models
+    """Legacy alias — returns only Brain-compatible models (Anthropic SDK).
+    Worker adapter models are intentionally excluded; use /workers for those.
+    """
+    return available_brain_models(current_model)
 
 
 def slash_commands(model: str) -> tuple[str, ...]:
