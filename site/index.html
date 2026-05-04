@@ -297,7 +297,7 @@
         <div class="pain"><h3>2. Shared prefix cache</h3><p>System prompt is byte-identical every turn with <code>cache_control</code>. Read price ($0.15/MTok) instead of write price ($15/MTok). 100× spread.</p></div>
         <div class="pain"><h3>3. Tiers are roles, not models</h3><p>Any model as Brain. Any model as Worker. GPT-4o, Opus, Sonnet, Codex, Ollama — one-line config change.</p></div>
         <div class="pain"><h3>4. Living glossary</h3><p>Core terms, project terms and session deltas form a compact language between human intent, Maestro and Workers.</p></div>
-        <div class="pain"><h3>5. Privacy by mode</h3><p>Cost mode reduces repeated exposure today. Redact, audit, opaque and burnkey modes define the path to stronger local-key privacy.</p></div>
+        <div class="pain"><h3>5. Privacy by architecture</h3><p>Run encoder/decoder locally → cloud sees only capsules, not raw text. Run Maestro locally → cloud workers see disconnected task fragments with zero conversation context. Four levels, one config line.</p></div>
       </div>
       <p class="small" style="margin-top:32px; text-align:center;">We don't ask you to trust the table. <strong style="color:var(--fg);">Reproduce it: <code>python bench/run.py --turns 8</code> with your own API key.</strong></p>
     </div>
@@ -327,7 +327,7 @@ $ burnless run d002
   <section id="pricing" class="pricing">
     <div class="container">
       <h2>Editions.</h2>
-      <p class="lede">Run the protocol locally for free. Pay for governance, auditability, privacy operations and team infrastructure.</p>
+      <p class="lede">The protocol is MIT and stays free. Pay for the things organizations need to trust it at scale: governance, compliance, and team infrastructure.</p>
       <div class="cards">
         <div class="card">
           <h3>Burnless</h3>

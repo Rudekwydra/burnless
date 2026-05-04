@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.4] — 2026-05-04
+### Changed
+- PROTOCOL.md: added Architecture section (Encoder/Maestro/Workers), Privacy Levels table (0–3), and cache/model-switching note
+- README: principle 6b rewritten — privacy is a consequence of where each component runs, not a mode flag
+- Site: privacy pain-grid item updated to reflect the four architecture levels; pricing lede clarified
+
 ## [0.5.3] — 2026-05-04
 ### Added
 - `PROTOCOL.md` with explicit cost/redact/audit/opaque privacy modes.
