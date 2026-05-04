@@ -11,12 +11,11 @@ mas marcado como "raw:" pra clareza.
 
 ---
 
-## Tiers (modelos)
+## Tiers (bandas de qualidade/custo)
 
-- `dia` = diamond / codex (execução de código, sandbox workspace-write)
-- `gld` = gold / opus (Brain default; raciocínio/orquestração)
-- `slv` = silver / sonnet (worker padrão; doc, codigo médio, validação)
-- `brz` = bronze / haiku (encoder/decoder, classificação, clean)
+- `gld` = gold (maior qualidade/custo, definido pelo usuário)
+- `slv` = silver (trabalho diário, validação, código médio)
+- `brz` = bronze (encoder/decoder, classificação, clean, local/cheap)
 
 ## Estados de tarefa
 
@@ -65,13 +64,34 @@ terms:
   # ... etc
 ```
 
-O loader concatena `glossary.md` (core, byte-idêntico cross-tenant)
-+ tenant_glossary (variável). Apenas o core entra no `cache_control` ephemeral
-compartilhado entre tenants. Tenant glossary é cacheado per-tenant.
+Target: o loader combina `glossary.md` (core, byte-idêntico)
++ tenant_glossary (variável). Apenas o core entra no bloco de cache
+compartilhável. Tenant glossary é cacheado por projeto/tenant.
+
+Nota de implementação: versões antigas detectam tenant glossary, mas ainda não
+fazem merge completo. O roadmap do protocolo move isso para `core + tenant +
+session`.
 
 Razão: core é vocabulário do framework (tier/cap/del/exec). Tenant é vocabulário
 do negócio. Misturar quebra cache cross-tenant e contamina o produto com
 termos de um cliente específico.
+
+## Session emergent glossary
+
+Além do core e do tenant glossary, o protocolo deve manter um glossário vivo da
+sessão. A LLM compressora pode propor deltas, mas o Burnless valida antes de
+aceitar:
+
+```text
+GLOSSARY_DELTA
+auth = authentication service
+wkr = worker
+cap = capsule
+END_GLOSSARY_DELTA
+```
+
+Esse log deve ser append-only e sobreviver à compactação como
+`GLOSSARY_SUPERBLOCK`, separado do `CAPSULE_SUPERBLOCK`.
 
 ## Padrão de capsule
 
@@ -101,6 +121,6 @@ gld aud T44 :: precisa rebase schema antes
 ## Anti-padrões (NÃO fazer)
 
 - Não escrever texto longo em capsule. Se precisa expandir, gravar em exec_log e referenciar.
-- Não inventar termos novos sem registrar aqui (glossary versionado quebra cache).
+- Não inventar termos novos sem registrar em tenant/session glossary.
 - Não misturar PT-BR e glossário na mesma capsule. Glossário é protocolo IA-pra-IA.
 - Output pro humano (depois do decoder Haiku) é PT-BR natural. Esse glossário NUNCA aparece pro humano.

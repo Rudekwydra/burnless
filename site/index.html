@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Multi-agent loops cost O(N²). Burnless makes them O(N). 88% cheaper at turn 10. The transparent protocol layer between any user and any LLM. MIT, provider-agnostic.">
+<meta name="description" content="88% cheaper at turn 10. Burnless turns O(N²) LLM context replay into O(N) capsule memory, with cache-warm orchestration across any Maestro and Worker.">
 <meta property="og:title" content="Burnless — O(N²) → O(N). 88% cheaper at turn 10.">
-<meta property="og:description" content="Multi-turn agent loops bill quadratic in tokens. Burnless makes them linear. Open source, MIT, any LLM.">
+<meta property="og:description" content="88% cheaper at turn 10 by turning long LLM conversations into compact capsule memory. Open source, MIT, any LLM.">
 <meta property="og:url" content="https://burnless.pro">
 <meta property="og:image" content="https://burnless.pro/cost_chart.png">
 <meta property="og:type" content="website">
@@ -224,8 +224,9 @@
   <section class="hero">
     <div class="container">
       <h1><span class="burn">Intent-compressed</span><br>intelligence orchestration.</h1>
-      <p class="sub" style="font-size:18px; color:var(--fg); font-weight:500;">A maestro for any LLM. O(N²) → O(N) by math.</p>
+      <p class="sub" style="font-size:18px; color:var(--fg); font-weight:500;">88% cheaper at turn 10. A maestro for any LLM. O(N²) → O(N) by math.</p>
       <p class="sub">Pick any model as the Maestro — Claude, GPT, Gemini, OpenClaw, a local Ollama. It orchestrates gold/silver/bronze Workers from any vendor and shares a cached protocol prefix. <strong style="color:var(--fg);">88% cheaper at turn 10</strong>, not by trick — by arithmetic on the published pricing pages.</p>
+      <p class="sub">Burnless turns long LLM conversations into compact capsule memory. Under the hood, it is evolving into a candidate protocol layer for human-LLM and LLM-LLM communication: a living, compressed, privacy-aware language between humans, maestros, and workers.</p>
 
       <p class="sub" style="font-style:italic; color:var(--fg);">We compress pages of conversation history into a single 80-character line. Your AI keeps the memory. You stop paying for the excess.</p>
 
@@ -266,7 +267,7 @@
     <div class="container">
       <h2>Beyond cost. The protocol layer.</h2>
       <p class="lede">A token is not an abstraction. It is compute. Compute is electricity. Electricity is water and infrastructure. O(N²) at the scale LLM inference is heading — 1–5% of global electricity within a decade — is not a pricing quirk. It is a trajectory.</p>
-      <p class="lede">Burnless is the transparent, provider-agnostic layer that sits between any user and any LLM, converting O(N²) context growth into O(N) by design. Not a feature. Not an SDK wrapper. A protocol — like TCP/IP was to packets. The model receives a capsule. The user sends a message. Neither knows the layer exists.</p>
+      <p class="lede">Burnless is the transparent, provider-agnostic layer that sits between any user and any LLM, converting O(N²) context growth into O(N) by design. Not a feature. Not an SDK wrapper. A candidate protocol — like TCP/IP was to packets. The model receives a capsule. The user sends a message. The orchestration layer speaks compact state.</p>
       <div class="pain-grid" style="margin-top:32px;">
         <div class="pain">
           <h3>60–90 TWh/year</h3>
@@ -295,8 +296,8 @@
         <div class="pain"><h3>1. Capsules, not transcripts</h3><p>Brain history holds ~80-char summaries of each turn, not the raw exchange. Full output stays on disk, read on demand.</p></div>
         <div class="pain"><h3>2. Shared prefix cache</h3><p>System prompt is byte-identical every turn with <code>cache_control</code>. Read price ($0.15/MTok) instead of write price ($15/MTok). 100× spread.</p></div>
         <div class="pain"><h3>3. Tiers are roles, not models</h3><p>Any model as Brain. Any model as Worker. GPT-4o, Opus, Sonnet, Codex, Ollama — one-line config change.</p></div>
-        <div class="pain"><h3>4. Three compression layers</h3><p>Deterministic minifier (zero cost) → semantic encoder (Haiku, $0.001/turn) → optional LLMLingua-2 (CPU, no API).</p></div>
-        <div class="pain"><h3>5. Zero data retention</h3><p>State lives in <code>.burnless/</code> on your machine. No dashboard sees your prompts, your keys, or your conversations. Nothing leaves the box.</p></div>
+        <div class="pain"><h3>4. Living glossary</h3><p>Core terms, project terms and session deltas form a compact language between human intent, Maestro and Workers.</p></div>
+        <div class="pain"><h3>5. Privacy by mode</h3><p>Cost mode reduces repeated exposure today. Redact, audit, opaque and burnkey modes define the path to stronger local-key privacy.</p></div>
       </div>
       <p class="small" style="margin-top:32px; text-align:center;">We don't ask you to trust the table. <strong style="color:var(--fg);">Reproduce it: <code>python bench/run.py --turns 8</code> with your own API key.</strong></p>
     </div>
@@ -326,29 +327,31 @@ $ burnless run d002
   <section id="pricing" class="pricing">
     <div class="container">
       <h2>Editions.</h2>
-      <p class="lede">Run it locally for free. Or join the waitlist for hosted features that need a backend.</p>
+      <p class="lede">Run the protocol locally for free. Pay for governance, auditability, privacy operations and team infrastructure.</p>
       <div class="cards">
         <div class="card">
           <h3>Burnless</h3>
           <p class="price">Free<span> · MIT</span></p>
           <ul>
+            <li>Open protocol, MIT licensed</li>
             <li>Full CLI, runs locally</li>
             <li>Brain + Worker + capsule history</li>
             <li>Shared prefix cache, realtime capsule compaction</li>
+            <li>Local burnkey semantics planned in the protocol</li>
             <li>Provider-agnostic — any LLM as Brain or Worker</li>
             <li>Reproducible benchmark</li>
           </ul>
           <a class="btn" href="https://github.com/rudekwydra/burnless" target="_blank" rel="noopener">View on GitHub</a>
         </div>
         <div class="card highlight">
-          <h3>Burnless Cloud</h3>
+          <h3>Burnless Cloud/Enterprise</h3>
           <p class="price">Soon<span> · waitlist</span></p>
           <ul>
             <li>Shared cache across machines and teammates</li>
-            <li>Hosted dashboard for token telemetry</li>
-            <li>Centralized audit log of every delegation</li>
+            <li>KMS/HSM key custody and retention policy</li>
+            <li>Audit logs, legal hold and destruction reports</li>
             <li>SSO + team permissions</li>
-            <li>Priority support</li>
+            <li>Dashboards, SIEM/webhooks and priority support</li>
           </ul>
           <a class="btn" href="#waitlist">Join Cloud waitlist</a>
         </div>
@@ -360,7 +363,7 @@ $ burnless run d002
   <section id="waitlist">
     <div class="container" style="text-align:center;">
       <h2>Burnless Cloud — waitlist.</h2>
-      <p class="lede" style="margin-left:auto; margin-right:auto;">Hosted features for teams: shared cache, dashboards, audit logs, SSO. The CLI is free and open source — Cloud is for orgs that want a backend.</p>
+      <p class="lede" style="margin-left:auto; margin-right:auto;">Hosted features for teams: shared cache, dashboards, KMS/HSM key custody, audit logs, SSO and retention policy. The protocol is free and open source — Cloud/Enterprise is for organizations that need governance.</p>
       <form class="waitlist" id="waitlistForm">
         <input type="email" name="email" required placeholder="you@domain.com" autocomplete="email">
         <button type="submit" class="btn" id="waitlistBtn">Join waitlist</button>

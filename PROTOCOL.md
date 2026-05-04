@@ -1,5 +1,9 @@
 # Burnless Protocol
 
+Burnless is a candidate protocol layer for human-LLM and LLM-LLM
+communication: a living, compressed, privacy-aware intermediary language
+between humans, maestros, and workers.
+
 Burnless separates four surfaces:
 
 1. what the human says,
@@ -37,6 +41,16 @@ customer.
 Planned. Capsules use authenticated encryption and the key is memory-only. When
 the process/session ends, old capsules are intentionally undecodable.
 
+### Burnkey Mode
+
+Planned. An explicit local operation destroys the decryption key for selected
+capsules or sessions before the natural end of the process. When no other copy
+of the key or raw source is retained, the encrypted capsule becomes
+unrecoverable by Burnless.
+
+Burnkey is a protocol operation, not a legal shortcut. Strong claims require
+matching retention policy, key custody, audit behavior, and tests.
+
 ## Capsule Versions
 
 ### v1 Legacy
@@ -64,6 +78,22 @@ enterprise cryptography claim.
 - Burnless v0.5 does not claim providers cannot see any sensitive text.
 - Burnless v0.5 does not yet enforce local redaction before provider calls.
 - Burnless v0.5 does not yet persist audit keys in a customer keystore.
+- Burnless v0.5 does not yet implement burnkey destruction semantics.
+
+## Glossary Layers
+
+Burnless uses a compression language, not only a compression algorithm. The
+target design has three glossary layers:
+
+1. **Core glossary**: fixed protocol terms, versioned with Burnless.
+2. **Tenant/project glossary**: local domain language controlled by the user or
+   customer.
+3. **Session emergent glossary**: append-only mappings proposed by the encoder
+   and validated by Burnless during a conversation.
+
+Session glossary compaction must preserve glossary meaning separately from
+capsule meaning. A future compactor should emit a `GLOSSARY_SUPERBLOCK` and a
+`CAPSULE_SUPERBLOCK` instead of mixing both into one lossy summary.
 
 ## Design Target
 
