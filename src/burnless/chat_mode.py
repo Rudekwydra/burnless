@@ -34,25 +34,84 @@ DEFAULT_HISTORY_TURNS = 10
 MEMORY_INJECT_LIMIT = 12_000
 PROJECT_MEMORY_FILES = ("MEMORY.md", "AGENTS.md", "CLAUDE.md")
 
-# Anthropic requires ≥1024 tokens for cache to activate.
-# Memory + plan usually exceeds that; if not, we pad with the protocol summary.
-_CACHE_PAD = (
-    "\n\n[burnless-protocol-context]\n"
-    "Burnless reduces multi-turn LLM cost from Θ(N²) to Θ(N) via capsule memory "
-    "and shared prefix caching. Three tiers: gold (strategy/architecture), "
-    "silver (implementation/docs), bronze (summarize/classify/extract). "
-    "Workers receive isolated task capsules — no conversation history. "
-    "The Encoder compresses raw turns; the Decoder expands capsules back to natural language. "
-    "Privacy is a consequence of where each component runs: "
-    "L0=all cloud, L1=local encoder, L2=local maestro, L3=all local. "
-    "Cache key = content of cached block, not model name. "
-    "Switching models within the same provider recovers warm cache within one turn. "
-    "Capsule format: {tier} {action} {target} :: {status} {detail} [ref:{exec_id}]. "
-    "Status values: OK | PART | BLK | ERR. "
-    "Delegation format: del T{id} {tier} {action} {target} :: {spec}. "
-    "This context block is byte-identical every session — it is the cache anchor. "
-    "Do not modify this block at runtime.\n"
-)
+# Anthropic requires ≥1024 tokens for cache to activate (≥2048 for some models).
+# This pad is byte-identical across all burnless sessions — it extends the core glossary
+# to safely clear the threshold for all Claude models.
+_CACHE_PAD = """
+
+[burnless-protocol-extended-reference]
+
+ARCHITECTURE
+  User → Encoder LLM → Encoder Software → Maestro → Workers (gold/silver/bronze)
+       → Decoder Software → Decoder LLM → User
+
+  Encoder: Translates raw natural language to compact capsule format (~80 chars per turn).
+           Default: cloud LLM (Haiku-class). Privacy alternative: local model (Ollama).
+
+  Maestro: The persistent orchestrating agent. Receives ONLY capsules — never raw text.
+           Maintains session state as a capsule history. Decides: respond directly |
+           delegate to worker | ask for clarification. NEVER executes commands directly.
+
+  Workers: Ephemeral execution agents. Receive a single task capsule with no conversation
+           history. Three quality/cost tiers configurable by the user.
+
+  Decoder: Translates capsule results back to natural language for the user.
+           Default: cloud LLM (Haiku-class). Privacy alternative: local model (Ollama).
+
+CAPSULE FORMAT
+  {tier} {action} {target} :: {status} {detail} [ref:{exec_id}]
+
+  Examples:
+    gld imp auth/jwt :: OK schema+router+middleware done [ref:exec/T0042]
+    slv doc api/     :: PART openapi.yaml done, examples pending [ref:exec/T0043]
+    brz sum logs/    :: OK 3 errors found, 2 warnings [ref:exec/T0044]
+
+  Status values: OK | PART | BLK | ERR
+
+DELEGATION FORMAT
+  del T{id} {tier} {action} {target} :: {spec}
+
+  The dispatcher parses delegation lines, resolves the tier to the configured worker agent,
+  and executes. Workers receive: (1) core glossary cached prefix, (2) worker role prompt
+  cached prefix, (3) specific task capsule — single turn, no history.
+
+COST MODEL
+  N  = turns in session
+  P  = persistent prefix tokens (system prompt)
+  C  ≈ 20 tokens = capsule size (~80 chars)
+  T  ≈ 1500 tokens = typical raw turn size
+
+  Standalone: cost ≈ N·P·p_in + T·N(N-1)/2·p_in → Θ(N²)
+  Burnless:   cost ≈ P·p_cw + (N-1)·P·p_cr + C·N(N-1)/2·p_in → Θ(N)
+
+  The capsule term C·N(N-1)/2 is technically Θ(N²) but with constant C/T ≈ 0.013
+  (~75x smaller). For N ≤ 1000 it remains below the linear cache-read term.
+
+PRIVACY LEVELS (architectural consequence, not a mode flag)
+  L0: Encoder=cloud, Maestro=cloud, Workers=cloud → providers see everything
+  L1: Encoder=local, Maestro=cloud, Workers=cloud → providers see capsules only
+  L2: Encoder=local, Maestro=local, Workers=cloud → providers see disconnected fragments
+  L3: Encoder=local, Maestro=local, Workers=local → providers see nothing
+
+  Level 2 is the strongest practical configuration for most users.
+  Level 3 is the only configuration with a hard privacy guarantee.
+
+GLOSSARY LAYERS
+  1. Core glossary — fixed protocol terms, versioned with spec. Byte-identical across
+     all users. Eligible for shared prefix caching (this block).
+  2. Tenant/project glossary — local domain language per project (tenant_glossary.yaml).
+  3. Session emergent glossary — append-only mappings proposed by encoder, validated
+     by Maestro before adoption. Survives compaction as GLOSSARY_SUPERBLOCK.
+
+CACHE ARCHITECTURE
+  The Maestro system prompt is byte-identical every turn → persistent prefix caching.
+  Cache read price ≈ 10x cheaper than standard input (100x cheaper than write).
+  Model switching within same provider does NOT invalidate cache.
+  Provider switching resets cache.
+
+This block is byte-identical every session — it is the shared cache anchor.
+Modification at runtime invalidates caching for all active sessions.
+"""
 
 
 def run_chat(p: dict[str, Path], *, dry_run: bool | None = None) -> int:
@@ -171,45 +230,50 @@ def _run_chat_sdk(
 def _build_system_blocks(p: dict[str, Path], state: dict) -> list[dict]:
     plan = state.get("plan") or ""
     memory_blob = _load_memory(p)
-    project_docs = _load_project_docs(p)
 
-    # Stable anchor — byte-identical across sessions; must be ≥1024 tokens for cache to activate
-    anchor = _CACHE_PAD
-    if project_docs:
-        anchor += f"\n\n[project documentation]\n{project_docs}\n"
+    # Block 1: Core glossary — byte-identical across ALL burnless users worldwide.
+    # This is the primary cache anchor: everyone shares the same prefix → Anthropic
+    # can serve it from a single cache slot regardless of who calls.
+    glossary = _load_glossary(p)
+
+    # Block 2: Project-specific context (plan + memory). Changes per project, not per turn.
+    project_context = ""
     if plan:
-        anchor += f"\n[project plan]\n{plan.strip()}\n"
+        project_context += f"[project plan]\n{plan.strip()}\n"
     if memory_blob:
-        anchor += f"\n[user memory — read-only]\n{memory_blob}\n"
+        project_context += f"\n[user memory — read-only]\n{memory_blob}\n"
 
-    return [
+    blocks: list[dict] = [
         {
             "type": "text",
-            "text": anchor,
+            "text": glossary,
             "cache_control": {"type": "ephemeral", "ttl": "1h"},
         }
     ]
+    if project_context.strip():
+        blocks.append(
+            {
+                "type": "text",
+                "text": project_context,
+                "cache_control": {"type": "ephemeral", "ttl": "1h"},
+            }
+        )
+    return blocks
 
 
-def _load_project_docs(p: dict[str, Path]) -> str:
-    """Load protocol/vision docs to ensure system block ≥1024 tokens for cache activation."""
-    project_root = p["root"].parent
-    doc_names = ("VISION.md", "PROTOCOL.md", "README.md")
-    parts: list[str] = []
-    char_budget = 8_000
-    for name in doc_names:
-        path = project_root / name
-        if not path.exists():
-            continue
-        text = _safe_read(path)
-        if not text:
-            continue
-        take = min(len(text), char_budget)
-        parts.append(f"## {name}\n{text[:take]}")
-        char_budget -= take
-        if char_budget <= 0:
-            break
-    return "\n\n".join(parts)
+def _load_glossary(p: dict[str, Path]) -> str:
+    """Load core glossary (byte-identical for all users) + pad to ensure ≥1024 tokens."""
+    try:
+        from .codec.glossary_loader import load_glossary
+        text = load_glossary(p["root"].parent)
+    except Exception:
+        text = ""
+    # Pad with protocol summary to ensure ≥2048 tokens (safe threshold for all models).
+    # Claude 4 models require ~8000 chars (~2000 tokens) before cache activates.
+    if len(text) < 8_000:
+        text += _CACHE_PAD
+    return text
+
 
 
 def _resolve_model(tier: str, cfg: dict, state: dict) -> str:

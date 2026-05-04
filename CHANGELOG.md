@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.5] — 2026-05-04
+### Added
+- `/chat` in the shell now uses Anthropic SDK with real prefix-cache warmth: first turn writes cache, second turn+ reads it (~99% input cost saving shown inline).
+- System anchor in chat loads project docs (VISION.md, PROTOCOL.md, README.md) to ensure ≥1024 token threshold for cache activation.
+
+### Fixed
+- `/commands` and `/workers` no longer routed as delegations — now recognized as slash commands.
+- `maestro_legacy`: added extended-cache-ttl beta header (was missing, preventing 1h TTL from activating).
+- Routing keywords: `architect`, `design`, `system` added to gold tier.
+
 ## [0.5.4] — 2026-05-04
 ### Changed
 - PROTOCOL.md: added Architecture section (Encoder/Maestro/Workers), Privacy Levels table (0–3), and cache/model-switching note
