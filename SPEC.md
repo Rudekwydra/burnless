@@ -138,6 +138,14 @@ The capsule term `C·N(N-1)/2` is technically Θ(N²) but with constant
 `C/T ≈ 0.013` — approximately 75× smaller. For N ≤ 1,000 it remains below
 the linear cache-read term. Practically: Θ(N).
 
+**Cache activation invariant:** The system anchor must satisfy `P ≥ P_min`
+where `P_min` is the provider's minimum cacheable prefix length (1,024 tokens
+for current Anthropic models). If `P < P_min`, no cache write occurs and cost
+remains Θ(N²) regardless of capsule compression. The Burnless glossary anchor
+is designed to guarantee `P ≥ P_min` from turn 1. An undersized anchor is
+a silent correctness failure — the formula holds but the constant factor
+does not improve.
+
 Benchmark result (reproducible, `bench/run.py`): **88% cost reduction at
 turn 10** with default Anthropic pricing.
 
