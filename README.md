@@ -62,11 +62,13 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 **5. Determinism before LLMs.** Layer 1 of the compression stack is pure Python — no model call, zero latency, zero cost. Filler phrases stripped, whitespace normalized, before the encoder ever sees the text. Cheap stages run first for a reason.
 
-**6. Cache-emergent glossary, not static dictionaries.** The semantic compression layer (Layer 2) uses Haiku with session context as the only "dictionary." Abbreviations emerge from the session — Haiku infers them from prior turns and applies them consistently. No YAML, no `_ABBREV`, no per-language file. The glossary lives in the cache and dies with the session. This is both cheaper and more universal than any static approach: it works in any language without configuration, and the compression dialect is unique to each session.
+**6. Cache-emergent glossary, not only static dictionaries.** The semantic compression layer (Layer 2) uses session context as the working "dictionary." Abbreviations can emerge from the session — the encoder infers them from prior turns and applies them consistently. The protocol target is an append-only glossary with three layers: core terms, tenant/project terms, and session deltas proposed by the encoder and validated by Burnless. In v0.5 this is partially implemented through static minification and session context; the append-only glossary log is tracked in the protocol roadmap.
 
 **6b. Capsule privacy is a mode, not a slogan.** Burnless v0.5 proves the cost and orchestration layer. Capsule v2 no longer embeds the key in the capsule; the key lives in the local in-memory keyring for the current process. Strong enterprise privacy requires the next protocol layer: local key custody, redaction maps, raw-retention policy, and an explicit audit mode. The current XOR/base64 layer is a lightweight protocol envelope, not a claim of enterprise cryptography.
 
-**7. The benchmark is the proof.** `bench/run.py` is short, dependency-light, hits the Anthropic SDK directly with no mocks, and writes raw `response.usage` to JSON. Anyone can rerun it, contest the numbers, and open an issue with their own results file. We did not write a marketing page about savings; we wrote a script that produces them and invited disagreement. That is the only honest way to publish a cost claim.
+**7. Open protocol, enterprise operations.** Burnless Protocol stays open: capsules, compression, glossary semantics, and local privacy modes belong in the MIT implementation. Burnless Cloud/Enterprise should monetize what companies actually need to trust it: key custody, audit logs, KMS/HSM, retention policies, SSO/RBAC, legal hold, and operational proof.
+
+**8. The benchmark is the proof.** `bench/run.py` is short, dependency-light, hits the Anthropic SDK directly with no mocks, and writes raw `response.usage` to JSON. Anyone can rerun it, contest the numbers, and open an issue with their own results file. We did not write a marketing page about savings; we wrote a script that produces them and invited disagreement. That is the only honest way to publish a cost claim.
 
 ## Install
 
@@ -144,7 +146,7 @@ Each layer is independent and additive. Layers 1, 3, and 4 are pure Python — z
 | Layer | What it does | Cost | When it fires |
 |-------|-------------|------|--------------|
 | **1. Deterministic minifier** | Strips universal filler phrases, normalizes whitespace | Zero — pure Python | Every turn, before encoder |
-| **2. Cache-emergent glossary** | Haiku compresses semantically. Abbreviations emerge from session context — no static dictionary. Glossary lives in the cache; dies with the session | ~$0.001/turn | `balanced` and `extreme` modes |
+| **2. Cache-emergent glossary** | Encoder compresses semantically. Abbreviations emerge from session context today; the roadmap makes them explicit append-only glossary deltas | ~$0.001/turn | `balanced` and `extreme` modes |
 | **3. Capsule envelope** | Scrambles the compressed text with a session key held in local memory by default. This is not enterprise-grade encryption yet | Zero — pure Python | Every turn after Layer 2 |
 | **4. Base64 pack** | Encodes the envelope to a portable ASCII capsule | Zero — pure Python | Every turn after Layer 3 |
 
@@ -156,7 +158,7 @@ Decode: `burnless decode --file session.capsule` — pure Python, no API call. v
 
 **What this replaces:** static glossary files, LLMLingua-2 (which requires a heavy local model for compression *and* decompression), and vector databases for session memory. The capsule *is* the memory. It persists on disk, decodes instantly, and requires no server.
 
-**Privacy roadmap:** `cost` mode minimizes repeated context exposure. `redact` mode will keep sensitive values local and send placeholders to providers. `audit` mode will store keys locally for controlled review. `opaque` mode will keep keys memory-only and make old capsules intentionally undecodable after the process/session dies.
+**Privacy roadmap:** `cost` mode minimizes repeated context exposure. `redact` mode will keep sensitive values local and send placeholders to providers. `audit` mode will store keys locally for controlled review. `opaque` mode will keep keys memory-only and make old capsules intentionally undecodable after the process/session dies. `burnkey` is planned as an explicit operation that destroys the local decryption key; when no other copy of the key or raw source exists, the capsule becomes unrecoverable by Burnless.
 
 The 88% cost reduction in the benchmark comes primarily from the *architecture* — shared prefix cache + linear capsule history. The four compression layers compound on top.
 
