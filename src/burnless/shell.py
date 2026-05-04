@@ -38,8 +38,8 @@ Commands:
   /setup                detect CLIs and write a sensible config
   /import               index your existing AI memories (folders)
   /chat                 enter persistent chat mode
-  /use diamond|gold|silver|bronze|auto    sticky tier for next runs
-  :gold | :silver | :bronze | :diamond | :auto    same, shorter
+  /use gold|silver|bronze|auto    sticky tier for next runs
+  :gold | :silver | :bronze | :auto    same, shorter
   /clear                clear screen
   /exit                 leave the shell
 
@@ -256,8 +256,8 @@ def _fix(p: dict[str, Path], user_text: str, did: str) -> bool:
         edited = input("Task: ").strip()
         if edited:
             task = edited
-    new_id = _create_delegation(p, task, goal=f"Fix {did}", tier="diamond")
-    created = f"Delegation {new_id} created for diamond/codex."
+    new_id = _create_delegation(p, task, goal=f"Fix {did}", tier="silver")
+    created = f"Delegation {new_id} created for silver/code."
     print(created)
     return _run(p, user_text, new_id, prefix=created)
 
@@ -279,7 +279,7 @@ def _continue(p: dict[str, Path], user_text: str) -> bool:
         "Based on the last capsule, the next useful step is:\n"
         f"{next_step}\n\n"
         "Suggested agent:\n"
-        "diamond/codex\n\n"
+        "silver/code\n\n"
         "Create and run now? [Y/n/edit]"
     )
     answer = input().strip().lower()
@@ -289,8 +289,8 @@ def _continue(p: dict[str, Path], user_text: str) -> bool:
         edited = input("Task: ").strip()
         if edited:
             task = edited
-    new_id = _create_delegation(p, task, goal="Continue from last capsule", tier="diamond")
-    created = f"Delegation {new_id} created for diamond/codex."
+    new_id = _create_delegation(p, task, goal="Continue from last capsule", tier="silver")
+    created = f"Delegation {new_id} created for silver/code."
     print(created)
     return _run(p, user_text, new_id, prefix=created)
 

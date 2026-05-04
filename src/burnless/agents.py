@@ -31,7 +31,7 @@ def _strip_flag(parts: list[str], flag: str) -> list[str]:
 
 
 def _apply_codex_overrides(parts: list[str], agent_cfg: dict) -> list[str]:
-    """Apply optional declarative overrides for codex tier (diamond)."""
+    """Apply optional declarative overrides for codex-backed tiers."""
     sandbox = agent_cfg.get("sandbox") or os.environ.get("BURNLESS_SANDBOX")
     workspace_root = agent_cfg.get("workspace_root") or os.environ.get("BURNLESS_WORKSPACE_ROOT")
     allow_net = agent_cfg.get("allow_net") or os.environ.get("BURNLESS_ALLOW_NET") in ("1", "true", "yes")

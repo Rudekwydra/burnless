@@ -196,9 +196,17 @@ The Maestro session enforces four properties simultaneously:
 
 3. **Four cache breakpoints, nested.** Anthropic allows at most 4 `cache_control` markers per request. Maestro places them at the boundaries of `system → memory → plan → capsules`, so Brain and Workers all share the same prefix and pay `cache_read` from their second call onward.
 
-4. **Pre/post-compact + meta-compact via Haiku.** When the capsule tail grows enough to threaten the cache shape (every ~30 capsules), Haiku compresses the older capsules into a single denser block. The new block becomes the next persistent prefix — re-marked with `cache_control` — and the cycle restarts. This keeps the cached region bounded so it stays hot indefinitely *within* the TTL window.
+4. **Realtime ROI compaction, not fixed capsule counts.** Burnless treats cached context as immutable layers: protocol header, glossary/schema, memory/plan, frozen capsule blocks, hot tail, and the new user capsule. It never rewrites a cached block. When the hot tail grows, Burnless creates a new super-capsule only if the future cache-read savings pay for the new cache write and the compaction call:
 
-**Known gap (roadmap):** there is no keepalive loop. If a session sits idle > 1h with zero calls, the TTL expires and the next call pays `cw` again instead of `cr`. A `--keepalive` mode that fires a 1-token ping every ~50 min would close this for daemon-style usage; not implemented in v0.3. Filed as a TODO; honest to disclose because the §3 derivation breaks on idle eviction.
+   ```text
+   K · r · (B - S) > W · S + M
+   ```
+
+   Where `B` is the old hot-tail token count, `S` is the compacted token count, `K` is expected future turns inside the TTL, `r` is cache-read/fresh-input price, `W` is cache-write/fresh-input price, and `M` is the one-time compaction cost expressed as input-token-equivalent. With `r = 0.10` and `W = 2.0`, a 70% compression (`S/B = 0.30`) breaks even after about 9 future turns before compaction cost; a 90% compression breaks even after about 3. Fixed rules like "compact every 6 capsules" are therefore wrong except by accident.
+
+   This preserves the cache invariant: old frozen blocks stay byte-identical; the new super-capsule is appended as the next frozen block and becomes profitable only when the math says it should.
+
+**Known gap (roadmap):** there is no keepalive loop. If a session sits idle > 1h with zero calls, the TTL expires and the next call pays `cw` again instead of `cr`. A `--keepalive` mode that fires a 1-token ping every ~50 min would close this for daemon-style usage; tracked as a TODO because the §3 derivation breaks on idle eviction.
 
 For the simulation in `bench/v2.py`, sessions are treated as contiguous within the TTL — true for any normal interactive workload. If your use case includes long idle gaps, model them by inflating `cw` accordingly.
 

@@ -225,7 +225,7 @@
     <div class="container">
       <h1><span class="burn">Intent-compressed</span><br>intelligence orchestration.</h1>
       <p class="sub" style="font-size:18px; color:var(--fg); font-weight:500;">A maestro for any LLM. O(N²) → O(N) by math.</p>
-      <p class="sub">Pick any model as the Maestro — Claude, GPT, Gemini, a local Ollama. It orchestrates Workers from any vendor and shares a cached system prompt. <strong style="color:var(--fg);">88% cheaper at turn 10</strong>, not by trick — by arithmetic on the published pricing pages.</p>
+      <p class="sub">Pick any model as the Maestro — Claude, GPT, Gemini, OpenClaw, a local Ollama. It orchestrates gold/silver/bronze Workers from any vendor and shares a cached protocol prefix. <strong style="color:var(--fg);">88% cheaper at turn 10</strong>, not by trick — by arithmetic on the published pricing pages.</p>
 
       <p class="sub" style="font-style:italic; color:var(--fg);">We compress pages of conversation history into a single 80-character line. Your AI keeps the memory. You stop paying for the excess.</p>
 
@@ -305,18 +305,21 @@
   <section id="how">
     <div class="container">
       <h2>How it looks.</h2>
-      <p class="lede">A small CLI. A folder of compact state under <code>.burnless/</code>. No hosted backend.</p>
+      <p class="lede">A chat-first CLI. Slash commands users already understand. Compact state under <code>.burnless/</code>. No hosted backend.</p>
 <pre><span class="c"># in any project</span>
 $ pip install burnless
-$ burnless init
-$ burnless brain
-   <span class="c"># interactive Brain — Sonnet by default, escalate to Opus on hard tasks</span>
+$ burnless setup
+$ burnless
+   <span class="c"># Burnless Chat — /commands, /maestro, /model, /workers, /native</span>
 
-$ burnless delegate <span class="a">"summarize the failing tests"</span>
-   <span class="ok">→ d001 routed to bronze/haiku  (matched: summarize)</span>
-$ burnless run d001
-   <span class="ok">OK:d001 — cache_read=23,000 tokens (warm)</span></pre>
-      <p class="small" style="margin-top:16px;">All state lives under <code>.burnless/</code>. Brain history, exec_log, capsules — local files you can grep.</p>
+$ burnless delegate <span class="a">"fix the failing tests"</span>
+   <span class="ok">→ d001 routed to silver/codex  (matched: test)</span>
+$ burnless delegate <span class="a">"summarize the logs"</span>
+   <span class="ok">→ d002 routed to bronze/haiku  (matched: summarize)</span>
+$ burnless run d002
+   <span class="ok">OK:d002 — cache_read=23,000 tokens (warm)</span></pre>
+      <p class="small" style="margin-top:16px;">Gold/silver/bronze are quality/cost bands, not vendors. The default setup can mix Claude, Codex and Ollama; users can replace any tier in <code>.burnless/config.yaml</code>.</p>
+      <p class="small" style="margin-top:8px;">Cache compaction is realtime ROI math: Burnless freezes immutable blocks and only creates a new super-capsule when future cache-read savings beat the write+compaction cost.</p>
     </div>
   </section>
 
@@ -331,7 +334,7 @@ $ burnless run d001
           <ul>
             <li>Full CLI, runs locally</li>
             <li>Brain + Worker + capsule history</li>
-            <li>Shared prefix cache, all 3 compression layers</li>
+            <li>Shared prefix cache, realtime capsule compaction</li>
             <li>Provider-agnostic — any LLM as Brain or Worker</li>
             <li>Reproducible benchmark</li>
           </ul>

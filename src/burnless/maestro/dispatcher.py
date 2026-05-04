@@ -28,8 +28,8 @@ TIER_ALIASES = {
     "bronze": "bronze",
     "slv": "silver",
     "silver": "silver",
-    "dia": "diamond",
-    "diamond": "diamond",
+    "dia": "silver",      # legacy alias from the old diamond/code tier
+    "diamond": "silver",  # legacy alias from the old diamond/code tier
     "gld": "gold",
     "gold": "gold",
 }
@@ -317,7 +317,7 @@ def _short_tier(tier: str) -> str:
     if normalized == "silver":
         return "slv"
     if normalized == "diamond":
-        return "dia"
+        return "slv"
     if normalized == "gold":
         return "gld"
     return normalized

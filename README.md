@@ -4,7 +4,7 @@
 
 A maestro that orchestrates any LLM from any vendor. Multi-turn agent loops cost O(N²) — Burnless makes them O(N).
 
-Burnless is a vendor-agnostic orchestration layer for multi-agent workflows. You pick the model that **conducts** the orchestra (Maestro / Brain) — Claude, GPT, Gemini, Mistral, a local Llama, anything — and the models that **execute** each task (Workers). Tiers are roles, not vendors: `gold`/`silver`/`bronze`/`diamond` map to whatever CLI you put in `config.yaml`. Mix providers freely. Run encoder and decoder on a local Ollama model for zero marginal cost on the cheap stages.
+Burnless is a vendor-agnostic orchestration layer for multi-agent workflows. You pick the model that **conducts** the orchestra (Maestro / Brain) — Claude, GPT, Gemini, Mistral, a local Llama, anything — and the models that **execute** each task (Workers). Tiers are quality/cost bands, not vendors: `gold`/`silver`/`bronze` map to whatever CLI you put in `config.yaml`. Mix providers freely. Run encoder and decoder on a local Ollama model for zero marginal cost on the cheap stages.
 
 On top of that independence, Burnless flips the cost curve. Every turn in a standalone agent loop replays the full conversation as input — token cost on turn `N` is proportional to `N`, so total cost across `N` turns is `Θ(N²)`. Burnless keeps only short capsules in history and shares a cached system prompt across Maestro and Workers. History stays linear; the persistent prefix is billed once per cache window instead of once per turn.
 
@@ -14,7 +14,7 @@ The asymmetry is mechanical, not heuristic. Any provider that charges per input 
 
 1. **Independence.** Any model as Maestro. Any model as Worker. Switch providers in one line.
 2. **User-enforced rules, not LLM goodwill.** You write the routing keywords, the per-tier `allowedTools`, and the cost budgets in `.burnless/config.yaml`. With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro **cannot escape** to a higher tier than the keyword router resolved — no quiet upgrades to Opus for tasks the rules said belong to Haiku. `allowedTools` is enforced by the worker CLI itself, not hinted at in the prompt: when bronze ships with `Read,Bash`, it physically cannot `Edit`. Bypass requires an explicit `--force` from the human.
-3. **Three compression layers.** Deterministic minifier (regex, zero cost), semantic encoder (small model, ~$0.001/turn), optional LLMLingua-2 (CPU-only, no API). Each layer is independent and additive.
+3. **Four compression layers.** Deterministic minifier (regex, zero cost), semantic encoder (small model, ~$0.001/turn), XOR cipher, and base64 capsule packing. Each layer is independent and additive.
 4. **Math, not marketing.** 88% cheaper at turn 10 by arithmetic on the published pricing pages. Verify with `python bench/run.py --turns 8` and your own API key.
 
 ## The numbers
@@ -58,7 +58,7 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 **3. Shared prefix cache across models.** If two models from the same provider see a byte-identical system prompt with `cache_control` set, they hit the same prefix cache. Switching Opus → Sonnet mid-session does not invalidate it. Brain and Worker can be different models and still amortize the 23k-token system prompt at read price ($0.15/MTok) instead of write price ($15/MTok). The 100× spread is the lever.
 
-**4. Tiers are roles, not models.** `gold`/`silver`/`bronze`/`diamond` map to commands in `config.yaml`, not to Opus/Sonnet/Haiku. Any model can be Brain. Any model can be Worker. GPT-4o as Brain delegating to Codex workers is a one-line config change. Hardcoding tier→model would have made the orchestration layer a single-vendor wrapper instead of a pattern.
+**4. Tiers are quality/cost bands, not models.** `gold`/`silver`/`bronze` map to commands in `config.yaml`, not to Opus/Sonnet/Haiku. Any model can be Brain. Any model can be Worker. GPT-4o as Brain, Codex as silver code worker, and Ollama as bronze summarizer is a normal config. Hardcoding tier→model would have made the orchestration layer a single-vendor wrapper instead of a pattern.
 
 **5. Determinism before LLMs.** Layer 1 of the compression stack is pure Python — no model call, zero latency, zero cost. Filler phrases stripped, whitespace normalized, before the encoder ever sees the text. Cheap stages run first for a reason.
 
@@ -74,7 +74,7 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 pip install burnless
 cd <your-project>
 burnless setup               # one-time per project: detects CLIs/keys + initializes .burnless/
-burnless                     # enter the shell
+burnless                     # enter Burnless Chat
 ```
 
 `burnless setup` writes `.burnless/config.yaml` and creates the project structure in one shot — no separate `init` needed unless you want a minimal config without auto-detection (then run `burnless init` instead).
@@ -92,15 +92,14 @@ To remove from a project: `rm -rf .burnless/` (no built-in `uninstall` command y
 
 ## Any model. Any role. Full control.
 
-Tiers are **roles**, not models. You decide what runs each role — and any model can be the Brain.
+Tiers are **quality/cost bands**, not models. You decide what runs each band — and any model can be the Brain.
 
 ```yaml
-# .burnless/config.yaml — example: GPT-4o as Brain, Sonnet as executor, Codex for code
+# .burnless/config.yaml — example: GPT-4o as Brain, Codex for code, Haiku for cheap tasks
 agents:
   gold:    { command: "openai api chat.completions.create -m gpt-4o" }
-  silver:  { command: "claude --model claude-sonnet-4-6 -p --allowedTools Read,Edit,Write,Bash" }
+  silver:  { command: "codex exec --sandbox workspace-write" }
   bronze:  { command: "claude --model claude-haiku-4-5 -p --allowedTools Read,Bash" }
-  diamond: { command: "codex exec --sandbox workspace-write" }
 ```
 
 Gemini as Brain, DeepSeek for execution (both have published cache pricing):
@@ -117,7 +116,7 @@ Or Sonnet as Brain delegating to Codex workers:
 ```yaml
 agents:
   gold:    { command: "claude --model claude-sonnet-4-6 -p" }   # Brain
-  diamond: { command: "codex exec --sandbox workspace-write" }   # code execution
+  silver:  { command: "codex exec --sandbox workspace-write" }   # everyday code execution
   bronze:  { command: "ollama run llama3" }                      # local model, cheap tasks
 ```
 
@@ -132,7 +131,6 @@ agents:
   bronze: { command: "ollama run llama3.2" }   # capsule encoder/decoder — $0
   silver: { command: "claude --model claude-haiku-4-5 -p" }
   gold:   { command: "claude --model claude-sonnet-4-6 -p" }   # Brain
-  diamond: { command: "codex exec --sandbox workspace-write" }
 ```
 
 As local models improve, more tiers move to zero cost. The expensive models (Opus, GPT-4o, Gemini Pro) handle only what requires genuine reasoning — and they do it with a cached prefix and a linear history.
@@ -189,9 +187,9 @@ The formal derivation of why capsule compression reduces both cost *and* anchori
 
 **Capsule.** The compact handoff between turns. The Brain reads the capsule; the full log stays on disk and is read on demand. This is what flips the cost curve from quadratic to linear.
 
-**Shared cache, kept hot by architecture.** Brain and Worker use a byte-identical persistent prefix marked with the provider's prompt-caching directive (Anthropic: `cache_control: {"type": "ephemeral", "ttl": "1h"}` — 1h, not the 5min default). The session is **append-only on disk** (`.burnless/maestro_session.jsonl`): every turn extends the message array without rewriting earlier blocks, so the cached prefix stays bit-identical and lookups hit. Up to **4 nested cache breakpoints** (Anthropic's per-request limit) sit at `system → memory → plan → capsules`, shared by Brain and all Workers. When capsules accumulate (~30+), Haiku pre/post-compacts them into a denser prefix block which is then re-marked — the cached region stays bounded and stays hot indefinitely within the TTL.
+**Shared cache, kept hot by architecture.** Brain and Worker use a byte-identical persistent prefix marked with the provider's prompt-caching directive (Anthropic: `cache_control: {"type": "ephemeral", "ttl": "1h"}` — 1h, not the 5min default). The session is **append-only on disk** (`.burnless/maestro_session.jsonl`): every turn extends the message array without rewriting earlier blocks, so the cached prefix stays bit-identical and lookups hit. Persistent layers are treated as immutable blocks: protocol header, glossary/schema, project memory/plan, frozen capsule blocks, hot tail, new user capsule. Burnless now decides capsule compaction in real time with break-even math: `K * r * (B - S) > W * S + M`, where `B` is old capsule tokens, `S` is compacted tokens, `K` is expected future turns, `r` is cache-read ratio, `W` is cache-write ratio, and `M` is compaction cost. No fixed “every N capsules” rule.
 
-The one known gap: if a session sits idle > 1h with zero calls, the TTL expires and the next call pays write price again. A `--keepalive` mode (1-token ping every ~50min for daemon-style usage) is on the v0.4 roadmap; not in v0.3. See `MATH.md` §8 for the full derivation of why the cache_read assumption is load-bearing for the O(N) result.
+The one known gap: if a session sits idle > 1h with zero calls, the TTL expires and the next call pays write price again. A `--keepalive` mode (1-token ping every ~50min for daemon-style usage) is tracked next. See `MATH.md` §8 for the full derivation of why the cache_read assumption is load-bearing for the O(N) result.
 
 ## Benchmark
 
@@ -256,8 +254,8 @@ The architecture is provider-agnostic by design. Current implementation status:
 - ✅ **Workers**: shell out to **any CLI** (`claude`, `codex`, `openai`, `gemini`, `ollama`, anything). Configure per tier in `config.yaml`. Works today.
 - ✅ **Routing, capsules, exec_log, three compression layers, shared system prompt**: provider-neutral, work today.
 - ✅ **Reference benchmark**: uses Anthropic SDK because their cache pricing is published and easiest to reproduce. The math reproduces wherever a provider exposes prompt caching.
-- ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked in v0.4. If you want to skip the in-process Brain, `burnless delegate` + `burnless run` already cover the full Brain→Worker loop using whatever CLI you configured.
-- ✅ **PyPI release**: `pip install burnless` — version 0.3.0 live at https://pypi.org/project/burnless/.
+- ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. If you want to skip the in-process Brain, `burnless delegate` + `burnless run` already cover the full Brain→Worker loop using whatever CLI you configured.
+- ✅ **PyPI release**: `pip install burnless` — version 0.5.2 live at https://pypi.org/project/burnless/.
 
 Honest about gaps. PRs welcome — especially for the OpenAI/Gemini Brain adapter.
 

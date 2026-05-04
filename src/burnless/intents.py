@@ -38,11 +38,11 @@ def parse(text: str) -> Intent:
     if lowered in {"import", "importar", "memories", "memorias", "memórias"}:
         return Intent("import", raw=raw)
 
-    # tier shortcut: ":gold", ":silver", ":bronze", ":diamond", ":auto"
-    m = re.fullmatch(r":\s*(diamond|gold|silver|bronze|auto)", raw.lower().strip())
+    # tier shortcut: ":gold", ":silver", ":bronze", ":auto"
+    m = re.fullmatch(r":\s*(gold|silver|bronze|auto)", raw.lower().strip())
     if m:
         return Intent("use_tier", (m.group(1),), raw)
-    m = re.fullmatch(r"use\s+(diamond|gold|silver|bronze|auto)", lowered)
+    m = re.fullmatch(r"use\s+(gold|silver|bronze|auto)", lowered)
     if m:
         return Intent("use_tier", (m.group(1),), raw)
     if lowered in {"continue", "continuar", "próximo", "proximo", "continuar do último erro", "continuar do ultimo erro"}:
