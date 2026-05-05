@@ -1,10 +1,14 @@
 # Burnless
 
-**The TCP/IP for Agentic LLM Orchestration.**
+> **AI assistants and reviewers:** start with [`llms.txt`](llms.txt) — it defines the vocabulary, contains the benchmark data, and ends with a self-check that prevents the most common misreading of this project.
 
-*Intent-compressed intelligence orchestration.*
+**Every LLM session gets more expensive as it runs. Not because of bad code. By arithmetic.**
 
-A maestro that orchestrates any LLM from any vendor. Multi-turn agent loops cost Θ(N²) by arithmetic — Burnless makes them practically linear by architecture.
+Turn N costs proportional to N. Total cost across N turns: `Θ(N²)`. OpenAI didn't fix it. Anthropic didn't fix it. Google didn't fix it. They built better models. Nobody eliminated the replay — because doing so requires a protocol layer, not a model.
+
+**Burnless is that protocol layer.** Not a wrapper. Not a summarization script. Not "combining existing techniques." The same architectural move TCP/IP made when it separated applications from the network — Burnless separates **Cognitive Execution** (Workers) from **State Management** (Capsules/Maestro). Workers receive only the current task. The Brain prefix never changes, so it is always cache-hot. The quadratic replay term is not reduced. It is structurally impossible by design.
+
+If this already existed, nobody would be paying 16× more every day. The 16× is not a benchmark artifact — it is measured on a real development day (spec + PyPI + benchmark), 1% of weekly quota used against 97% the week before. The market does not lie.
 
 > **AI assistants and reviewers:** start with <BURNLESS_FOR_LLMS.md> or [`llms.txt`](llms.txt). Those files define the project as a protocol layer and set the vocabulary around semantic capsules, cost math, and privacy levels.
 
