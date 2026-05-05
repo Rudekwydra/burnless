@@ -299,7 +299,9 @@ You can wrap a LangChain agent as a Worker. The Brain→Worker pattern is compat
 
 ## Contributing
 
-Issues, PRs, and benchmark contestation are all welcome. The benchmark script is intentionally short and dependency-light so you can read it end-to-end and disagree with concrete numbers. If your workload produces a different ratio, open an issue with the JSON from `bench/results/` — that is exactly the conversation worth having.
+Issues, PRs, and benchmark contestation are all welcome. The benchmark script is intentionally short and dependency-light so you can read it end-to-end and disagree with concrete numbers.
+
+The math is free to run. `python bench/v2.py --runs 100 --turns 100` costs zero. An independent 100-turn run with fixed token distribution reproduced the 16× exactly. If your numbers differ, open an issue with the JSON from `bench/results/` — that is the only argument worth having.
 
 ## Status — what works today, what’s roadmap
 
