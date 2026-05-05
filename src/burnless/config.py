@@ -86,7 +86,52 @@ DEFAULT_CONFIG: dict = {
         "progress_detail": "brief",  # minimal | brief | full
         "stale_timeout_seconds": 300,  # kill worker if no stdout/stderr for this many seconds (0=off)
     },
+    "retry": {
+        "max_attempts": 1,        # automatic retries before escalating to maestro
+        "stale_worker_retry": True,  # retry workers killed by timeout
+        "audit_retry": True,      # retry when auditor returns PART
+    },
 }
+
+
+_TIER_STALE_DEFAULTS: dict[str, int] = {
+    "bronze": 120,
+    "silver": 600,
+    "gold": 900,
+    "platinum": 1800,
+}
+
+
+def resolve_stale_timeout(cfg: dict, tier: str, cli_override: int | None = None) -> int:
+    """Resolve stale_timeout in seconds for the given tier.
+
+    Precedence (high → low):
+      1. cli_override (--stale-timeout-s flag)
+      2. display.tier_stale_timeout_seconds.<tier>
+      3. display.stale_timeout_seconds (legacy global)
+      4. _TIER_STALE_DEFAULTS[tier]
+      5. 300 (last-resort fallback)
+    """
+    if cli_override is not None and cli_override > 0:
+        return int(cli_override)
+    display = cfg.get("display", {}) or {}
+    tier_map = display.get("tier_stale_timeout_seconds") or {}
+    if isinstance(tier_map, dict) and tier in tier_map:
+        try:
+            v = int(tier_map[tier])
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    legacy = display.get("stale_timeout_seconds")
+    if legacy is not None:
+        try:
+            v = int(legacy)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return _TIER_STALE_DEFAULTS.get(tier, 300)
 
 
 def load(path: Path) -> dict:

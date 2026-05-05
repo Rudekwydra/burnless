@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -89,15 +90,20 @@ def run_all(
     config: dict,
 ) -> list[str]:
     capsules: list[str] = []
+    chain: list[str] = []
     for spec in parse_delegates(delegate_lines, burnless_root):
-        capsules.append(
-            run_delegate(
-                spec,
-                burnless_root=burnless_root,
-                project_root=project_root,
-                config=config,
-            )
+        capsule_line = run_delegate(
+            spec,
+            burnless_root=burnless_root,
+            project_root=project_root,
+            config=config,
+            chain=chain,
         )
+        capsules.append(capsule_line)
+        if _capsule_status(capsule_line) == "OK":
+            did = f"d{spec.id}"
+            _write_dispatcher_capsule(burnless_root, did, spec, capsule_line)
+            chain = [did]
     return capsules
 
 
@@ -107,6 +113,7 @@ def run_delegate(
     burnless_root: Path,
     project_root: Path,
     config: dict,
+    chain: list[str] | None = None,
 ) -> str:
     brain_tier = _config_tier(spec.tier)
     compression_mode = ((config.get("compression") or {}).get("mode") or "balanced").lower()
@@ -154,8 +161,49 @@ def run_delegate(
         return _finalize_error(log_path, spec, f"worker binary not found: {parts[0]}", status="BLK")
 
     user_message = f"del T{spec.id} {tier_key} {spec.action} {spec.target} :: {spec.spec}"
+    if chain:
+        from ..cli import _with_runtime_context  # local import; cli imports dispatcher lazily
+        user_message = _with_runtime_context(
+            user_message,
+            project_root=project_root,
+            burnless_root=burnless_root,
+            chain=chain,
+        )
     system_prompt = _worker_system_prompt(project_root)
+
+    # H1: pre_worker_prompt — plugins may transform prompt and system_prompt
+    from .. import plugin_loader as _pl
+    _plugins = _pl.load_plugins(Path.home() / ".burnless")
+    _h1 = _pl.call_all_plugins(
+        _plugins, "pre_worker_prompt",
+        {"hook": "pre_worker_prompt", "spec": {"id": spec.id, "tier": spec.tier, "action": spec.action, "target": spec.target}, "prompt": user_message, "system_prompt": system_prompt},
+    )
+    if _h1:
+        user_message = _h1.get("prompt") or user_message
+        system_prompt = _h1.get("system_prompt") or system_prompt
+
     run_parts, stdin = _inject_system_prompt(parts, system_prompt, user_message)
+
+    # H7: worker_invoke_override — plugin may short-circuit subprocess.run
+    _h7 = _pl.call_all_plugins(
+        _plugins, "worker_invoke_override",
+        {"hook": "worker_invoke_override", "spec": {"id": spec.id, "tier": spec.tier, "action": spec.action, "target": spec.target}, "prompt": user_message, "system_prompt": system_prompt},
+    )
+    _override_capsule = _h7.get("capsule") if _h7 else None
+    if _override_capsule:
+        capsule = str(_override_capsule)
+        status = _capsule_status(capsule) if capsule else "OK"
+        transcript = _transcript(run_parts, user_message, capsule, "", 0)
+        exec_log.finalize(
+            log_path,
+            status=status,
+            files_touched=[],
+            validations=[],
+            issues=[],
+            transcript=transcript + "\n<plugin-overridden>",
+            ended=datetime.now(timezone.utc),
+        )
+        return _ensure_exec_ref(capsule, spec.id)
 
     try:
         proc = subprocess.run(
@@ -178,6 +226,19 @@ def run_delegate(
 
     stdout = proc.stdout or ""
     stderr = proc.stderr or ""
+
+    # H2: post_worker_output — plugins may transform capsule/stdout
+    _h2 = _pl.call_all_plugins(
+        _plugins, "post_worker_output",
+        {"hook": "post_worker_output", "spec": {"id": spec.id, "tier": spec.tier, "action": spec.action, "target": spec.target}, "stdout": stdout, "stderr": stderr, "capsule": _last_capsule(stdout) or ""},
+    )
+    if _h2:
+        if "stdout" in _h2:
+            stdout = str(_h2["stdout"])
+        if "capsule" in _h2 and _h2["capsule"]:
+            _injected_capsule = str(_h2["capsule"])
+            stdout = stdout + "\n" + _injected_capsule if stdout else _injected_capsule
+
     capsule = _last_capsule(stdout)
     status = _capsule_status(capsule) if capsule else ("ERR" if proc.returncode else "PART")
     if not capsule:
@@ -260,6 +321,29 @@ def _capsule_status(capsule: str | None) -> str:
         return "ERR"
     match = re.search(r"::\s+(OK|PART|BLK|ERR)\b", capsule)
     return match.group(1) if match else "PART"
+
+
+def _write_dispatcher_capsule(
+    burnless_root: Path, did: str, spec: DelegateSpec, capsule_line: str
+) -> None:
+    """Write a minimal capsule JSON so the next delegation can reference it via manifest."""
+    cap_path = burnless_root / "capsules" / f"{did}.json"
+    if cap_path.exists():
+        return
+    cap_path.parent.mkdir(parents=True, exist_ok=True)
+    cap_path.write_text(
+        json.dumps(
+            {
+                "id": did,
+                "status": _capsule_status(capsule_line),
+                "objective": f"{spec.action} {spec.target}",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _ensure_exec_ref(capsule: str, task_id: int) -> str:

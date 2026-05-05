@@ -183,6 +183,9 @@ def _run_chat_sdk(
             continue
 
         history.append({"role": "user", "content": user_msg})
+        _chat_state = state_mod.load(p["state"])
+        state_mod.touch_activity(_chat_state)
+        state_mod.save(p["state"], _chat_state)
         try:
             response = client.messages.create(
                 model=model,
@@ -208,6 +211,9 @@ def _run_chat_sdk(
             continue
 
         history.append({"role": "assistant", "content": assistant_msg})
+        _chat_state = state_mod.load(p["state"])
+        state_mod.touch_activity(_chat_state)
+        state_mod.save(p["state"], _chat_state)
 
         print()
         print(assistant_msg)

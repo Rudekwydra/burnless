@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -166,7 +167,13 @@ def _should_use_maestro_backend(args: argparse.Namespace, cfg: dict, tier: str) 
     return bool(cfg.get("maestro", {}).get("run_backend", False))
 
 
-def _with_runtime_context(prompt: str, *, project_root: Path, burnless_root: Path) -> str:
+def _with_runtime_context(
+    prompt: str,
+    *,
+    project_root: Path,
+    burnless_root: Path,
+    chain: list[str] | None = None,
+) -> str:
     memory_index = burnless_root / "memories" / "index.json"
     memory_hint = (
         f"- Burnless memory index: {memory_index}\n"
@@ -190,7 +197,28 @@ def _with_runtime_context(prompt: str, *, project_root: Path, burnless_root: Pat
         "- Do not return BLK solely because the original user phrased the request conversationally; "
         "use the available CLI/filesystem tools first.\n"
     )
-    return f"{prompt.rstrip()}\n\n{context}"
+    result = f"{prompt.rstrip()}\n\n{context}"
+    if chain:
+        valid: list[str] = []
+        for did in chain:
+            cap_path = burnless_root / "capsules" / f"{did}.json"
+            if cap_path.exists():
+                valid.append(did)
+            else:
+                print(
+                    f"[lazy manifest] capsule {did} not found at {cap_path}, omitting",
+                    file=sys.stderr,
+                )
+        if valid:
+            lines = ["## Lazy Context Manifest", "- Capsules disponíveis (chain):"]
+            for i, did in enumerate(valid):
+                label = "predecessor direto" if i == 0 else "irmão"
+                lines.append(f"  - .burnless/capsules/{did}.json — {label}")
+            lines.append("- Delegations referenciadas:")
+            lines.append(f"  - .burnless/delegations/{valid[0]}.md")
+            lines.append("- Para ler: use sua tool de leitura (Read/cat). Tudo está no cwd.")
+            result = result.rstrip() + "\n" + "\n".join(lines) + "\n"
+    return result
 
 
 
@@ -308,6 +336,8 @@ def cmd_delegate(args: argparse.Namespace) -> int:
         tier, modulation_reason = routing_mod.modulate_by_compression(tier, kw, comp_mode)
     agent_cfg = cfg["agents"][tier]
 
+    chain = [x.strip() for x in args.chain.split(",") if x.strip()] if args.chain else []
+
     did = state_mod.alloc_delegation_id(p["state"])
     goal = args.goal or text
     success = args.success or "task completed; final JSON block emitted as required."
@@ -323,7 +353,11 @@ def cmd_delegate(args: argparse.Namespace) -> int:
         routed_by=kw,
     )
     deleg_path = p["delegations"] / f"{did}.md"
-    deleg_mod.write_delegation(deleg_path, body)
+    if chain:
+        header = f"---\nchain: [{', '.join(chain)}]\n---\n"
+        deleg_mod.write_delegation(deleg_path, header + body)
+    else:
+        deleg_mod.write_delegation(deleg_path, body)
     state = state_mod.load(p["state"])
     state["last_delegation"] = did
     state_mod.save(p["state"], state)
@@ -352,6 +386,29 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_retry_prompt(original_prompt: str, did: str, status: str, summary: dict) -> str:
+    issues = summary.get("issues") or []
+    evidence = summary.get("evidence") or []
+    return (
+        original_prompt.rstrip()
+        + f"\n\n---\nRetry da delegação {did}. Sua tentativa anterior retornou {status}. "
+        f"Issues: {', '.join(str(i) for i in issues) or 'nenhum especificado'}. "
+        f"Evidence faltando: {', '.join(str(e) for e in evidence) or 'nenhum'}. "
+        "Corrija e reenvie o JSON com os mesmos campos."
+    )
+
+
+def _build_audit_fix_prompt(original_prompt: str, did: str, audit: dict) -> str:
+    issues = audit.get("issues") or []
+    feedback = str(audit.get("feedback") or audit.get("summary") or "").strip()
+    return (
+        original_prompt.rstrip()
+        + f"\n\n---\nAudit retornou PART. Issues: {', '.join(str(i) for i in issues) or 'nenhum'}. "
+        + (f"{feedback} " if feedback else "")
+        + "Corrija sem mudar o que estava OK."
+    )
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
@@ -363,10 +420,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not deleg_path.exists():
         print(f"burnless: delegation {did} not found at {deleg_path}", file=sys.stderr)
         return 2
+    deleg_text = deleg_path.read_text(encoding="utf-8")
+    chain = _parse_chain_from_delegation(deleg_text)
     prompt = _with_runtime_context(
-        deleg_path.read_text(encoding="utf-8"),
+        deleg_text,
         project_root=root.parent,
         burnless_root=root,
+        chain=chain,
     )
 
     # which tier did we pick at delegate time?
@@ -401,7 +461,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         else:
             display_cfg = cfg.get("display", {}).get("progress_detail", "brief")
             run_mode = display_cfg if display_cfg in {"minimal", "brief", "full", "watch", "quiet", "plain"} else "brief"
-    stale_timeout_s = int(cfg.get("display", {}).get("stale_timeout_seconds", 300))
+    from burnless.config import resolve_stale_timeout
+    stale_timeout_s = resolve_stale_timeout(cfg, tier, getattr(args, "stale_timeout_s", None))
 
     # Persist a lightweight run snapshot before handing off to the worker.
     runs_dir = p["runs"]
@@ -528,6 +589,197 @@ def cmd_run(args: argparse.Namespace) -> int:
             "issues": [_issue],
             "next": "",
         }
+
+    # ── BLK lazy fetch fallback (P3) ─────────────────────────────────────────
+    _blk_initial = str(summary.get("status") or "").upper()
+    if _blk_initial == "BLK":
+        _blk_issues = summary.get("issues") or []
+        _lazy_fetch_re = re.compile(r"lazy fetch failed", re.IGNORECASE)
+        if any(_lazy_fetch_re.search(str(i)) for i in _blk_issues):
+            print(
+                f"[lazy-fallback] {did}: BLK with lazy fetch failure → retrying with full push",
+                file=sys.stderr,
+            )
+            _inline_parts: list[str] = []
+            for _iss in _blk_issues:
+                _m = re.search(r"lazy fetch failed:\s*(.+)", str(_iss), re.IGNORECASE)
+                if _m:
+                    _failed_rel = _m.group(1).strip()
+                    _cap_abs = root.parent / _failed_rel
+                    if _cap_abs.exists():
+                        _inline_parts.append(
+                            f"## Capsule {_failed_rel} (inlined for fallback)\n"
+                            f"```json\n{_cap_abs.read_text(encoding='utf-8')}\n```"
+                        )
+            _full_push_prompt = _with_runtime_context(
+                deleg_text,
+                project_root=root.parent,
+                burnless_root=root,
+                chain=None,
+            )
+            if _inline_parts:
+                _full_push_prompt = _full_push_prompt.rstrip() + "\n\n" + "\n\n".join(_inline_parts) + "\n"
+            _full_push_prompt = (
+                _full_push_prompt.rstrip()
+                + "\n\n_lazy_disabled=True: capsule context inlined above.\n"
+            )
+            try:
+                _blk_retry = agents_mod.run(
+                    agent_cfg, _full_push_prompt, timeout=args.timeout, cwd=root.parent
+                )
+                with log_path.open("a", encoding="utf-8") as _lf:
+                    _lf.write("\n\n--- LAZY_FALLBACK ---\n" + _blk_retry.get("stdout", "") + "\n")
+                _blk_rj = deleg_mod.extract_result_json(_blk_retry.get("stdout", ""))
+                if _blk_rj is not None:
+                    _blk_rj["kind"] = _normalize_report_kind(
+                        _blk_rj.get("kind") or _blk_rj.get("report_kind") or _infer_kind_hint(prompt)
+                    )
+                    summary = _blk_rj
+            except Exception as _blk_e:
+                print(f"[lazy-fallback] {did}: retry failed ({_blk_e})", file=sys.stderr)
+
+    # ── Bronze rescue for stale_worker (Gapless applied to rescue) ───────────
+    _rescue_cfg = cfg.get("retry", {})
+    _bronze_rescue_enabled = bool(_rescue_cfg.get("bronze_rescue", True))
+    if _bronze_rescue_enabled and stale and "stale_worker" in (summary.get("issues") or []):
+        _bronze_tier_cfg = cfg.get("agents", {}).get("bronze")
+        if _bronze_tier_cfg and agents_mod.is_available(_bronze_tier_cfg):
+            print(f"[bronze-rescue] {did}: stale_worker — launching deterministic check", file=sys.stderr)
+            _rescue_prompt = (
+                f"Verifique se a delegação {did} completou seu trabalho apesar de morrer por stale_worker.\n"
+                "Cheque deterministicamente (sem reimplementar):\n"
+                "- git diff --stat (arquivos modificados vs esperados)\n"
+                "- Se arquivos existem e têm conteúdo plausível (wc -l, grep para classe/função chave mencionada na spec)\n"
+                "- Se pytest passa (se disponível)\n"
+                "Retorne JSON: {\"rescued\": true|false, \"evidence\": [...], \"files_found\": [...]}\n"
+                "Se rescued=true, o sistema usa como OK capsule automaticamente.\n\n"
+                f"## Delegation spec:\n{deleg_text}\n\n"
+                f"## Burnless Runtime Context\n"
+                f"- Working directory: {root.parent}\n"
+                f"- Burnless state directory: {root}\n"
+            )
+            try:
+                _rescue_timeout = min(int(args.timeout or 300), 300)
+                _rescue_result = agents_mod.run(
+                    _bronze_tier_cfg, _rescue_prompt, timeout=_rescue_timeout, cwd=root.parent
+                )
+                with log_path.open("a", encoding="utf-8") as _lf:
+                    _lf.write("\n\n--- BRONZE_RESCUE ---\n" + _rescue_result.get("stdout", "") + "\n")
+                _rescue_json = deleg_mod.extract_result_json(_rescue_result.get("stdout", ""))
+                if _rescue_json is None:
+                    try:
+                        _stdout = _rescue_result.get("stdout", "").strip()
+                        _json_start = _stdout.rfind("{")
+                        _json_end = _stdout.rfind("}") + 1
+                        if _json_start >= 0 and _json_end > _json_start:
+                            _rescue_json = json.loads(_stdout[_json_start:_json_end])
+                    except Exception:
+                        _rescue_json = None
+                if _rescue_json is not None and bool(_rescue_json.get("rescued")):
+                    _rescue_evidence = list(_rescue_json.get("evidence") or [])
+                    _rescue_files = list(_rescue_json.get("files_found") or [])
+                    print(f"[bronze-rescue] {did}: rescued=True — work verified despite stale_worker", file=sys.stderr)
+                    summary = {
+                        "id": did,
+                        "status": "OK",
+                        "kind": _infer_kind_hint(prompt),
+                        "summary": f"rescued_from_stale: work verified by bronze rescue ({len(_rescue_evidence)} evidence items)",
+                        "files_touched": _rescue_files,
+                        "validated": _rescue_evidence,
+                        "evidence": _rescue_evidence,
+                        "issues": ["rescued_from_stale"],
+                        "next": "",
+                        "_bronze_rescue": _rescue_json,
+                    }
+                    stale = False
+                else:
+                    print(f"[bronze-rescue] {did}: rescued=False — proceeding to retry with timeout*2", file=sys.stderr)
+            except Exception as _resc_e:
+                print(f"[bronze-rescue] {did}: rescue failed ({_resc_e}), falling back to retry", file=sys.stderr)
+
+    # ── PART/ERR automatic retry loop (before audit) ─────────────────────────
+    retry_cfg = cfg.get("retry", {})
+    _max_attempts = int(retry_cfg.get("max_attempts", 1))
+    _stale_retry_enabled = bool(retry_cfg.get("stale_worker_retry", True))
+    _audit_retry_enabled = bool(retry_cfg.get("audit_retry", True))
+    _retry_count = 0
+    _retry_status: list[str] = []
+
+    _cur_status = str(summary.get("status") or "").upper()
+    if _cur_status in ("PART", "ERR") and not interrupted:
+        _is_stale = stale and "stale_worker" in (summary.get("issues") or [])
+        _attempts_left = 1 if _is_stale else _max_attempts
+        _do_retry = (_is_stale and _stale_retry_enabled) or (not _is_stale and _attempts_left > 0)
+
+        while _do_retry and _attempts_left > 0:
+            _attempts_left -= 1
+            _retry_status.append(_cur_status)
+
+            if _is_stale:
+                _retry_prompt_text = prompt
+                _retry_timeout = min(stale_timeout_s * 2, int(args.timeout or stale_timeout_s * 2))
+            else:
+                _retry_prompt_text = _build_retry_prompt(prompt, did, _cur_status, summary)
+                _retry_timeout = int(args.timeout or 600)
+
+            print(f"[retry] {did}: prev={_cur_status}, attempt {_retry_count + 1}", file=sys.stderr)
+            try:
+                _retry_res = agents_mod.run(
+                    agent_cfg, _retry_prompt_text, timeout=_retry_timeout, cwd=root.parent
+                )
+            except Exception as _re:
+                print(f"[retry] agent run failed: {_re}", file=sys.stderr)
+                break
+
+            with log_path.open("a", encoding="utf-8") as _lf:
+                _lf.write(f"\n\n--- RETRY_{_retry_count + 1} ---\n" + _retry_res.get("stdout", "") + "\n")
+
+            _rj = deleg_mod.extract_result_json(_retry_res.get("stdout", ""))
+            _r_stale = bool(_retry_res.get("stale"))
+            _r_interrupted = bool(_retry_res.get("interrupted"))
+            if _rj is not None:
+                _r_sum = _rj
+                _r_sum["kind"] = _normalize_report_kind(
+                    _r_sum.get("kind") or _r_sum.get("report_kind") or _infer_kind_hint(prompt)
+                )
+            else:
+                _r_rc = _retry_res.get("returncode", 1)
+                _r_issue = "stale_worker" if _r_stale else ("missing_final_json" if _r_rc == 0 else f"returncode={_r_rc}")
+                _r_sum = {
+                    "id": did,
+                    "status": "ERR" if _r_rc != 0 else "PART",
+                    "kind": _infer_kind_hint(prompt),
+                    "summary": "(retry: agent did not emit final JSON block)",
+                    "files_touched": [],
+                    "validated": [],
+                    "issues": [_r_issue],
+                    "next": "",
+                }
+
+            _retry_count += 1
+            _new_status = str(_r_sum.get("status") or "").upper()
+
+            if _new_status == "OK":
+                summary = _r_sum
+                stale = _r_stale
+                interrupted = _r_interrupted
+                break
+
+            _orig_issues = summary.get("issues") or []
+            _r_issues = _r_sum.get("issues") or []
+            summary = _r_sum
+            summary["issues"] = list(dict.fromkeys(_orig_issues + _r_issues))
+            _cur_status = _new_status
+            stale = _r_stale
+            interrupted = _r_interrupted
+            _do_retry = _attempts_left > 0
+
+    summary["retry_count"] = _retry_count
+    summary["retry_status"] = _retry_status
+
+    _worker_status = str(summary.get("status") or "?").upper()
+
+    # ── Audit pass ───────────────────────────────────────────────────────────
     summary = _audit_summary_evidence(
         p,
         cfg=cfg,
@@ -538,6 +790,53 @@ def cmd_run(args: argparse.Namespace) -> int:
         timeout=min(int(getattr(args, "timeout", 600) or 600), 180),
         cwd=root.parent,
     )
+
+    # ── Audit PART retry (re-run worker with fix_prompt, re-audit) ────────────
+    if _audit_retry_enabled:
+        _audit_obj = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+        _audit_st = str(_audit_obj.get("status") or "").upper()
+        _post_status = str(summary.get("status") or "").upper()
+        if _audit_st not in {"OK", "PASS", "SKIPPED", "UNAVAILABLE"} and _post_status in ("PART", "ERR"):
+            _fix_prompt = _build_audit_fix_prompt(prompt, did, _audit_obj)
+            print(f"[retry/audit] {did}: audit={_audit_st}, re-running worker", file=sys.stderr)
+            try:
+                _ar = agents_mod.run(
+                    agent_cfg, _fix_prompt, timeout=int(args.timeout or 600), cwd=root.parent
+                )
+                with log_path.open("a", encoding="utf-8") as _lf:
+                    _lf.write("\n\n--- AUDIT_RETRY ---\n" + _ar.get("stdout", "") + "\n")
+                _ar_json = deleg_mod.extract_result_json(_ar.get("stdout", ""))
+                if _ar_json is not None:
+                    _ar_sum = _ar_json
+                    _ar_sum["kind"] = _normalize_report_kind(
+                        _ar_sum.get("kind") or _ar_sum.get("report_kind") or _infer_kind_hint(prompt)
+                    )
+                    _ar_sum["retry_count"] = summary.get("retry_count", 0) + 1
+                    _ar_sum["retry_status"] = list(summary.get("retry_status") or []) + [_post_status]
+                    summary = _audit_summary_evidence(
+                        p,
+                        cfg=cfg,
+                        did=did,
+                        prompt=prompt,
+                        summary=_ar_sum,
+                        log_path=log_path,
+                        timeout=min(int(getattr(args, "timeout", 600) or 600), 180),
+                        cwd=root.parent,
+                    )
+            except Exception as _ae:
+                print(f"[retry/audit] worker retry failed: {_ae}", file=sys.stderr)
+
+    summary["worker_status"] = _worker_status
+    _audit_obj = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+    _raw_audit_st = str(_audit_obj.get("status") or "").upper()
+    if not _raw_audit_st or _raw_audit_st in {"SKIPPED", "UNAVAILABLE"}:
+        summary["audit_status"] = "SKIP"
+    elif _raw_audit_st in {"OK", "PASS"}:
+        summary["audit_status"] = "OK"
+    else:
+        summary["audit_status"] = _raw_audit_st
+    summary["test_status"] = _extract_test_status(summary)
+
     deleg_mod.write_summary(p["temp"] / f"{did}.json", summary)
 
     # Automatic Session Compression — generate capsule (operational memory for AI)
@@ -715,6 +1014,32 @@ def _audit_summary_evidence(
 
     audit_path = p["temp"] / f"{did}.audit.json"
 
+    # H8: pre_audit_call — plugin may override audit or replace the ladder
+    from . import plugin_loader as _pl
+    _plugins = _pl.load_plugins(Path.home() / ".burnless")
+    auditors_ladder = cfg.get("audit", {}).get("auditors") or ["bronze", "silver", "gold"]
+    _h8 = _pl.call_all_plugins(
+        _plugins, "pre_audit_call",
+        {"hook": "pre_audit_call", "did": did, "evidence": evidence, "summary": summary, "auditors_ladder": auditors_ladder},
+    )
+    if _h8:
+        if _h8.get("audit") is not None:
+            audit = dict(_h8["audit"])
+            audit.setdefault("auditor_tier", "plugin")
+            audit.setdefault("auditor_name", "plugin")
+            audit.setdefault("attempted_tiers", [])
+            audit.setdefault("attempted_auditors", [])
+            _write_audit_result(audit_path, audit)
+            summary["audit"] = audit
+            # H4: audit_result_received
+            _pl.call_all_plugins(
+                _plugins, "audit_result_received",
+                {"hook": "audit_result_received", "did": did, "audit": audit, "summary": summary},
+            )
+            return summary
+        if _h8.get("override_ladder"):
+            auditors_ladder = list(_h8["override_ladder"])
+
     # Fast-path: deterministic check before calling any LLM auditor (T1/T2).
     fp_passed, fp_reason = _fast_path_check(evidence, cwd)
     if fp_passed:
@@ -730,12 +1055,14 @@ def _audit_summary_evidence(
         }
         _write_audit_result(audit_path, audit)
         summary["audit"] = audit
+        # H4: audit_result_received
+        _pl.call_all_plugins(_plugins, "audit_result_received", {"hook": "audit_result_received", "did": did, "audit": audit, "summary": summary})
         return summary
 
     log_excerpt = log_path.read_text(encoding="utf-8")[-12000:] if log_path.exists() else ""
     audit_prompt = _render_audit_prompt(did=did, prompt=prompt, summary=summary, log_excerpt=log_excerpt)
     agent_cfg = cfg.get("agents") or {}
-    auditors_ladder = cfg.get("audit", {}).get("auditors") or ["bronze", "silver", "gold"]
+    # auditors_ladder already set above (possibly overridden by H8)
     attempted_auditors = []
     unavailable = []
     audit = None
@@ -781,6 +1108,8 @@ def _audit_summary_evidence(
             summary["status"] = "PART"
         _append_issue(summary, "audit_unavailable")
         _add_evidence_feedback(summary, audit)
+        # H4: audit_result_received
+        _pl.call_all_plugins(_plugins, "audit_result_received", {"hook": "audit_result_received", "did": did, "audit": audit, "summary": summary})
         return summary
 
     audit_status = str(audit.get("status") or "").upper()
@@ -789,6 +1118,8 @@ def _audit_summary_evidence(
     audit.setdefault("attempted_auditors", attempted_auditors)
     _write_audit_result(audit_path, audit)
     summary["audit"] = audit
+    # H4: audit_result_received
+    _pl.call_all_plugins(_plugins, "audit_result_received", {"hook": "audit_result_received", "did": did, "audit": audit, "summary": summary})
     if audit["status"] not in {"OK", "PASS"}:
         if summary.get("status") == "OK":
             summary["status"] = "PART"
@@ -891,6 +1222,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
     cfg = config_mod.load(p["config"])
     model = args.model or state.get("brain_model") or "claude-opus-4-7"
     history_path = p["root"] / "maestro" / "brain_history.jsonl"
+    _inflight_lock = threading.Lock()
 
     def slash_help() -> str:
         return brain_adapters.render_commands()
@@ -976,14 +1308,33 @@ def cmd_brain(args: argparse.Namespace) -> int:
             def on_think_delta(chunk: str) -> None:
                 think_chunks.append(chunk)
 
+            _turn_state = state_mod.load(p["state"])
+            state_mod.touch_activity(_turn_state)
+            state_mod.save(p["state"], _turn_state)
+
+            # H5: pre_brain_prompt — plugins may filter/transform prompt before Anthropic
+            from . import plugin_loader as _pl
+            _brain_plugins = _pl.load_plugins(Path.home() / ".burnless")
+            _h5 = _pl.call_all_plugins(
+                _brain_plugins, "pre_brain_prompt",
+                {"hook": "pre_brain_prompt", "user_capsule": next_capsule, "history": history_messages, "system_blocks": []},
+            )
+            if _h5:
+                next_capsule = _h5.get("user_capsule") or next_capsule
+                if _h5.get("system_blocks") is not None:
+                    history_messages = list(history_messages)
+
             try:
-                result = brain_mod.run_brain_turn(
-                    user_capsule=next_capsule,
-                    history_messages=history_messages,
-                    project_root=root.parent,
-                    model=model,
-                    on_think_delta=on_think_delta,
-                )
+                _adapter = brain_adapters.load_adapter(cfg, model)
+                with _inflight_lock:
+                    result = brain_mod.run_brain_turn(
+                        user_capsule=next_capsule,
+                        history_messages=history_messages,
+                        project_root=root.parent,
+                        model=model,
+                        on_think_delta=on_think_delta,
+                        adapter=_adapter,
+                    )
             except Exception as e:
                 print(f"brain error: {e}", file=sys.stderr)
                 return 1
@@ -1000,6 +1351,21 @@ def cmd_brain(args: argparse.Namespace) -> int:
                 )
 
             capsule_text = result.get("capsule_text") or ""
+            _raw_body = result.get("raw_body") or ""
+            _delegate_lines_raw = result.get("delegate_lines") or []
+
+            # H6: post_brain_output — plugins may filter capsule_text before decoder
+            _h6 = _pl.call_all_plugins(
+                _brain_plugins, "post_brain_output",
+                {"hook": "post_brain_output", "capsule_text": capsule_text, "raw_body": _raw_body, "delegate_lines": _delegate_lines_raw},
+            )
+            if _h6:
+                capsule_text = _h6.get("capsule_text") if "capsule_text" in _h6 else capsule_text
+                _raw_body = _h6.get("raw_body") if "raw_body" in _h6 else _raw_body
+                if "delegate_lines" in _h6:
+                    result = dict(result)
+                    result["delegate_lines"] = _h6["delegate_lines"]
+
             comp_cfg = cfg.get("compression", {})
             friendly = comp_cfg.get("friendly", True)
             voice_match = comp_cfg.get("voice_match", True)  # V1 default ON
@@ -1033,6 +1399,9 @@ def cmd_brain(args: argparse.Namespace) -> int:
                 delegates=delegate_lines,
                 usage=usage,
             )
+            _turn_state = state_mod.load(p["state"])
+            state_mod.touch_activity(_turn_state)
+            state_mod.save(p["state"], _turn_state)
             if not delegate_lines:
                 return 0
             if delegate_depth >= 3:
@@ -1056,6 +1425,27 @@ def cmd_brain(args: argparse.Namespace) -> int:
             next_extra = {"source": "worker_results", "delegate_depth": delegate_depth}
             print()
 
+    def handle_keepalive(arg: str) -> str:
+        ka_cfg = cfg.setdefault("keepalive", {})
+        if arg in {"on", "off"}:
+            ka_cfg["enabled"] = arg == "on"
+            try:
+                config_mod.save(p["config"], cfg)
+                persisted = " (saved)"
+            except Exception:
+                persisted = " (not saved)"
+            return f"keepalive: {'enabled' if arg == 'on' else 'disabled'}{persisted}"
+        st = state_mod.load(p["state"])
+        enabled = ka_cfg.get("enabled", False)
+        last_ts = st.get("keepalive_last_ts") or "never"
+        last_status = st.get("keepalive_last_status") or "-"
+        next_ka = st.get("next_keepalive_ts") or "-"
+        return (
+            f"keepalive: {'enabled' if enabled else 'disabled'}\n"
+            f"  last ping: {last_ts}  status={last_status}\n"
+            f"  next scheduled: {next_ka}"
+        )
+
     def handle_slash(message: str) -> int | None:
         if message in {"/exit", "/quit", "exit", "quit"}:
             return 0
@@ -1077,14 +1467,41 @@ def cmd_brain(args: argparse.Namespace) -> int:
         if message == "/model" or message.startswith("/model "):
             print(set_maestro(message.removeprefix("/model").strip()))
             return None
+        if message in {"/keepalive", "/keepalive status"} or message.startswith("/keepalive "):
+            arg = message.removeprefix("/keepalive").strip() or "status"
+            print(handle_keepalive(arg))
+            return None
         return 2
+
+    from .keepalive import KeepaliveDaemon, keepalive_enabled_by_default
+    from .maestro import brain as _brain_mod_ka
+
+    _ka_adapter = brain_adapters.load_adapter(cfg, model)
+    try:
+        _system_prefix = _brain_mod_ka.build_system_blocks(
+            project_root=root.parent, history_messages=[]
+        )
+    except Exception:
+        _system_prefix = []
+    _ka_daemon = KeepaliveDaemon(
+        state_path=p["state"],
+        cfg=cfg,
+        adapter=_ka_adapter,
+        system_prefix=_system_prefix,
+        inflight_lock=_inflight_lock,
+        model=model,
+    )
+    _ka_daemon.start()
 
     if args.message:
         message = args.message.strip()
         slash_result = handle_slash(message)
         if message.startswith("/") and slash_result in (0, None):
+            _ka_daemon.stop()
             return 0
-        return run_one(args.message)
+        result_code = run_one(args.message)
+        _ka_daemon.stop()
+        return result_code
 
     try:
         from prompt_toolkit import PromptSession
@@ -1095,7 +1512,10 @@ def cmd_brain(args: argparse.Namespace) -> int:
         except Exception:
             pass
     except ImportError:
-        return _run_basic_brain_repl(run_one, handle_slash=handle_slash, model=model)
+        try:
+            return _run_basic_brain_repl(run_one, handle_slash=handle_slash, model=model)
+        finally:
+            _ka_daemon.stop()
 
     print("Burnless Maestro chat — /help for commands, /exit to leave.")
     print(f"Maestro: {model}")
@@ -1129,24 +1549,27 @@ def cmd_brain(args: argparse.Namespace) -> int:
         ),
         complete_while_typing=True,
     )
-    while True:
-        try:
-            message = session.prompt("brain › ")
-        except (EOFError, KeyboardInterrupt):
+    try:
+        while True:
+            try:
+                message = session.prompt("brain › ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return 0
+            message = message.strip()
+            if not message:
+                continue
+            slash_result = handle_slash(message)
+            if slash_result == 0:
+                return 0
+            if slash_result is None:
+                continue
+            code = run_one(message)
+            if code:
+                return code
             print()
-            return 0
-        message = message.strip()
-        if not message:
-            continue
-        slash_result = handle_slash(message)
-        if slash_result == 0:
-            return 0
-        if slash_result is None:
-            continue
-        code = run_one(message)
-        if code:
-            return code
-        print()
+    finally:
+        _ka_daemon.stop()
 
 
 def _run_basic_brain_repl(run_one, *, handle_slash=None, model: str | None = None) -> int:
@@ -1198,7 +1621,26 @@ def cmd_read(args: argparse.Namespace) -> int:
     if not summary_path.exists():
         print(f"burnless: no summary for {args.id} (run it first?)", file=sys.stderr)
         return 2
-    print(summary_path.read_text(encoding="utf-8"))
+    raw = summary_path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+        worker_s = data.get("worker_status") or data.get("status", "?")
+        _audit_obj = data.get("audit") if isinstance(data.get("audit"), dict) else {}
+        if "audit_status" in data:
+            audit_s = data["audit_status"]
+        else:
+            _raw_ast = str(_audit_obj.get("status") or "").upper()
+            if not _raw_ast or _raw_ast in {"SKIPPED", "UNAVAILABLE"}:
+                audit_s = "SKIP"
+            elif _raw_ast in {"OK", "PASS"}:
+                audit_s = "OK"
+            else:
+                audit_s = _raw_ast or "SKIP"
+        test_s = data.get("test_status") or _extract_test_status(data)
+        print(f"worker: {worker_s} | audit: {audit_s} | tests: {test_s}")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    print(raw)
     return 0
 
 
@@ -1428,6 +1870,21 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _parse_chain_from_delegation(md: str) -> list[str]:
+    """Parse chain list from YAML front-matter at top of delegation markdown."""
+    if not md.startswith("---"):
+        return []
+    end = md.find("---", 3)
+    if end == -1:
+        return []
+    frontmatter = md[3:end].strip()
+    for line in frontmatter.splitlines():
+        if line.startswith("chain:"):
+            value = line.split(":", 1)[1].strip().strip("[]")
+            return [x.strip() for x in value.split(",") if x.strip()]
+    return []
+
+
 def _parse_tier_from_delegation(md: str) -> str | None:
     for line in md.splitlines():
         if line.lower().startswith("- **agent:**"):
@@ -1435,6 +1892,24 @@ def _parse_tier_from_delegation(md: str) -> str | None:
             if "(" in line and ")" in line:
                 return line.rsplit("(", 1)[1].split(")", 1)[0].strip()
     return None
+
+
+def _extract_test_status(summary: dict) -> str:
+    items = list(summary.get("validated") or []) + list(summary.get("evidence") or [])
+    for item in items:
+        text = str(item).lower()
+        if "pytest" in text or "passed" in text or "failed" in text:
+            m = re.search(r"(\d+)\s+passed", text)
+            if m:
+                return f"OK:{m.group(1)}"
+            m = re.search(r"(\d+)\s+failed", text)
+            if m:
+                return f"FAIL:{m.group(1)}"
+            if "passed" in text:
+                return "OK"
+            if "failed" in text:
+                return "FAIL"
+    return "SKIP"
 
 
 def _parse_goal_from_delegation(md: str) -> str | None:
@@ -1467,6 +1942,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--success", help="success criteria")
     sp.add_argument("--tier", choices=["gold", "silver", "bronze"], help="force tier")
     sp.add_argument(
+        "--chain",
+        default=None,
+        help="CSV of predecessor delegation IDs for lazy context (e.g. d042,d038)",
+    )
+    sp.add_argument(
         "--force",
         action="store_true",
         help="manually override the hard tier gate when selecting a higher tier",
@@ -1477,6 +1957,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("id")
     sp.add_argument("--dry-run", action="store_true")
     sp.add_argument("--timeout", type=int, default=600)
+    sp.add_argument("--stale-timeout-s", type=int, default=None, dest="stale_timeout_s")
     sp.add_argument(
         "--maestro",
         action="store_true",

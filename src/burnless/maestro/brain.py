@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import anthropic
 
+from ..brain_adapters import BrainAdapter, current_anthropic_adapter
 from ..codec.glossary_loader import load_glossary
+from .brain_streams import NormalizedEvent
 
 DEFAULT_BRAIN_MODEL = "claude-sonnet-4-6"
 DEFAULT_MAX_TOKENS = 6000
@@ -21,7 +23,10 @@ def run_brain_turn(
     model: str = DEFAULT_BRAIN_MODEL,
     client: anthropic.Anthropic | None = None,
     on_think_delta: Callable[[str], None] | None = None,
+    adapter: BrainAdapter | None = None,
 ) -> dict[str, Any]:
+    if adapter is None:
+        adapter = current_anthropic_adapter(model)
     client = client or anthropic.Anthropic()
     system = build_system_blocks(project_root=project_root, history_messages=history_messages)
     messages = list(history_messages)
@@ -31,21 +36,16 @@ def run_brain_turn(
     think_parts: list[str] = []
     usage: dict[str, int] = {}
 
-    stream = _create_stream(client, model=model, system=system, messages=messages)
+    stream = _create_stream(adapter, client=client, model=model, system=system, messages=messages)
     for event in stream:
-        _merge_usage(usage, _event_usage(event))
-        delta = getattr(event, "delta", None)
-        delta_type = getattr(delta, "type", None)
-        event_type = getattr(event, "type", None)
-        if delta_type == "thinking_delta" or event_type == "thinking_delta":
-            chunk = getattr(delta, "thinking", "") or getattr(event, "thinking", "")
-            think_parts.append(chunk)
-            if chunk and on_think_delta is not None:
-                on_think_delta(chunk)
-        elif delta_type == "text_delta" or event_type == "text_delta":
-            text_parts.append(getattr(delta, "text", "") or getattr(event, "text", ""))
-        elif event_type == "message_start":
-            _merge_usage(usage, _event_usage(getattr(event, "message", None)))
+        if event.kind == "think_delta":
+            think_parts.append(event.text)
+            if event.text and on_think_delta is not None:
+                on_think_delta(event.text)
+        elif event.kind == "text_delta":
+            text_parts.append(event.text)
+        elif event.kind == "usage":
+            _merge_usage(usage, event.usage or {})
 
     body = "".join(text_parts)
     think_text = "".join(think_parts).strip() or _extract_block(body, "THINK")
@@ -64,23 +64,35 @@ def run_brain_turn(
 
 
 def _create_stream(
-    client: anthropic.Anthropic,
+    adapter: BrainAdapter,
     *,
+    client: anthropic.Anthropic,
     model: str,
     system: list[dict[str, Any]],
     messages: list[dict[str, Any]],
-) -> Any:
-    params: dict[str, Any] = {
-        "model": model,
-        "max_tokens": DEFAULT_MAX_TOKENS,
-        "thinking": {"type": "adaptive"},
-        "output_config": {"effort": "high"},
-        "system": system,
-        "messages": messages,
-        "stream": True,
-        "extra_headers": {"anthropic-beta": "extended-cache-ttl-2025-04-11"},
-    }
-    return client.messages.create(**params)
+) -> Iterator[NormalizedEvent]:
+    from .brain_streams.anthropic import create_stream as _anthropic_stream
+
+    if adapter.kind == "anthropic":
+        thinking_kw: dict[str, Any] = {"type": "adaptive"} if adapter.supports_thinking else {}
+        return _anthropic_stream(
+            client, model=model, system=system, messages=messages, thinking_kw=thinking_kw
+        )
+    if adapter.kind == "openai":
+        from .brain_streams.openai import create_stream as _openai_stream
+
+        return _openai_stream(None, model=model, system=system, messages=messages)
+    if adapter.kind == "gemini":
+        from .brain_streams.gemini import create_stream as _gemini_stream
+
+        return _gemini_stream(None, model=model, system=system, messages=messages)
+    if adapter.kind == "openrouter":
+        from .brain_streams.openrouter import create_stream as _openrouter_stream
+
+        return _openrouter_stream(None, model=model, system=system, messages=messages)
+    raise NotImplementedError(
+        f"Brain stream for adapter kind={adapter.kind!r} is not implemented"
+    )
 
 
 def build_system_blocks(
@@ -142,23 +154,6 @@ def _normalize_capsule_lines(text: str) -> str:
             line = prefix + line[cut:].strip()
         lines.append(line)
     return "\n".join(lines)
-
-
-def _event_usage(event: Any) -> dict[str, int]:
-    usage_obj = getattr(event, "usage", None)
-    if usage_obj is None:
-        return {}
-    out: dict[str, int] = {}
-    for key in (
-        "input_tokens",
-        "output_tokens",
-        "cache_creation_input_tokens",
-        "cache_read_input_tokens",
-    ):
-        value = getattr(usage_obj, key, None)
-        if value is not None:
-            out[key] = int(value or 0)
-    return out
 
 
 def _merge_usage(dst: dict[str, int], src: dict[str, int]) -> None:
