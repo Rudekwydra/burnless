@@ -120,9 +120,10 @@ def test_shell_run_result_shows_audit_and_evidence(tmp_path: Path):
 
     out = shell._friendly_run_result(p, "d001", 0)
 
+    assert out.startswith("OK:d001")
     assert "Implemented evidence audit." in out
-    assert "Audit: OK" in out
-    assert "Evidence: pytest tests/test_audit.py" in out
+    assert "Audit:" not in out
+    assert "Evidence:" not in out
 
 
 def test_shell_run_result_shows_audit_feedback_reason(tmp_path: Path):
@@ -150,4 +151,40 @@ def test_shell_run_result_shows_audit_feedback_reason(tmp_path: Path):
 
     out = shell._friendly_run_result(p, "d002", 1)
 
+    assert out.startswith("PART:d002")
     assert "Reason: Add concrete evidence: command, file, or check observed." in out
+
+
+def test_shell_run_hides_raw_cmd_run_output(tmp_path: Path, monkeypatch, capsys):
+    root = tmp_path / ".burnless"
+    p = paths.paths_for(root)
+    for key in ("delegations", "logs", "temp", "capsules", "archive", "chat"):
+        p[key].mkdir(parents=True, exist_ok=True)
+    state.save(p["state"], state.DEFAULT_STATE | {"next": ""})
+    metrics.save(p["metrics"], metrics._fresh())
+    p["history"].write_text("# history\n", encoding="utf-8")
+    (p["temp"] / "d003.json").write_text(
+        """{
+  "id": "d003",
+  "status": "OK",
+  "summary": "Tudo feito.",
+  "next": ""
+}
+""",
+        encoding="utf-8",
+    )
+
+    def fake_cmd_run(args):
+        print("Capsule created. Saved 999 burnless tokens.")
+        print("999 burnless tokens")
+        return 0
+
+    monkeypatch.setattr(shell.cli_mod, "cmd_run", fake_cmd_run)
+
+    shell._run(p, "faça algo", "d003")
+    out = capsys.readouterr().out
+
+    assert "[investigando...]" in out
+    assert "OK:d003" in out
+    assert "Tudo feito." in out
+    assert "Capsule created." not in out

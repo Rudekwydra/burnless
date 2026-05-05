@@ -43,5 +43,6 @@ def paths_for(root_dir: Path) -> dict[str, Path]:
         "logs": root_dir / "logs",
         "temp": root_dir / "temp",
         "capsules": root_dir / "capsules",
+        "runs": root_dir / "runs",
         "archive": root_dir / "archive",
     }

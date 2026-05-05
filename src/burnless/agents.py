@@ -89,6 +89,8 @@ def run(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = 
             f"agent binary not found in PATH: {parts[0]} (configured for {agent_cfg.get('name')})"
         )
     started = datetime.now(timezone.utc)
+    worker_env = os.environ.copy()
+    worker_env["BURNLESS_WORKER"] = "1"
     try:
         proc = subprocess.run(
             parts,
@@ -97,6 +99,7 @@ def run(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = 
             text=True,
             timeout=timeout,
             cwd=str(cwd) if cwd else None,
+            env=worker_env,
         )
     except subprocess.TimeoutExpired as e:
         raise AgentError(f"agent {agent_cfg.get('name')} timed out after {timeout}s") from e

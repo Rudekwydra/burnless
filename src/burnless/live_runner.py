@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import queue
 import re
 import shutil
@@ -13,6 +14,77 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .agents import AgentError, resolve_command
+
+_SPINNER_FRAMES = ["|", "/", "-", "\\"]
+
+_PHASE_WORDS: dict[str, set[str]] = {
+    "lendo":       {"reading", "read", "lendo"},
+    "editando":    {"writing", "write", "written", "updated", "edited", "applying", "applied", "editando"},
+    "testando":    {"running", "tests", "test", "passed", "failed", "testando"},
+    "auditando":   {"audit", "auditando"},
+    "compactando": {"compress", "capsule", "compactando", "final json"},
+}
+
+
+def _detect_phase(event: str | None) -> str:
+    """Map a panel event string to a short Portuguese phase label."""
+    if not event:
+        return "pensando"
+    low = event.lower()
+    for phase, words in _PHASE_WORDS.items():
+        for w in words:
+            # Use word-boundary check for short words to avoid false substring matches
+            # (e.g., "read" in "ready", "run" in "running" would be fine but "read" in "ready" is not).
+            if len(w) <= 4:
+                if re.search(rf"\b{re.escape(w)}\b", low):
+                    return phase
+            elif w in low:
+                return phase
+    return "pensando"
+
+
+class _MinimalSpinner:
+    """Single-line carriage-return spinner for minimal progress mode."""
+
+    def __init__(self, *, delegation_id: str, tier: str) -> None:
+        self._did = delegation_id
+        self._tier = tier
+        self._phase = "pensando"
+        self._frame_i = 0
+        self._enabled = sys.stdout.isatty()
+
+    def start(self) -> bool:
+        if not self._enabled:
+            print(f"Running {self._did} ({self._tier})...", flush=True)
+            return False
+        self._render()
+        return True
+
+    def stop(self) -> None:
+        if self._enabled:
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+
+    def emit(self, event: str, elapsed_s: float) -> None:
+        phase = _detect_phase(event)
+        if phase != self._phase:
+            self._phase = phase
+        self._frame_i += 1
+        self._render()
+
+    def refresh(self, elapsed_s: float) -> None:
+        self._frame_i += 1
+        self._render()
+
+    def final(self, *, elapsed_s: float, **_) -> None:
+        self.stop()
+
+    def _render(self) -> None:
+        if not self._enabled:
+            return
+        frame = _SPINNER_FRAMES[self._frame_i % len(_SPINNER_FRAMES)]
+        sys.stdout.write(f"\r{frame} {self._did} {self._phase}...   ")
+        sys.stdout.flush()
 
 
 @dataclass
@@ -61,7 +133,7 @@ def run_with_live_panel(
         raise AgentError(
             f"agent binary not found in PATH: {command[0]} (configured for {agent_cfg.get('name')})"
         )
-    if mode not in {"plain", "watch", "quiet", "full"}:
+    if mode not in {"plain", "watch", "quiet", "full", "minimal", "brief"}:
         mode = "plain"
 
     started = datetime.now(timezone.utc)
@@ -83,6 +155,8 @@ def run_with_live_panel(
         )
         log.flush()
 
+        worker_env = os.environ.copy()
+        worker_env["BURNLESS_WORKER"] = "1"
         proc = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -91,6 +165,7 @@ def run_with_live_panel(
             text=True,
             bufsize=1,
             cwd=str(cwd) if cwd else None,
+            env=worker_env,
         )
         assert proc.stdin is not None
         proc.stdin.write(prompt)
@@ -106,17 +181,25 @@ def run_with_live_panel(
         interrupted = False
         last_render = start_mono
         renderer = _WatchRenderer(
-            enabled=mode == "watch",
+            enabled=mode in {"watch", "brief"},
             delegation_id=delegation_id,
             tier=tier,
             agent=agent_cfg.get("name") or "agent",
             log_path=log_path,
             burnless_tokens=burnless_tokens,
             tail_lines=tail_lines,
+            transient=(mode == "brief"),
         )
+        minimal_spinner: _MinimalSpinner | None = None
+        if mode == "minimal":
+            minimal_spinner = _MinimalSpinner(delegation_id=delegation_id, tier=tier)
         try:
-            if mode == "watch" and not renderer.start():
+            if mode in {"watch", "brief"} and not renderer.start():
                 mode = "plain"
+            elif mode == "minimal":
+                assert minimal_spinner is not None
+                if not minimal_spinner.start():
+                    mode = "plain"
             if mode == "plain":
                 print(f"Running {delegation_id} with {tier}/{agent_cfg.get('name') or 'agent'}...", flush=True)
             while True:
@@ -136,7 +219,10 @@ def run_with_live_panel(
                         panel_event = event_filter.feed(clean)
                         if panel_event:
                             recent.append(panel_event)
-                            renderer.emit(panel_event, now - start_mono)
+                            if minimal_spinner is not None:
+                                minimal_spinner.emit(panel_event, now - start_mono)
+                            else:
+                                renderer.emit(panel_event, now - start_mono)
                     log.write(f"[{stream}] {line}")
                     log.flush()
                     if mode == "full":
@@ -151,12 +237,16 @@ def run_with_live_panel(
                     _stop_process(proc)
                     recent.append(f"Timed out after {timeout}s.")
                     break
-                if mode == "watch" and now - last_render >= refresh_rate:
+                if mode in {"watch", "brief"} and now - last_render >= refresh_rate:
                     if not renderer.refresh(
                         elapsed_s=now - start_mono,
                         recent=list(recent),
                     ):
                         mode = "plain"
+                    last_render = now
+                elif mode == "minimal" and now - last_render >= 0.1:
+                    if minimal_spinner is not None:
+                        minimal_spinner.refresh(now - start_mono)
                     last_render = now
                 elif mode == "quiet" and now - last_render >= 10:
                     _render_quiet(
@@ -168,9 +258,11 @@ def run_with_live_panel(
                     )
                     last_render = now
         except KeyboardInterrupt:
-            if mode == "watch":
+            if mode in {"watch", "brief"}:
                 renderer.stop()
                 sys.stdout.write("\n")
+            elif mode == "minimal" and minimal_spinner is not None:
+                minimal_spinner.stop()
             answer = input("Stop worker safely? [Y/n] ").strip().lower()
             if answer in {"", "y", "yes", "s", "sim"}:
                 interrupted = True
@@ -217,12 +309,14 @@ def run_with_live_panel(
         )
         log.flush()
 
-    if mode == "watch":
+    if mode in {"watch", "brief"}:
         renderer.final(
             elapsed_s=time.monotonic() - start_mono,
             recent=list(recent),
             status="stopped" if interrupted else "finished",
         )
+    elif mode == "minimal" and minimal_spinner is not None:
+        minimal_spinner.final(elapsed_s=time.monotonic() - start_mono)
     elif mode == "quiet":
         pass
 
@@ -269,16 +363,23 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
     refresh_rate = kwargs["refresh_rate"]
     last_render = start_mono
     renderer = _WatchRenderer(
-        enabled=mode == "watch",
+        enabled=mode in {"watch", "brief"},
         delegation_id=delegation_id,
         tier=tier,
         agent=agent_cfg.get("name") or "agent",
         log_path=log_path,
         burnless_tokens=burnless_tokens,
         tail_lines=recent.maxlen or 20,
+        transient=(mode == "brief"),
     )
-    if mode == "watch" and not renderer.start():
+    minimal_spinner2: _MinimalSpinner | None = None
+    if mode == "minimal":
+        minimal_spinner2 = _MinimalSpinner(delegation_id=delegation_id, tier=tier)
+    if mode in {"watch", "brief"} and not renderer.start():
         mode = "plain"
+    elif mode == "minimal" and minimal_spinner2 is not None:
+        if not minimal_spinner2.start():
+            mode = "plain"
     while True:
         now = time.monotonic()
         try:
@@ -295,7 +396,10 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
                 panel_event = event_filter.feed(clean)
                 if panel_event:
                     recent.append(panel_event)
-                    renderer.emit(panel_event, now - start_mono)
+                    if minimal_spinner2 is not None:
+                        minimal_spinner2.emit(panel_event, now - start_mono)
+                    else:
+                        renderer.emit(panel_event, now - start_mono)
             log.write(f"[{stream}] {line}")
             log.flush()
             if mode == "full":
@@ -304,9 +408,13 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
                 target.flush()
         if proc.poll() is not None and events.empty():
             break
-        if mode == "watch" and now - last_render >= refresh_rate:
+        if mode in {"watch", "brief"} and now - last_render >= refresh_rate:
             if not renderer.refresh(elapsed_s=now - start_mono, recent=list(recent)):
                 mode = "plain"
+            last_render = now
+        elif mode == "minimal" and now - last_render >= 0.1:
+            if minimal_spinner2 is not None:
+                minimal_spinner2.refresh(now - start_mono)
             last_render = now
         elif mode == "quiet" and now - last_render >= 10:
             _render_quiet(
@@ -325,12 +433,14 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
         f"# ended_at: {ended.isoformat()}\n"
     )
     log.flush()
-    if mode == "watch":
+    if mode in {"watch", "brief"}:
         renderer.final(
             elapsed_s=time.monotonic() - start_mono,
             recent=list(recent),
             status="finished",
         )
+    elif mode == "minimal" and minimal_spinner2 is not None:
+        minimal_spinner2.final(elapsed_s=time.monotonic() - start_mono)
     return RunResult(
         agent=agent_cfg.get("name"),
         command=command,
@@ -366,6 +476,7 @@ class _WatchRenderer:
         log_path: Path,
         burnless_tokens: int,
         tail_lines: int,
+        transient: bool = False,
     ) -> None:
         self.enabled = enabled
         self.delegation_id = delegation_id
@@ -374,6 +485,7 @@ class _WatchRenderer:
         self.log_path = log_path
         self.burnless_tokens = burnless_tokens
         self.tail_lines = tail_lines
+        self._transient = transient
         self._live = None
         self._using_rich = False
 
@@ -395,7 +507,7 @@ class _WatchRenderer:
                 self._rich_renderable(0, [], "running"),
                 console=console,
                 refresh_per_second=4,
-                transient=False,
+                transient=self._transient,
             )
             self._live.start()
         except Exception:
