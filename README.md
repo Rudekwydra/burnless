@@ -308,6 +308,18 @@ burnless metrics             # token counter + audit ledger
 
 State lives entirely under `.burnless/` in your project. No hosted backend.
 
+## Using Burnless with an AI Assistant
+
+Any LLM or AI assistant in a chat session can use Burnless as its execution boundary instead of running shell commands directly. Tell it:
+
+```
+Use burnless delegate/run/read instead of direct shell.
+```
+
+The assistant plans and delegates; Burnless executes through your configured tiers. Concretely: the assistant calls `burnless delegate "<task>"` and `burnless run <id>` rather than invoking `bash` or file tools itself. Results come back via capsule; raw execution state never accumulates in the assistant's context. Tool access is governed by `allowedTools` in `.burnless/config.yaml`, not by the assistant's discretion.
+
+This works with any chat interface — Claude, ChatGPT, Gemini, local models — and requires no provider-specific configuration on the assistant side.
+
 ## vs. LangChain / CrewAI / AutoGen
 
 Burnless is not a competing orchestration framework — it is an optimization layer that sits *under* your existing agent logic. The distinction matters:

@@ -84,6 +84,7 @@ DEFAULT_CONFIG: dict = {
     },
     "display": {
         "progress_detail": "brief",  # minimal | brief | full
+        "stale_timeout_seconds": 300,  # kill worker if no stdout/stderr for this many seconds (0=off)
     },
 }
 
