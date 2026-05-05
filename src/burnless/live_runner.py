@@ -98,6 +98,7 @@ class RunResult:
     ended_at: str
     duration_s: float
     interrupted: bool = False
+    stale: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -110,6 +111,7 @@ class RunResult:
             "ended_at": self.ended_at,
             "duration_s": self.duration_s,
             "interrupted": self.interrupted,
+            "stale": self.stale,
         }
 
 
@@ -123,6 +125,7 @@ def run_with_live_panel(
     mode: str = "watch",
     burnless_tokens: int = 0,
     timeout: int = 600,
+    stale_timeout: int = 0,
     cwd: Path | None = None,
     tail_lines: int = 20,
     refresh_rate: float = 0.5,
@@ -179,6 +182,8 @@ def run_with_live_panel(
             thread.start()
 
         interrupted = False
+        stale_worker = False
+        last_useful_mono = start_mono
         last_render = start_mono
         renderer = _WatchRenderer(
             enabled=mode in {"watch", "brief"},
@@ -216,6 +221,7 @@ def run_with_live_panel(
                         stderr_parts.append(line)
                     clean = line.rstrip("\n")
                     if clean:
+                        last_useful_mono = now
                         panel_event = event_filter.feed(clean)
                         if panel_event:
                             recent.append(panel_event)
@@ -236,6 +242,12 @@ def run_with_live_panel(
                     interrupted = True
                     _stop_process(proc)
                     recent.append(f"Timed out after {timeout}s.")
+                    break
+                if stale_timeout > 0 and time.monotonic() - last_useful_mono > stale_timeout:
+                    stale_worker = True
+                    interrupted = True
+                    _stop_process(proc)
+                    recent.append(f"Stale worker: no output for {stale_timeout}s, process killed.")
                     break
                 if mode in {"watch", "brief"} and now - last_render >= refresh_rate:
                     if not renderer.refresh(
@@ -330,6 +342,7 @@ def run_with_live_panel(
         ended_at=ended.isoformat(),
         duration_s=(ended - started).total_seconds(),
         interrupted=interrupted,
+        stale=stale_worker,
     )
 
 

@@ -385,6 +385,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         else:
             display_cfg = cfg.get("display", {}).get("progress_detail", "brief")
             run_mode = display_cfg if display_cfg in {"minimal", "brief", "full", "watch", "quiet", "plain"} else "brief"
+    stale_timeout_s = int(cfg.get("display", {}).get("stale_timeout_seconds", 300))
 
     # Persist a lightweight run snapshot before handing off to the worker.
     runs_dir = p["runs"]
@@ -423,6 +424,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 mode=run_mode,
                 burnless_tokens=bt_before,
                 timeout=args.timeout,
+                stale_timeout=stale_timeout_s,
                 cwd=root.parent,
             )
             result = result_obj.to_dict()
@@ -444,6 +446,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
 
     interrupted = bool(result.get("interrupted"))
+    stale = bool(result.get("stale"))
     extracted_json = deleg_mod.extract_result_json(result.get("stdout", ""))
     if extracted_json is not None:
         summary = extracted_json
@@ -461,17 +464,25 @@ def cmd_run(args: argparse.Namespace) -> int:
             "next": "",
         }
     else:
+        if stale:
+            _status = "PART"
+            _summary = f"Stale worker: no output for {stale_timeout_s}s, process killed."
+            _issue = "stale_worker"
+        elif interrupted:
+            _status = "ERR" if result["returncode"] != 0 else "PART"
+            _summary = "Worker stopped by user."
+            _issue = "user_interrupted"
+        else:
+            _status = "ERR" if result["returncode"] != 0 else "PART"
+            _summary = "(agent did not emit final JSON block)"
+            _issue = "missing_final_json" if result["returncode"] == 0 else f"returncode={result['returncode']}"
         summary = {
             "id": did,
-            "status": "ERR" if result["returncode"] != 0 else "PART",
-            "summary": "Worker stopped by user." if interrupted else "(agent did not emit final JSON block)",
+            "status": _status,
+            "summary": _summary,
             "files_touched": [],
             "validated": [],
-            "issues": [
-                "user_interrupted" if interrupted else (
-                    "missing_final_json" if result["returncode"] == 0 else f"returncode={result['returncode']}"
-                )
-            ],
+            "issues": [_issue],
             "next": "",
         }
     summary = _audit_summary_evidence(
@@ -538,7 +549,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     # Short output — details via `burnless read/log/capsule/metrics`
     status_str = summary.get("status", "?")
-    if interrupted:
+    if interrupted and not stale:
         print("Worker stopped by user.")
     else:
         head = f"{status_str}:{did}"

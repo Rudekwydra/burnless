@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.6] — 2026-05-05
+### Added
+- **Stale/heartbeat detection**: `display.stale_timeout_seconds` config key (default: 300). Workers that emit no stdout/stderr for the configured duration are killed and the delegation is marked `PART` with `stale_worker` issue. Set to `0` to disable.
+- `RunResult.stale` field propagated through `to_dict()` and surfaced in `burnless run` output.
+- 11 new unit tests in `tests/test_stale.py` covering config defaults, `RunResult` field, kill behaviour, non-trigger case, disabled case, and `cmd_run` PART output.
+
+### Changed
+- **README**: Added "Using Burnless with an AI Assistant" section — any LLM can use `burnless delegate/run/read` as its execution boundary.
+- **RELEASE.md**: Added "Site Deploy (burnless.pro)" runbook with credential loading, Wrangler deploy, and verification steps.
+
 ## [0.6.5] — 2026-05-05
 ### Added
 - **Ephemeral progress display** for `burnless run` and the shell. Three modes:
