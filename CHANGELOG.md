@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.7] — 2026-05-05
+### Added
+- **Thought vs execution reports**: Worker JSON now carries `kind: execution | thought`. Thought-only reports can finish as `OK` without execution evidence, while execution reports still require verifiable evidence.
+- **Dynamic heartbeat UX**: `burnless run` progress now keeps a short live state visible (`thinking`, `reading`, `writing`, `testing`, `auditing`, `compressing`) and shows idle time after 2s without worker output.
+- `kind` is persisted in summaries and raw logs so `read/log/capsule` can distinguish reasoning reports from execution reports.
+- Private release sync protocol added under `.burnless/`; public `RELEASE.md` now documents the required update order.
+
+### Changed
+- The audit loop skips execution-evidence checks for thought-only reports instead of creating a false `PART`.
+- `brief/watch` progress panels and `minimal` progress now remain legible without accumulating terminal-scroll history.
+
 ## [0.6.6] — 2026-05-05
 ### Added
 - **Stale/heartbeat detection**: `display.stale_timeout_seconds` config key (default: 300). Workers that emit no stdout/stderr for the configured duration are killed and the delegation is marked `PART` with `stale_worker` issue. Set to `0` to disable.

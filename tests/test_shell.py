@@ -155,6 +155,32 @@ def test_shell_run_result_shows_audit_feedback_reason(tmp_path: Path):
     assert "Reason: Add concrete evidence: command, file, or check observed." in out
 
 
+def test_shell_run_result_shows_thought_kind(tmp_path: Path):
+    root = tmp_path / ".burnless"
+    p = paths.paths_for(root)
+    for key in ("delegations", "logs", "temp", "capsules", "archive", "chat"):
+        p[key].mkdir(parents=True, exist_ok=True)
+    state.save(p["state"], state.DEFAULT_STATE | {"next": ""})
+    metrics.save(p["metrics"], metrics._fresh())
+    (p["temp"] / "d004.json").write_text(
+        """{
+  "id": "d004",
+  "status": "OK",
+  "kind": "thought",
+  "summary": "Pensado e registrado.",
+  "audit": {"status": "SKIPPED"},
+  "next": ""
+}
+""",
+        encoding="utf-8",
+    )
+
+    out = shell._friendly_run_result(p, "d004", 0)
+
+    assert out.startswith("THOUGHT:d004")
+    assert "Pensado e registrado." in out
+
+
 def test_shell_run_hides_raw_cmd_run_output(tmp_path: Path, monkeypatch, capsys):
     root = tmp_path / ".burnless"
     p = paths.paths_for(root)

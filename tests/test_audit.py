@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from burnless import cli, paths
+from burnless import delegations as deleg_mod
 
 
 def _paths(tmp_path: Path) -> dict[str, Path]:
@@ -30,6 +31,35 @@ def test_ok_without_evidence_is_downgraded_to_part(tmp_path: Path):
     assert summary["status"] == "PART"
     assert "missing_evidence" in summary["issues"]
     assert "Add concrete evidence" in summary["next"]
+    assert not (p["temp"] / "d001.audit.json").exists()
+
+
+def test_thought_only_summary_skips_execution_evidence_audit(tmp_path: Path):
+    p = _paths(tmp_path)
+    log_path = p["logs"] / "d001.log"
+    log_path.write_text("thinking only\n", encoding="utf-8")
+
+    summary = cli._audit_summary_evidence(
+        p,
+        cfg={"agents": {"bronze": {"name": "haiku", "command": "haiku -p"}}},
+        did="d001",
+        prompt="planeje a arquitetura do monitor",
+        summary={
+            "id": "d001",
+            "status": "OK",
+            "kind": "thought",
+            "summary": "Proposed a split between thought and execution reports.",
+            "issues": [],
+        },
+        log_path=log_path,
+        timeout=30,
+        cwd=tmp_path,
+    )
+
+    assert summary["status"] == "OK"
+    assert summary["kind"] == "thought"
+    assert summary["audit"]["status"] == "SKIPPED"
+    assert summary["audit"]["auditor_tier"] is None
     assert not (p["temp"] / "d001.audit.json").exists()
 
 
@@ -245,6 +275,27 @@ def test_bronze_and_silver_unavailable_escalates_to_gold_ok(tmp_path: Path, monk
     assert "audit_unavailable" not in summary["issues"]
 
 
+def test_write_log_persists_report_kind(tmp_path: Path):
+    log_path = tmp_path / "d001.log"
+    deleg_mod.write_log(
+        log_path,
+        {
+            "agent": "sonnet",
+            "command": ["claude", "-p"],
+            "kind": "thought",
+            "returncode": 0,
+            "duration_s": 1.23,
+            "started_at": "2026-05-05T00:00:00+00:00",
+            "ended_at": "2026-05-05T00:00:01+00:00",
+            "stdout": "ok",
+            "stderr": "",
+        },
+    )
+
+    text = log_path.read_text(encoding="utf-8")
+    assert "# kind: thought" in text
+
+
 def test_all_configured_auditors_unavailable_downgrades_ok(tmp_path: Path, monkeypatch):
     p = _paths(tmp_path)
     log_path = p["logs"] / "d007.log"
@@ -383,4 +434,3 @@ def test_custom_auditor_name_execution(tmp_path: Path, monkeypatch):
     assert summary["audit"]["status"] == "OK"
     assert summary["audit"]["auditor_name"] == "ollama-cheap"
     assert summary["audit"]["attempted_auditors"] == ["ollama-cheap"]
-

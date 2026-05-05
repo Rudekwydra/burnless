@@ -31,12 +31,17 @@ DELEGATION_TEMPLATE = """\
 
 {success}
 
+## Report kind
+
+{kind_hint}
+
 ## Required final output (last lines of stdout)
 
 ```json
 {{
   "id": "{id}",
   "status": "OK | PART | ERR | BLK",
+  "kind": "execution | thought",
   "summary": "<one short sentence>",
   "files_touched": [],
   "validated": [],
@@ -54,6 +59,7 @@ def render_delegation(
     goal: str,
     task: str,
     success: str,
+    kind_hint: str,
     agent_name: str,
     tier: str,
     routed_by: str,
@@ -64,6 +70,7 @@ def render_delegation(
         goal=goal,
         task=task,
         success=success,
+        kind_hint=kind_hint,
         agent_name=agent_name,
         tier=tier,
         routed_by=routed_by or "default-bronze",
@@ -119,6 +126,7 @@ def write_log(path: Path, run_result: dict) -> None:
     body = (
         f"# agent: {run_result.get('agent')}\n"
         f"# command: {' '.join(run_result.get('command', []))}\n"
+        f"# kind: {run_result.get('kind')}\n"
         f"# returncode: {run_result.get('returncode')}\n"
         f"# duration_s: {run_result.get('duration_s')}\n"
         f"# started_at: {run_result.get('started_at')}\n"

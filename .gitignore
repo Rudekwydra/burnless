@@ -43,6 +43,10 @@ tmp/
 docs/ops/
 docs/design/paywall*.md
 scripts/cf_mint_tokens.py
+OPERATING_PROFILE.md
+soul.md
+_design/evidence_rubrica.md
+_design/warm_cache_measurement.md
 
 # Internal launch / marketing notes
 LAUNCH_PACKAGE.md

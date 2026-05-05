@@ -191,15 +191,15 @@ The real usage pattern is not "LLM with tools." It is a Brain with no execution 
 
 ## Audit Loop
 
-Every Worker execution in v0.6.3 enforces a two-step verification before Maestro is notified.
+Worker reports are typed before Maestro treats them as done.
 
-**Step 1 — Structured output gate:** Worker must return a structured JSON of what was done. System validates JSON automatically. Missing JSON → automatic re-delegation to Worker, no Maestro involvement.
+**Step 1 — Structured output gate:** Worker must return structured JSON with `status` and `kind`. `kind: execution` means the Worker changed, checked, or ran something and must include verifiable evidence. `kind: thought` means the Worker produced planning, design, or analysis only; execution evidence is not required.
 
-**Step 2 — Haiku audit:** Valid JSON triggers an automatic Haiku audit: "was X actually done?" Maestro receives `confirmed ✓` before seeing the result.
+**Step 2 — Evidence audit:** Execution reports are audited against commands, paths, logs, tests, or other observable proof. Thought-only reports skip execution-evidence checks so planning work does not loop as a false `PART`.
 
-Maestro never asks "did you really do it?" — the system guarantees it. Audit cost is bronze/Haiku: near zero. Every execution has an auditable JSON trail. Workers are constrained by the system, not by the prompt.
+Maestro never asks "did you really do it?" — execution reports are checked before reporting, and reasoning reports are not mistaken for execution. `kind` is persisted in summaries and logs so later reads can keep those paths separate.
 
-## Implementation Status in v0.6.3
+## Current Implementation Status
 
 Works today:
 
@@ -208,7 +208,8 @@ Works today:
 - Semantic capsules, execution logs, and three compression layers.
 - Shared prefix cache with 1h TTL in the Anthropic-backed Brain path.
 - Realtime cache compaction using break-even math (`K × r × (B − S) > W × S + M`).
-- **Audit loop**: mandatory JSON output + automatic Haiku audit on every Worker execution.
+- **Audit loop**: typed `execution`/`thought` reports; execution requires evidence, thought avoids false audit loops.
+- **Dynamic heartbeat UI**: live phase + idle state in `burnless run`/shell progress without polluting persisted summaries.
 - Reproducible benchmarks in `bench/run.py` and `bench/v2.py`.
 - PyPI install: `pip install burnless`.
 

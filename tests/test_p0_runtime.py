@@ -353,6 +353,22 @@ def test_minimal_spinner_stop_nontty_is_noop(capsys):
     spinner.stop()  # should not raise
 
 
+def test_minimal_spinner_start_tty_renders_without_type_error():
+    import io
+    import sys
+    from unittest.mock import patch
+    from burnless.live_runner import _MinimalSpinner
+
+    spinner = _MinimalSpinner(delegation_id="d001", tier="bronze")
+    spinner._enabled = True
+
+    buf = io.StringIO()
+    with patch.object(sys, "stdout", buf):
+        assert spinner.start() is True
+
+    assert "d001" in buf.getvalue()
+
+
 def test_cmd_run_progress_flag_minimal_passed_to_runner(tmp_path: Path, monkeypatch):
     """--progress minimal must reach run_with_live_panel as mode='minimal'."""
     import argparse
@@ -452,6 +468,79 @@ def test_cmd_run_config_progress_detail_used_when_no_flag(tmp_path: Path, monkey
     cli_mod.cmd_run(args)
 
     assert captured_modes == ["minimal"]
+
+
+def test_minimal_spinner_idle_appears_in_render(capsys):
+    """When refresh is called with idle_s >= 2, idle label must appear in spinner output."""
+    import io
+    import sys
+    from unittest.mock import patch
+    from burnless.live_runner import _MinimalSpinner
+
+    spinner = _MinimalSpinner(delegation_id="d007", tier="silver")
+    spinner._enabled = True
+
+    buf = io.StringIO()
+    with patch.object(sys, "stdout", buf):
+        spinner.refresh(elapsed_s=15.0, idle_s=7.0)
+
+    out = buf.getvalue()
+    assert "idle 7s" in out, f"Expected 'idle 7s' in spinner output, got: {out!r}"
+    assert "d007" in out
+
+
+def test_minimal_spinner_no_idle_below_threshold(capsys):
+    """When idle_s < 2, no idle label should appear."""
+    import io
+    import sys
+    from unittest.mock import patch
+    from burnless.live_runner import _MinimalSpinner
+
+    spinner = _MinimalSpinner(delegation_id="d007", tier="silver")
+    spinner._enabled = True
+
+    buf = io.StringIO()
+    with patch.object(sys, "stdout", buf):
+        spinner.refresh(elapsed_s=5.0, idle_s=1.0)
+
+    out = buf.getvalue()
+    assert "idle" not in out, f"Expected no idle label for idle_s=1.0, got: {out!r}"
+
+
+def test_watch_renderer_rich_renderable_shows_idle():
+    """_rich_renderable must include idle text when idle_s >= 2."""
+    import io
+    from burnless.live_runner import _WatchRenderer
+
+    renderer = _WatchRenderer(
+        enabled=True,
+        delegation_id="d007",
+        tier="silver",
+        agent="sonnet",
+        log_path=Path("/tmp/fake.log"),
+        burnless_tokens=0,
+        tail_lines=5,
+    )
+    try:
+        from rich.console import Console
+        console = Console(file=io.StringIO(), width=120)
+        renderable = renderer._rich_renderable(30.0, ["Reading file.py"], "running", idle_s=9.0)
+        buf = io.StringIO()
+        console.print(renderable, end="")
+        output = console.file.getvalue()
+        assert "heartbeat:" in output, f"Expected heartbeat label in rich renderable, got: {output!r}"
+        assert "idle 9s" in output, f"Expected 'idle 9s' in rich renderable, got: {output!r}"
+    except ImportError:
+        pytest.skip("rich not installed")
+
+
+def test_format_idle():
+    from burnless.live_runner import _format_idle
+    assert _format_idle(0) == "0s"
+    assert _format_idle(7) == "7s"
+    assert _format_idle(59) == "59s"
+    assert _format_idle(60) == "1m 0s"
+    assert _format_idle(83) == "1m 23s"
 
 
 def test_cmd_run_progress_flag_overrides_config(tmp_path: Path, monkeypatch):
