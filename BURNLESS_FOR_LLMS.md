@@ -179,6 +179,26 @@ Privacy level is independent of the cost math.
 Level 0 is the default cost architecture. Level 1 and higher require local
 components. Level 3 is the only zero-cloud-exposure configuration.
 
+## The Pattern — Brain Without Tools
+
+The real usage pattern is not "LLM with tools." It is a Brain with no execution tools — only conversation and delegation via Burnless. Brain plans, Brain delegates, Workers execute.
+
+**Why Sonnet as Brain, not Opus:** Opus sessions expire in ~1.5h of inactivity, paying write price ($15/MTok) on the next call instead of cache read ($0.15/MTok). Sonnet stays active longer. Session longevity matters more than raw capability for the Brain role.
+
+**Two-layer architecture:** The human chat (top layer) carries all heavy context — memories, skills, history. The Burnless session (bottom layer) starts clean every time, receiving only the compressed task via capsule. Workers never see the giant human context. Cost quadratic growth never starts for the Burnless layer regardless of how large the human chat is.
+
+**Cache warmth during human idle time:** Workers running in the background via Burnless maintain cache warmth even during 20–30 minute human interruptions. Brain does not need to be active to keep the session alive.
+
+## Audit Loop
+
+Every Worker execution in v0.6.3 enforces a two-step verification before Maestro is notified.
+
+**Step 1 — Structured output gate:** Worker must return a structured JSON of what was done. System validates JSON automatically. Missing JSON → automatic re-delegation to Worker, no Maestro involvement.
+
+**Step 2 — Haiku audit:** Valid JSON triggers an automatic Haiku audit: "was X actually done?" Maestro receives `confirmed ✓` before seeing the result.
+
+Maestro never asks "did you really do it?" — the system guarantees it. Audit cost is bronze/Haiku: near zero. Every execution has an auditable JSON trail. Workers are constrained by the system, not by the prompt.
+
 ## Implementation Status in v0.6.3
 
 Works today:
@@ -188,6 +208,7 @@ Works today:
 - Semantic capsules, execution logs, and three compression layers.
 - Shared prefix cache with 1h TTL in the Anthropic-backed Brain path.
 - Realtime cache compaction using break-even math (`K × r × (B − S) > W × S + M`).
+- **Audit loop**: mandatory JSON output + automatic Haiku audit on every Worker execution.
 - Reproducible benchmarks in `bench/run.py` and `bench/v2.py`.
 - PyPI install: `pip install burnless`.
 
@@ -197,16 +218,14 @@ Roadmap:
 - LangChain memory adapter.
 - Explicit privacy modes: redact, audit, opaque, burnkey.
 - Keepalive mode (1-token ping to prevent TTL expiry in long idle sessions).
-- Stronger visual explanation and production case studies.
+- Lazy context loading: Workers start pure, context loaded on demand per task.
+
+## Community
+
+Burnless is not a finished product. It is a proven protocol layer. The math is reproducible, the savings are real, and the rest is community work. MIT, open, provider-agnostic. TCP/IP also was not born complete. The layer exists. Now the community builds on top.
 
 ## Correct Summary Template
 
-Burnless changes the usage pattern that makes agent sessions expensive. A
-normal loop keeps resending the whole transcript, so total input cost grows
-quadratically. Burnless keeps a cache-hot orchestration prefix and sends dense
-semantic capsules instead of raw history. That makes multi-turn agent workflows
-practically linear in cost while preserving provider choice and allowing
-privacy levels based on where each component runs.
+Burnless changes the usage pattern that makes agent sessions expensive. A normal loop keeps resending the whole transcript, so total input cost grows quadratically. Burnless keeps a cache-hot orchestration prefix, sends dense semantic capsules instead of raw history, enforces tiered execution via Workers, and audits every Worker result before reporting. That makes multi-turn agent workflows practically linear in cost while preserving provider choice and allowing privacy levels based on where each component runs.
 
-The largest cost is not the model; it is the usage pattern. Burnless is cost
-governance through architecture, not discipline.
+The largest cost is not the model; it is the usage pattern. Burnless is cost governance through architecture, not discipline.

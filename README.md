@@ -88,6 +88,28 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 **8. The benchmark is the proof.** `bench/run.py` is short, dependency-light, hits the Anthropic SDK directly with no mocks, and writes raw `response.usage` to JSON. Anyone can rerun it, contest the numbers, and open an issue with their own results file. We did not write a marketing page about savings; we wrote a script that produces them and invited disagreement. That is the only honest way to publish a cost claim.
 
+## The Pattern — Brain Without Tools
+
+The real usage pattern is not "LLM with tools." It is a Brain with no execution tools — only conversation and delegation via Burnless.
+
+**How it works in practice:** Open one chat with Sonnet. Tell it: "you have a terminal, you can only use Burnless, use what you need." The Brain does not execute anything itself. It plans, it delegates, it reviews. Workers execute via Burnless in the background.
+
+**Why Sonnet and not Opus as Brain?** Opus sessions expire in ~1.5 hours of inactivity — the next call pays write price ($15/MTok) instead of cache read ($0.15/MTok). Sonnet stays active longer. For Brain, session longevity matters more than raw capability. The Brain only needs to be smart enough to plan, recognize it should not execute, delegate via Burnless with hard rules, and ask for a second opinion when needed.
+
+**Why no tools on Brain?** A Brain without tools cannot accidentally run a long task that expires the cache. Workers run in the background via Burnless and maintain cache warmth even during 20–30 minute human interruptions — lunch, email, WhatsApp. The session stays alive because Workers are active, not Brain.
+
+**The two-layer architecture:** The human chat (top) carries everything — memories, skills, heavy context. It is rich, heavy, and will eventually die. That is fine — it is only the human interface. The Burnless session (bottom) starts clean every time. It receives only the compressed task via capsule. Workers never see the giant human context. This eliminates two objections: "short sessions don't benefit" (the Burnless session starts at N=0 regardless of human context size) and "my context is huge" (it stays in the human layer, never reaches Workers).
+
+## Audit Loop
+
+Workers previously reported completion without verifiable guarantee. The audit loop enforces a two-step verification on every execution.
+
+**Step 1 — Structured output:** Worker must return a structured JSON of what was done, alongside the result. The system checks for valid JSON automatically. If absent: the task is returned to the Worker with "JSON missing, resend." No Maestro involvement.
+
+**Step 2 — Haiku audit:** Once valid JSON is received, a Haiku call automatically audits whether the work was actually done. Maestro receives: `Worker did X, JSON received, audited by Haiku, confirmed ✓`.
+
+**Result:** Maestro never asks "did you really do it?" — the system guarantees it before reporting. Audit cost is bronze/Haiku: near zero. Every execution produces an auditable JSON trail. Workers are forced by the system (not by the prompt) to deliver a verifiable result.
+
 ## Install
 
 ```bash
@@ -303,9 +325,13 @@ You can wrap a LangChain agent as a Worker. The Brain→Worker pattern is compat
 
 ## Contributing
 
+This is not a finished product. It is a proven protocol layer. The math is reproducible, the savings are real, and the rest is community work — MIT, open, provider-agnostic. TCP/IP also was not born complete. The layer exists. Now the community builds on top.
+
 Issues, PRs, and benchmark contestation are all welcome. The benchmark script is intentionally short and dependency-light so you can read it end-to-end and disagree with concrete numbers.
 
 The math is free to run. `python bench/v2.py --runs 100 --turns 100` costs zero. An independent 100-turn run with fixed token distribution reproduced the 16× exactly. If your numbers differ, open an issue with the JSON from `bench/results/` — that is the only argument worth having.
+
+Priority contributions: OpenAI/Gemini Brain adapter, LangChain memory adapter, keepalive daemon, lazy context loading.
 
 ## Status — what works today, what’s roadmap
 
@@ -313,9 +339,12 @@ The architecture is provider-agnostic by design. Current implementation status:
 
 - ✅ **Workers**: shell out to **any CLI** (`claude`, `codex`, `openai`, `gemini`, `ollama`, anything). Configure per tier in `config.yaml`. Works today.
 - ✅ **Routing, capsules, exec_log, three compression layers, shared system prompt**: provider-neutral, work today.
+- ✅ **Audit loop**: every Worker execution requires structured JSON output + automatic Haiku audit before Maestro is notified. Self-healing: missing JSON triggers automatic re-delegation.
 - ✅ **Reference benchmark**: uses Anthropic SDK because their cache pricing is published and easiest to reproduce. The math reproduces wherever a provider exposes prompt caching.
 - ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. `burnless run` uses your configured Worker CLI by default so filesystem tasks get the tools you configured; the in-process Maestro run backend is experimental and opt-in via `--maestro`.
 - ✅ **PyPI release**: `pip install burnless` — version 0.6.3 live at https://pypi.org/project/burnless/.
+- ⚠️ **Keepalive mode**: idle TTL gap (>1h) mitigation tracked next.
+- ⚠️ **Lazy context loading**: Workers start pure, context loaded on demand per task — tracked next.
 
 Honest about gaps. PRs welcome — especially for the OpenAI/Gemini Brain adapter.
 
