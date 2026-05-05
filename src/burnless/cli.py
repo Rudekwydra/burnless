@@ -450,6 +450,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     extracted_json = deleg_mod.extract_result_json(result.get("stdout", ""))
     if extracted_json is not None:
         summary = extracted_json
+        _ev = summary.get("evidence")
+        if not isinstance(_ev, list) or not _ev:
+            print("EVIDENCE_MISSING", file=sys.stderr)
+            _retry_msg = (
+                "\n\n---\nSua resposta não incluiu o campo evidence. "
+                "evidence é obrigatório. Inclua: comando exato executado, "
+                "path verificado, saída observada. Campo vazio = tarefa incompleta."
+            )
+            _retry_result = agents_mod.run(
+                agent_cfg, prompt + _retry_msg, timeout=args.timeout, cwd=root.parent
+            )
+            with log_path.open("a", encoding="utf-8") as _lf:
+                _lf.write("\n\n--- EVIDENCE_RETRY ---\n" + _retry_result.get("stdout", "") + "\n")
+            _retry_json = deleg_mod.extract_result_json(_retry_result.get("stdout", ""))
+            if _retry_json is not None:
+                summary = _retry_json
     elif backend_used == "maestro" and result["returncode"] == 0 and not interrupted:
         # Maestro mode: assistant text without explicit JSON still counts as OK.
         snippet = (result.get("stdout") or "").strip().splitlines()
