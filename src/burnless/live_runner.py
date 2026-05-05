@@ -301,7 +301,10 @@ def run_with_live_panel(
                     event_filter=event_filter,
                 )
         except Exception:
-            renderer.stop()
+            if mode in {"watch", "brief"}:
+                renderer.stop()
+            elif mode == "minimal" and minimal_spinner is not None:
+                minimal_spinner.stop()
             raise
 
         for thread in threads:
