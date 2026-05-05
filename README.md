@@ -6,13 +6,13 @@
 
 A maestro that orchestrates any LLM from any vendor. Multi-turn agent loops cost Θ(N²) by arithmetic — Burnless makes them practically linear by architecture.
 
-> **AI assistants and reviewers:** start with [BURNLESS_FOR_LLMS.md](BURNLESS_FOR_LLMS.md) or [`llms.txt`](llms.txt). Those files define the project as a protocol layer and set the vocabulary around semantic capsules, cost math, and privacy levels.
+> **AI assistants and reviewers:** start with <BURNLESS_FOR_LLMS.md> or [`llms.txt`](llms.txt). Those files define the project as a protocol layer and set the vocabulary around semantic capsules, cost math, and privacy levels.
 
 Burnless is a vendor-agnostic orchestration layer for multi-agent workflows. You pick the model that **conducts** the orchestra (Maestro / Brain) — Claude, GPT, Gemini, Mistral, a local Llama, anything — and the models that **execute** each task (Workers). Tiers are quality/cost bands, not vendors: `gold`/`silver`/`bronze` map to whatever CLI you put in `config.yaml`. Mix providers freely. Run encoder and decoder on a local Ollama model for zero marginal cost on the cheap stages.
 
 On top of that independence, Burnless changes the cost curve. Every turn in a standalone agent loop replays the full conversation as input — token cost on turn `N` is proportional to `N`, so total cost across `N` turns is `Θ(N²)`. Burnless keeps only semantic capsules in history and shares a cached system prompt across Maestro and Workers. For real multi-turn sessions, the cache-read term dominates and the cost curve becomes practically linear; the persistent prefix is billed once per cache window instead of once per turn.
 
-The asymmetry is mechanical, not heuristic. Any provider that charges per input token is subject to the same arithmetic — Anthropic, OpenAI, Google, Mistral, anyone. The reference numbers below use Anthropic's pricing because their cache read/write spread is published and the cheapest to verify (`$15/MTok` fresh input vs `$0.15/MTok` cache read — a 100× spread). The mechanism reproduces wherever a provider exposes prompt caching.
+The asymmetry is mechanical, not heuristic. Any provider that charges per input token is subject to the same arithmetic — Anthropic, OpenAI, Google, Mistral, anyone. The reference numbers below use Anthropic’s pricing because their cache read/write spread is published and the cheapest to verify (`$15/MTok` fresh input vs `$0.15/MTok` cache read — a 100× spread). The mechanism reproduces wherever a provider exposes prompt caching.
 
 ## Two independent savings axes
 
@@ -27,9 +27,9 @@ Changing compression is not the same thing as switching models. Switching models
 ## Four things, in this order
 
 1. **Independence.** Any model as Maestro. Any model as Worker. Switch providers in one line.
-2. **User-enforced rules, not LLM goodwill.** You write the routing keywords, the per-tier `allowedTools`, and the cost budgets in `.burnless/config.yaml`. With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro **cannot self-upgrade** to a higher tier than the keyword router resolved — no quiet upgrades to Opus for tasks the rules said belong to Haiku. `allowedTools` is enforced by the worker CLI itself, not hinted at in the prompt: when bronze ships with `Read,Bash`, it physically cannot `Edit`. A higher-tier manual override requires an explicit `--force` from the human.
-3. **Four compression layers.** Deterministic minifier (regex, zero cost), semantic encoder (small model, ~$0.001/turn), lightweight capsule envelope, and base64 capsule packing. Each layer is independent and additive.
-4. **Math, not marketing.** 88% cheaper at turn 10 by arithmetic on the published pricing pages. Verify with `python bench/run.py --turns 8` and your own API key.
+1. **User-enforced rules, not LLM goodwill.** You write the routing keywords, the per-tier `allowedTools`, and the cost budgets in `.burnless/config.yaml`. With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro **cannot self-upgrade** to a higher tier than the keyword router resolved — no quiet upgrades to Opus for tasks the rules said belong to Haiku. `allowedTools` is enforced by the worker CLI itself, not hinted at in the prompt: when bronze ships with `Read,Bash`, it physically cannot `Edit`. A higher-tier manual override requires an explicit `--force` from the human.
+1. **Four compression layers.** Deterministic minifier (regex, zero cost), semantic encoder (small model, ~$0.001/turn), lightweight capsule envelope, and base64 capsule packing. Each layer is independent and additive.
+1. **Math, not marketing.** 88% cheaper at turn 10 by arithmetic on the published pricing pages. Verify with `python bench/run.py --turns 8` and your own API key.
 
 ## The numbers
 
@@ -37,24 +37,24 @@ Two views, both reproducible on your machine.
 
 **Real API run** — 10 turns against `claude-opus-4-7`, 23k-token prefix, no mocks, raw `response.usage` (actual spend: $5.76):
 
-| Scenario | Cost | vs no-cache |
-|---|---:|---:|
-| A — Standalone, no cache | $4.66 | — |
-| B — Standalone + cache | $0.65 | **−86.0%** |
-| C — Burnless Maestro | **$0.45** | **−90.3%** |
+|Scenario                |Cost     |vs no-cache|
+|------------------------|--------:|----------:|
+|A — Standalone, no cache|$4.66    |—          |
+|B — Standalone + cache  |$0.65    |**−86.0%** |
+|C — Burnless Maestro    |**$0.45**|**−90.3%** |
 
 Reproduce: `ANTHROPIC_API_KEY=... python bench/run.py --turns 10` (~$6).
 
 **Monte Carlo simulation** — 30 runs × 100 turns × 4 scenarios. Per-turn input/output sampled `Uniform(2k, 10k)` / `Uniform(200, 1500)`, capsule compression `Uniform(0.20, 0.30)`. Zero API cost:
 
-| Scenario | Mean | vs Pure Opus |
-|---|---:|---:|
-| A1 — Pure Opus 100 | $532.61 | — |
-| A2 — Pure Sonnet 100 | $105.42 | −80.2% (5× cheaper) |
-| B — Free-pick (Opus/Sonnet) | $328.74 | −38.3% (1.6× cheaper) |
-| **Z — Burnless** | **$33.35** | **−93.7% (16× cheaper)** |
+|Scenario                   |Mean      |vs Pure Opus            |
+|---------------------------|---------:|-----------------------:|
+|A1 — Pure Opus 100         |$532.61   |—                       |
+|A2 — Pure Sonnet 100       |$105.42   |−80.2% (5× cheaper)     |
+|B — Free-pick (Opus/Sonnet)|$328.74   |−38.3% (1.6× cheaper)   |
+|**Z — Burnless**           |**$33.35**|**−93.7% (16× cheaper)**|
 
-The interesting row is **B**. A developer alternating Opus and Sonnet ad-hoc — what most people actually do — costs **3× more than just sticking with Sonnet**, because every model switch invalidates the prefix cache. Burnless is 10× cheaper than B and 3× cheaper than the disciplined "all Sonnet" strategy, because Brain stays fixed (cache hot) while workers tier down to Haiku where they can.
+The interesting row is **B**. A developer alternating Opus and Sonnet ad-hoc — what most people actually do — costs **3× more than just sticking with Sonnet**, because every model switch invalidates the prefix cache. Burnless is 10× cheaper than B and 3× cheaper than the disciplined “all Sonnet” strategy, because Brain stays fixed (cache hot) while workers tier down to Haiku where they can.
 
 Reproduce: `python bench/v2.py --runs 30 --turns 100 --seed 42`. Zero cost, no key.
 
@@ -68,7 +68,7 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 **1. Treat the cost curve as math, not engineering.** Multi-turn agents replay full history every turn. Tokens billed across `N` turns sum to `Θ(N²)` — that is arithmetic on the pricing page, not a property of any SDK. Once the problem is stated as O(N²), the only useful question is what to truncate. Everything else follows.
 
-**2. Brain stores semantic capsules, not transcripts.** The Brain's conversation history holds ~80-char dense semantic summaries of each prior turn, not the raw exchange. Full output stays on disk, read on demand. This is the single change that makes the practical cost curve linear — every other layer compounds on top of that compressed-state baseline.
+**2. Brain stores semantic capsules, not transcripts.** The Brain’s conversation history holds ~80-char dense semantic summaries of each prior turn, not the raw exchange. Full output stays on disk, read on demand. This is the single change that makes the practical cost curve linear — every other layer compounds on top of that compressed-state baseline.
 
 **3. Shared prefix cache across models.** If two models from the same provider see a byte-identical system prompt with `cache_control` set, they hit the same prefix cache. Switching Opus → Sonnet mid-session does not invalidate it. Brain and Worker can be different models and still amortize the 23k-token system prompt at read price ($0.15/MTok) instead of write price ($15/MTok). The 100× spread is the lever.
 
@@ -76,7 +76,7 @@ The 88% number is an outcome. These are the calls that produced it, in the order
 
 **5. Determinism before LLMs.** Layer 1 of the compression stack is pure Python — no model call, zero latency, zero cost. Filler phrases stripped, whitespace normalized, before the encoder ever sees the text. Cheap stages run first for a reason.
 
-**6. Cache-emergent glossary, not only static dictionaries.** The semantic compression layer (Layer 2) uses session context as the working "dictionary." Abbreviations can emerge from the session — the encoder infers them from prior turns and applies them consistently. The protocol target is an append-only glossary with three layers: core terms, tenant/project terms, and session deltas proposed by the encoder and validated by Burnless. In v0.5 this is partially implemented through static minification and session context; the append-only glossary log is tracked in the protocol roadmap.
+**6. Cache-emergent glossary, not only static dictionaries.** The semantic compression layer (Layer 2) uses session context as the working “dictionary.” Abbreviations can emerge from the session — the encoder infers them from prior turns and applies them consistently. The protocol target is an append-only glossary with three layers: core terms, tenant/project terms, and session deltas proposed by the encoder and validated by Burnless. In v0.5 this is partially implemented through static minification and session context; the append-only glossary log is tracked in the protocol roadmap.
 
 **6b. Privacy is a consequence of architecture, not a flag.** Running everything on one cloud provider gives zero additional privacy — that provider sees everything at generation time. Privacy emerges from where you run each component. Local encoder/decoder: the cloud Maestro receives only capsules, never raw text. Local Maestro: cloud workers receive disconnected task fragments with no conversation context — they cannot reconstruct the session. All local: zero cloud exposure. The cost reduction (O(N²) → O(N)) applies at all four levels regardless of privacy configuration.
 
@@ -169,12 +169,12 @@ The O(N²) → O(N) math applies to any provider that exposes prompt caching: **
 
 Each layer is independent and additive. Layers 1, 3, and 4 are pure Python — zero API calls, zero cost. In v0.5, this is primarily a cost/context protocol. Treat privacy as experimental until `privacy.mode` lands.
 
-| Layer | What it does | Cost | When it fires |
-|-------|-------------|------|--------------|
-| **1. Deterministic minifier** | Strips universal filler phrases, normalizes whitespace | Zero — pure Python | Every turn, before encoder |
-| **2. Cache-emergent glossary** | Encoder compresses semantically. Abbreviations emerge from session context today; the roadmap makes them explicit append-only glossary deltas | ~$0.001/turn | `balanced` and `extreme` modes |
-| **3. Capsule envelope** | Scrambles the compressed text with a session key held in local memory by default. This is not enterprise-grade encryption yet | Zero — pure Python | Every turn after Layer 2 |
-| **4. Base64 pack** | Encodes the envelope to a portable ASCII capsule | Zero — pure Python | Every turn after Layer 3 |
+|Layer                         |What it does                                                                                                                                 |Cost              |When it fires                 |
+|------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|------------------|------------------------------|
+|**1. Deterministic minifier** |Strips universal filler phrases, normalizes whitespace                                                                                       |Zero — pure Python|Every turn, before encoder    |
+|**2. Cache-emergent glossary**|Encoder compresses semantically. Abbreviations emerge from session context today; the roadmap makes them explicit append-only glossary deltas|~$0.001/turn      |`balanced` and `extreme` modes|
+|**3. Capsule envelope**       |Scrambles the compressed text with a session key held in local memory by default. This is not enterprise-grade encryption yet                |Zero — pure Python|Every turn after Layer 2      |
+|**4. Base64 pack**            |Encodes the envelope to a portable ASCII capsule                                                                                             |Zero — pure Python|Every turn after Layer 3      |
 
 Capsule format v2: `burnless:v2:<session_id>:<key_id>:<base64_ciphertext>`
 
@@ -192,13 +192,13 @@ The 88% cost reduction in the benchmark comes primarily from the *architecture* 
 
 Three modes control the **cost × epistemic fidelity** trade-off — how much of the argumentative trajectory a session preserves:
 
-| Mode | Layers active | Anchor preserved | Friendly output | Savings | Use when |
-|---|---|---|---|---|---|
-| `light` | Minifier only (L1) | **Yes** | On | ~40% | Architecture debates, decisions that may need revisiting |
-| `balanced` *(default)* | Minifier + encoder (L1+L2) | No | On | ~88% | Project execution, multi-step implementation |
-| `extreme` | All layers (L1+L2+L3) | No | **Off** | ~93%+ | CI/CD pipelines, batch automation, no human in the loop |
+|Mode                  |Layers active             |Anchor preserved|Friendly output|Savings|Use when                                                |
+|----------------------|--------------------------|----------------|---------------|-------|--------------------------------------------------------|
+|`light`               |Minifier only (L1)        |**Yes**         |On             |~40%   |Architecture debates, decisions that may need revisiting|
+|`balanced` *(default)*|Minifier + encoder (L1+L2)|No              |On             |~88%   |Project execution, multi-step implementation            |
+|`extreme`             |All layers (L1+L2+L3)     |No              |**Off**        |~93%+  |CI/CD pipelines, batch automation, no human in the loop |
 
-**Anchor preserved** means the Brain's capsules retain enough argumentative structure that prior decisions remain revisable — you can genuinely reconsider, not just append. `balanced` discards the trajectory and keeps only the semantic result: the Brain knows *what* was decided, not *why*. Workers are always epistemically pure regardless of mode — they receive a clean task without the Brain's debate history.
+**Anchor preserved** means the Brain’s capsules retain enough argumentative structure that prior decisions remain revisable — you can genuinely reconsider, not just append. `balanced` discards the trajectory and keeps only the semantic result: the Brain knows *what* was decided, not *why*. Workers are always epistemically pure regardless of mode — they receive a clean task without the Brain’s debate history.
 
 ```yaml
 compression:
@@ -217,13 +217,13 @@ The formal derivation of why capsule compression reduces both cost *and* anchori
 
 **Capsule.** The compact handoff between turns. The Brain reads the capsule; the full log stays on disk and is read on demand. This is what flips the cost curve from quadratic to linear.
 
-**Shared cache, kept hot by architecture.** Brain and Worker use a byte-identical persistent prefix marked with the provider's prompt-caching directive (Anthropic: `cache_control: {"type": "ephemeral", "ttl": "1h"}` — 1h, not the 5min default). The session is **append-only on disk** (`.burnless/maestro_session.jsonl`): every turn extends the message array without rewriting earlier blocks, so the cached prefix stays bit-identical and lookups hit. Persistent layers are treated as immutable blocks: protocol header, glossary/schema, project memory/plan, frozen capsule blocks, hot tail, new user capsule. Burnless now decides capsule compaction in real time with break-even math: `K * r * (B - S) > W * S + M`, where `B` is old capsule tokens, `S` is compacted tokens, `K` is expected future turns, `r` is cache-read ratio, `W` is cache-write ratio, and `M` is compaction cost. No fixed “every N capsules” rule.
+**Shared cache, kept hot by architecture.** Brain and Worker use a byte-identical persistent prefix marked with the provider’s prompt-caching directive (Anthropic: `cache_control: {"type": "ephemeral", "ttl": "1h"}` — 1h, not the 5min default). The session is **append-only on disk** (`.burnless/maestro_session.jsonl`): every turn extends the message array without rewriting earlier blocks, so the cached prefix stays bit-identical and lookups hit. Persistent layers are treated as immutable blocks: protocol header, glossary/schema, project memory/plan, frozen capsule blocks, hot tail, new user capsule. Burnless now decides capsule compaction in real time with break-even math: `K * r * (B - S) > W * S + M`, where `B` is old capsule tokens, `S` is compacted tokens, `K` is expected future turns, `r` is cache-read ratio, `W` is cache-write ratio, and `M` is compaction cost. No fixed “every N capsules” rule.
 
 The one known gap: if a session sits idle > 1h with zero calls, the TTL expires and the next call pays write price again. A `--keepalive` mode (1-token ping every ~50min for daemon-style usage) is tracked next. See `MATH.md` §8 for the full derivation of why the cache_read assumption is load-bearing for the O(N) result.
 
 ## Real-World Usage
 
-The most honest benchmark is the author's own API bill.
+The most honest benchmark is the author’s own API bill.
 
 In 6 days of building Burnless *without* the protocol: **97% of a weekly Anthropic 5× Max quota consumed.**
 
@@ -233,15 +233,17 @@ That is a **~16× real-world reduction** in API consumption, on the most intense
 
 The 12-turn session produced this cache trace:
 
-| Turn | Saved vs. full input |
-|------|---------------------|
-| 1 | 0% (anchor write — 2,435 tokens cached) |
-| 2 | 90% |
-| 3 | 99% |
-| 4–12 | 72–99% per turn |
-| **Overall** | **~39% tokens avoided** |
+|Turn       |Saved vs. full input                   |
+|-----------|---------------------------------------|
+|1          |0% (anchor write — 2,435 tokens cached)|
+|2          |90%                                    |
+|3          |99%                                    |
+|4–12       |72–99% per turn                        |
+|**Overall**|**~39% tokens avoided**                |
 
 The anchor pays for itself by turn 2. Every subsequent turn reads from cache at ~10× cheaper than fresh input.
+
+**Simulation calibration.** The Monte Carlo simulation (`bench/v2.py`) independently reproduces the ~16× number using parameters derived from the real session. When a simulation reproduces the empirical result, that is calibration, not coincidence. To contest the number: run `bench/v2.py --runs 100 --turns 100` with your own parameters and open an issue with the JSON from `bench/results/`.
 
 ## Benchmark
 
@@ -282,14 +284,14 @@ State lives entirely under `.burnless/` in your project. No hosted backend.
 
 Burnless is not a competing orchestration framework — it is an optimization layer that sits *under* your existing agent logic. The distinction matters:
 
-| | LangChain / CrewAI / AutoGen | Burnless |
-|---|---|---|
-| **Primary focus** | Agent connectivity and orchestration | Cost reduction and cache efficiency |
-| **Memory model** | Sliding window or RAG | Compact capsules, Brain-led |
-| **Cost shape** | `Θ(N²)` — grows quadratically | Practically linear for multi-turn sessions |
-| **Dependencies** | Heavy libraries, many abstractions | Lightweight CLI (`pip install burnless`) |
-| **Hosting** | Local or cloud | 100% self-hosted — zero data retention |
-| **Provider lock-in** | Varies | None — any CLI, any provider, any model |
+|                    |LangChain / CrewAI / AutoGen        |Burnless                                  |
+|--------------------|------------------------------------|------------------------------------------|
+|**Primary focus**   |Agent connectivity and orchestration|Cost reduction and cache efficiency       |
+|**Memory model**    |Sliding window or RAG               |Compact capsules, Brain-led               |
+|**Cost shape**      |`Θ(N²)` — grows quadratically       |Practically linear for multi-turn sessions|
+|**Dependencies**    |Heavy libraries, many abstractions  |Lightweight CLI (`pip install burnless`)  |
+|**Hosting**         |Local or cloud                      |100% self-hosted — zero data retention    |
+|**Provider lock-in**|Varies                              |None — any CLI, any provider, any model   |
 
 You can wrap a LangChain agent as a Worker. The Brain→Worker pattern is compatible with any existing agent framework — Burnless manages the context budget and cache strategy; your agent handles the task logic.
 
@@ -299,7 +301,7 @@ You can wrap a LangChain agent as a Worker. The Brain→Worker pattern is compat
 
 Issues, PRs, and benchmark contestation are all welcome. The benchmark script is intentionally short and dependency-light so you can read it end-to-end and disagree with concrete numbers. If your workload produces a different ratio, open an issue with the JSON from `bench/results/` — that is exactly the conversation worth having.
 
-## Status — what works today, what's roadmap
+## Status — what works today, what’s roadmap
 
 The architecture is provider-agnostic by design. Current implementation status:
 
@@ -315,6 +317,6 @@ Honest about gaps. PRs welcome — especially for the OpenAI/Gemini Brain adapte
 
 MIT. See `LICENSE`.
 
----
+-----
 
 Repo: `github.com/rudekwydra/burnless`
