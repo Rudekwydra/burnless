@@ -82,6 +82,9 @@ DEFAULT_CONFIG: dict = {
         "raw_retention": "plain",  # current default: plain | none | encrypted (planned)
         "key_store": "memory",     # memory | local (planned for audit mode)
     },
+    "display": {
+        "progress_detail": "brief",  # minimal | brief | full
+    },
 }
 
 

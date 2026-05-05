@@ -6,6 +6,8 @@ import io
 import json
 import os
 import sys
+import threading
+import time as _time
 from pathlib import Path
 
 try:
@@ -294,20 +296,60 @@ def _continue(p: dict[str, Path], user_text: str) -> bool:
 
 
 def _run(p: dict[str, Path], user_text: str, did: str, *, prefix: str = "") -> bool:
-    mode = "watch" if sys.stdout.isatty() else "plain"
-    rc = cli_mod.cmd_run(
-        argparse.Namespace(
-            id=did,
-            dry_run=False,
-            timeout=600,
-            mode=mode,
-            maestro=False,
-            no_maestro=False,
+    if prefix:
+        print(prefix)
+
+    # Ephemeral spinner: writes to the real fd-1 so it survives _capture's redirect.
+    _real_out = sys.__stdout__
+    _is_tty = _real_out is not None and hasattr(_real_out, "isatty") and _real_out.isatty()
+
+    if not _is_tty:
+        # Non-tty (tests, pipes, CI): print a static marker that _capture won't swallow.
+        print("[investigando...]")
+        _stop_ev: threading.Event | None = None
+        _spinner_t: threading.Thread | None = None
+    else:
+        _stop_ev = threading.Event()
+        _frames = ["|", "/", "-", "\\"]
+
+        def _spin() -> None:
+            i = 0
+            while not _stop_ev.wait(0.1):  # type: ignore[union-attr]
+                frame = _frames[i % len(_frames)]
+                assert _real_out is not None
+                _real_out.write(f"\r{frame} {did} investigando...")
+                _real_out.flush()
+                i += 1
+
+        _spinner_t = threading.Thread(target=_spin, daemon=True)
+        _spinner_t.start()
+
+    try:
+        _, rc = _capture(
+            cli_mod.cmd_run,
+            argparse.Namespace(
+                id=did,
+                dry_run=False,
+                timeout=600,
+                mode="plain",
+                progress=None,
+                maestro=False,
+                no_maestro=False,
+            ),
         )
-    ) or 0
+    finally:
+        if _stop_ev is not None:
+            _stop_ev.set()
+        if _spinner_t is not None:
+            _spinner_t.join(timeout=0.5)
+        if _is_tty and _real_out is not None:
+            _real_out.write("\r\033[K")
+            _real_out.flush()
+
     response = _friendly_run_result(p, did, rc)
     if prefix:
         response = f"{prefix}\n{response}"
+    print(response)
     chat_history.append(p["history"], user=user_text, burnless=response)
     return False
 
@@ -315,44 +357,21 @@ def _run(p: dict[str, Path], user_text: str, did: str, *, prefix: str = "") -> b
 def _friendly_run_result(p: dict[str, Path], did: str, rc: int) -> str:
     summary_path = p["temp"] / f"{did}.json"
     capsule_path = p["capsules"] / f"{did}.json"
-    m = _metrics(p)
-    if rc == 0 and summary_path.exists():
+    if summary_path.exists():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        nxt = summary.get("next") or _state(p).get("next") or "(none)"
+        status = str(summary.get("status") or ("OK" if rc == 0 else "PART")).upper()
         text = (summary.get("summary") or "").strip()
-        head = f"OK:{did}"
+        head = f"{status}:{did}"
         if text:
             head = f"{head}\n{text}"
         audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
-        if audit.get("status"):
-            head = f"{head}\nAudit: {audit.get('status')}"
-        if audit.get("feedback"):
-            head = f"{head}\nReason: {str(audit.get('feedback')).strip()[:180]}"
-        evidence = summary.get("evidence") if isinstance(summary.get("evidence"), list) else summary.get("validated")
-        if isinstance(evidence, list) and evidence:
-            head = f"{head}\nEvidence: {str(evidence[0]).strip()[:180]}"
-        return f"{head}\nNext: {nxt}\n\n{int(m.get('burnless_tokens', 0)):,} burnless tokens"
+        feedback = str(audit.get("feedback") or summary.get("next") or "").strip()
+        if status != "OK" and feedback:
+            head = f"{head}\nReason: {feedback[:180]}"
+        return head
     if summary_path.exists() or capsule_path.exists():
-        reason = ""
-        if summary_path.exists():
-            summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
-            feedback = str(audit.get("feedback") or summary.get("next") or "").strip()
-            if feedback:
-                reason = f"\nReason: {feedback[:180]}\n"
-        return (
-            "Worker failed.\n\n"
-            "I saved:\n"
-            "- raw log\n"
-            "- compact summary\n"
-            "- capsule\n\n"
-            f"{reason}"
-            "No burnless tokens were created from this capsule because the output was already short.\n\n"
-            "Suggested next step:\n"
-            f"fix {did}\n\n"
-            f"{int(m.get('burnless_tokens', 0)):,} burnless tokens"
-        )
-    return f"Worker failed before saving a capsule.\n\nSuggested next step:\nfix {did}"
+        return f"PART:{did}\nNeeds follow-up."
+    return f"ERR:{did}\nWorker failed before saving a summary."
 
 
 def _create_delegation(p: dict[str, Path], task: str, *, goal: str, tier: str | None) -> str:

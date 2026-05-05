@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.5] — 2026-05-05
+### Added
+- **Ephemeral progress display** for `burnless run` and the shell. Three modes:
+  - `minimal` — rotating spinner + phase label (`pensando/lendo/editando/testando/auditando/compactando`) on a single carriage-return line; no terminal-scroll history growth.
+  - `brief` (default) — Rich live panel that disappears after the worker finishes (transient); phase events fed from worker output.
+  - `full` — raw streaming, unchanged from previous behaviour.
+- `display.progress_detail: minimal|brief|full` config key in `.burnless/config.yaml` (default: `brief`).
+- `burnless run --progress minimal|brief|full` CLI flag; overrides the config key.
+- Shell spinner writes directly to the real `stdout` fd so it survives the internal `_capture` redirect.
+- 13 new unit tests covering `_detect_phase`, `_MinimalSpinner` non-tty path, config defaults, mode resolution precedence, and flag-overrides-config.
+
+## [0.6.4] — 2026-05-05
+### Changed
+- Public docs (README, llms.txt, site/llms.txt) rewritten for honest Free/Core scope: protocol layer, Brain Without Tools, workers, capsules, basic audit trail.
+- Removed marketing terms "self-healing" and "process audit loop" from audit loop descriptions; behavior described accurately.
+- site/index.html: Supabase credentials replaced with configuration placeholders — no secrets in the public repo.
+
 ## [0.6.3] — 2026-05-04
 ### Changed
 - TCP/IP framing propagated to all public-facing surfaces: pyproject.toml

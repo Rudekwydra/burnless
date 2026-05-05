@@ -190,7 +190,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("  Likely created by `burnless setup` (which already runs init).")
         print("  Try `burnless` to enter the shell, or `--force` to re-init from scratch.")
         return 0
-    for key in ("delegations", "logs", "temp", "capsules", "archive", "chat"):
+    for key in ("delegations", "logs", "temp", "capsules", "archive", "chat", "runs"):
         p[key].mkdir(parents=True, exist_ok=True)
     config_mod.write_default(p["config"])
     cfg = config_mod.load(p["config"])
@@ -264,7 +264,6 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
-    state = state_mod.load(p["state"])
     metrics = metrics_mod.load(p["metrics"])
     text = args.text
     tier_override = args.tier
@@ -295,7 +294,7 @@ def cmd_delegate(args: argparse.Namespace) -> int:
         tier, modulation_reason = routing_mod.modulate_by_compression(tier, kw, comp_mode)
     agent_cfg = cfg["agents"][tier]
 
-    did = state_mod.next_delegation_id(state)
+    did = state_mod.alloc_delegation_id(p["state"])
     goal = args.goal or text
     success = args.success or "task completed; final JSON block emitted as required."
     body = deleg_mod.render_delegation(
@@ -309,6 +308,7 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     )
     deleg_path = p["delegations"] / f"{did}.md"
     deleg_mod.write_delegation(deleg_path, body)
+    state = state_mod.load(p["state"])
     state["last_delegation"] = did
     state_mod.save(p["state"], state)
 
@@ -374,7 +374,32 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     log_path = p["logs"] / f"{did}.log"
     bt_before = metrics_mod.load(p["metrics"])["burnless_tokens"]
-    run_mode = getattr(args, "mode", "plain") or "plain"
+    # Mode resolution: --progress > config display.progress_detail > legacy --watch/--quiet/--full
+    progress_arg = getattr(args, "progress", None)
+    if progress_arg:
+        run_mode = progress_arg
+    else:
+        legacy_mode = getattr(args, "mode", None)
+        if legacy_mode and legacy_mode != "plain":
+            run_mode = legacy_mode
+        else:
+            display_cfg = cfg.get("display", {}).get("progress_detail", "brief")
+            run_mode = display_cfg if display_cfg in {"minimal", "brief", "full", "watch", "quiet", "plain"} else "brief"
+
+    # Persist a lightweight run snapshot before handing off to the worker.
+    runs_dir = p["runs"]
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    run_plan = {
+        "id": did,
+        "tier": tier,
+        "agent": agent_cfg.get("name"),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "delegation": str(p["delegations"] / f"{did}.md"),
+    }
+    (runs_dir / f"{did}.plan.json").write_text(
+        json.dumps(run_plan, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
     use_maestro = _should_use_maestro_backend(args, cfg, tier)
     result: dict | None = None
@@ -511,58 +536,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     state["next"] = capsule.next or None
     state_mod.save(p["state"], state)
 
-    # Roundtrip decode: capsule → natural prose (Haiku, voice_match).
-    # Brain sees ~100-200 tokens of decoded prose instead of raw worker stdout.
-    decoded_result: str | None = None
-    no_decode = getattr(args, "no_decode", False)
-    if not no_decode and _load_anthropic_key():
-        try:
-            from .codec.decoder import decode as _decode
-            cap_lines = [f"{capsule.id} :: {capsule.status} {capsule.objective}"]
-            if capsule.files:
-                cap_lines.append("files: " + ", ".join(capsule.files[:4]))
-            if capsule.decisions:
-                cap_lines.append("decided: " + "; ".join(capsule.decisions[:2]))
-            if capsule.errors:
-                cap_lines.append("errors: " + "; ".join(capsule.errors[:2]))
-            if capsule.next:
-                cap_lines.append(f"next: {capsule.next}")
-            cap_text = "\n".join(cap_lines)
-            decoded_result = _decode(cap_text, project_root=root.parent, voice_sample=goal)
-        except Exception:
-            pass
-
-    bt = metrics_mod.load(p["metrics"])["burnless_tokens"]
+    # Short output — details via `burnless read/log/capsule/metrics`
     status_str = summary.get("status", "?")
-    next_str = capsule.next or "(none)"
-    audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
-    audit_status = audit.get("status")
-    evidence = _summary_evidence(summary)
-
-    if decoded_result:
-        print(f"\n── Result ──\n{decoded_result}\n")
-    elif status_str == "OK":
-        print(f"\nOK:{did}")
-        if summary.get("summary"):
-            print(str(summary.get("summary")))
-        if audit_status:
-            print(f"Audit: {audit_status}")
-        if evidence:
-            print(f"Evidence: {evidence[0]}")
-        print(f"Next: {next_str}")
-    elif interrupted:
-        print("\nWorker stopped by user.")
-    elif status_str == "BLK":
-        print(f"\nBLK:{did}")
-        print("\nWorker blocked — task needs more context to proceed.")
-        print(f"\nSuggested: fix {did}")
+    if interrupted:
+        print("Worker stopped by user.")
     else:
-        print(f"\nERR:{did}")
-        print("\nWorker failed.")
-        print(f"\nSuggested: fix {did}")
-    if savings["saved_tokens"] > 0:
-        print(f"\nCapsule created. Saved {savings['saved_tokens']} burnless tokens.")
-    print(f"\n{bt:,} burnless tokens")
+        head = f"{status_str}:{did}"
+        summary_text = (summary.get("summary") or "").strip()
+        if summary_text:
+            head = f"{head}\n{summary_text}"
+        if status_str != "OK":
+            audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+            feedback = str(audit.get("feedback") or summary.get("next") or "").strip()
+            if feedback:
+                head = f"{head}\nReason: {feedback[:180]}"
+        print(head)
     return 0 if status_str == "OK" else 1
 
 
@@ -1367,6 +1355,12 @@ def build_parser() -> argparse.ArgumentParser:
     modes.add_argument("--quiet", action="store_const", const="quiet", dest="mode", help="show one-line running status")
     modes.add_argument("--full", action="store_const", const="full", dest="mode", help="stream raw output in real time")
     sp.set_defaults(mode="plain")
+    sp.add_argument(
+        "--progress",
+        choices=["minimal", "brief", "full"],
+        default=None,
+        help="progress detail level: minimal (spinner+phase), brief (ephemeral panel), full (raw stream). Overrides display.progress_detail config.",
+    )
     sp.set_defaults(func=cmd_run)
 
     sp = sub.add_parser("status", help="show project state + headline metric")

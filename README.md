@@ -299,7 +299,9 @@ Raw results land in `bench/results/run_<timestamp>.json` for inspection.
 burnless                     # interactive shell (Brain)
 burnless plan "<objective>"  # write a plan to .burnless/maestro.md
 burnless delegate "<task>"   # create a delegation, route to a tier
-burnless run d001            # execute it (worker streams to live panel)
+burnless run d001            # execute it — ephemeral progress panel by default
+burnless run d001 --progress minimal   # spinner + phase label only (no scroll history)
+burnless run d001 --progress full      # raw streaming output
 burnless status              # current plan + open delegations
 burnless metrics             # token counter + audit ledger
 ```
@@ -339,7 +341,7 @@ The architecture is provider-agnostic by design. Current implementation status:
 
 - ✅ **Workers**: shell out to **any CLI** (`claude`, `codex`, `openai`, `gemini`, `ollama`, anything). Configure per tier in `config.yaml`. Works today.
 - ✅ **Routing, capsules, exec_log, three compression layers, shared system prompt**: provider-neutral, work today.
-- ✅ **Audit loop**: every Worker execution requires structured JSON output + automatic Haiku audit before Maestro is notified. Self-healing: missing JSON triggers automatic re-delegation.
+- ✅ **Audit loop**: every Worker execution requires structured JSON output + automatic Haiku audit before Maestro is notified. Missing JSON triggers automatic re-delegation to the Worker.
 - ✅ **Reference benchmark**: uses Anthropic SDK because their cache pricing is published and easiest to reproduce. The math reproduces wherever a provider exposes prompt caching.
 - ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. `burnless run` uses your configured Worker CLI by default so filesystem tasks get the tools you configured; the in-process Maestro run backend is experimental and opt-in via `--maestro`.
 - ✅ **PyPI release**: `pip install burnless` — version 0.6.3 live at https://pypi.org/project/burnless/.
