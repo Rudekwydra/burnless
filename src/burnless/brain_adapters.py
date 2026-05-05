@@ -35,6 +35,10 @@ class BrainAdapter:
     capabilities: BrainCapabilities = BrainCapabilities()
     status: str = "available"
     note: str = ""
+    api_key_env: str = ""
+    base_url: str = ""
+    default_model: str = ""
+    supports_thinking: bool = False
 
 
 class BrainRunner(Protocol):
@@ -60,7 +64,81 @@ def current_anthropic_adapter(model: str) -> BrainAdapter:
         ),
         status="active",
         note="Current Brain adapter; runs in-process through the Anthropic SDK.",
+        api_key_env="ANTHROPIC_API_KEY",
+        supports_thinking=True,
+        default_model=DEFAULT_ANTHROPIC_MODELS[0],
     )
+
+
+def openai_adapter(model: str | None = None) -> BrainAdapter:
+    chosen = model or "gpt-4o"
+    return BrainAdapter(
+        key="openai",
+        label="OpenAI",
+        kind="openai",
+        api_key_env="OPENAI_API_KEY",
+        supports_thinking=False,
+        default_model="gpt-4o",
+        models=(chosen, "o3-mini", "o1"),
+        capabilities=BrainCapabilities(
+            single_shot=True,
+            interactive=True,
+            streaming=True,
+            delegation=True,
+        ),
+    )
+
+
+def gemini_adapter(model: str | None = None) -> BrainAdapter:
+    chosen = model or "gemini-2.5-pro"
+    return BrainAdapter(
+        key="gemini",
+        label="Gemini",
+        kind="gemini",
+        api_key_env="GEMINI_API_KEY",
+        supports_thinking=False,
+        default_model="gemini-2.5-pro",
+        models=(chosen, "gemini-2.0-flash"),
+        capabilities=BrainCapabilities(
+            single_shot=True,
+            interactive=True,
+            streaming=True,
+            delegation=True,
+        ),
+    )
+
+
+def openrouter_adapter(model: str | None = None) -> BrainAdapter:
+    chosen = model or "anthropic/claude-sonnet-4"
+    return BrainAdapter(
+        key="openrouter",
+        label="OpenRouter",
+        kind="openrouter",
+        api_key_env="OPENROUTER_API_KEY",
+        base_url="https://openrouter.ai/api/v1",
+        supports_thinking=False,
+        default_model="anthropic/claude-sonnet-4",
+        models=(chosen,),
+        capabilities=BrainCapabilities(
+            single_shot=True,
+            interactive=True,
+            streaming=True,
+            delegation=True,
+        ),
+    )
+
+
+def load_adapter(cfg: dict, model_hint: str) -> BrainAdapter:
+    kind = cfg.get("brain_adapter", "anthropic")
+    if kind == "anthropic":
+        return current_anthropic_adapter(model_hint)
+    if kind == "openai":
+        return openai_adapter(model_hint)
+    if kind == "gemini":
+        return gemini_adapter(model_hint)
+    if kind == "openrouter":
+        return openrouter_adapter(model_hint)
+    raise NotImplementedError(f"Unknown brain_adapter kind: {kind!r}")
 
 
 def generic_cli_adapter(name: str, command: str, *, tier: str | None = None) -> BrainAdapter:
@@ -140,6 +218,10 @@ def slash_commands(model: str) -> tuple[str, ...]:
         f"/model {model}",
         "/workers",
         "/native",
+        "/keepalive",
+        "/keepalive status",
+        "/keepalive on",
+        "/keepalive off",
         "/clear",
         "/exit",
     )
@@ -155,6 +237,8 @@ def render_commands() -> str:
         "  /model <model>        alias for /maestro <model>\n"
         "  /workers              show configured worker adapters\n"
         "  /native               show planned Native mode launcher stub\n"
+        "  /keepalive [status]   show keepalive daemon status\n"
+        "  /keepalive on|off     enable or disable keepalive for this session\n"
         "  /clear                clear the screen\n"
         "  /exit                 leave the chat\n"
     )

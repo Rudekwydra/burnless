@@ -17,14 +17,22 @@ DEFAULT_METRICS: dict = {
     "dead_logs_isolated": 0,
     "expensive_model_calls_avoided": 0,
     "estimated_cost_avoided_usd": 0.0,
+    "keepalive_pings_total": 0,
+    "keepalive_pings_ok": 0,
+    "keepalive_pings_miss": 0,
+    "keepalive_pings_err": 0,
+    "keepalive_cost_usd": 0.0,
     "by_source": {
         "raw_logs_isolated": 0,
         "repeated_context_avoided": 0,
         "compact_state": 0,
         "expensive_model_avoided": 0,
         "capsule_compression": 0,
+        "keepalive_cache_renewed": 0,
     },
 }
+
+_CACHE_READ_USD_PER_TOKEN = 0.30 / 1_000_000  # Sonnet $0.30/MTok
 
 VALID_SOURCES = set(DEFAULT_METRICS["by_source"].keys())
 
@@ -101,6 +109,31 @@ def record(
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     return metrics
+
+
+def increment_keepalive_ping(
+    path: Path,
+    *,
+    status: str,
+    cost_usd: float,
+    cache_read_tokens: int,
+) -> None:
+    metrics = load(path)
+    metrics["keepalive_pings_total"] = int(metrics.get("keepalive_pings_total", 0)) + 1
+    if status == "ok":
+        metrics["keepalive_pings_ok"] = int(metrics.get("keepalive_pings_ok", 0)) + 1
+    elif status == "miss":
+        metrics["keepalive_pings_miss"] = int(metrics.get("keepalive_pings_miss", 0)) + 1
+    else:
+        metrics["keepalive_pings_err"] = int(metrics.get("keepalive_pings_err", 0)) + 1
+    metrics["keepalive_cost_usd"] = round(
+        float(metrics.get("keepalive_cost_usd", 0.0)) + cost_usd, 6
+    )
+    by_source = metrics.setdefault("by_source", {})
+    by_source["keepalive_cache_renewed"] = (
+        int(by_source.get("keepalive_cache_renewed", 0)) + cache_read_tokens
+    )
+    save(path, metrics)
 
 
 def _fresh() -> dict:

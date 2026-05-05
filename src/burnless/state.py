@@ -2,8 +2,8 @@ from __future__ import annotations
 import contextlib
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from datetime import datetime, timezone
 
 DEFAULT_STATE: dict = {
     "project": "Project",
@@ -14,6 +14,10 @@ DEFAULT_STATE: dict = {
     "active_tier": None,  # None = auto routing; "gold"|"silver"|"bronze" = sticky
     "brain_model": None,
     "updated_at": None,
+    "last_activity_ts": None,
+    "next_keepalive_ts": None,
+    "keepalive_last_ts": None,
+    "keepalive_last_status": None,
 }
 
 
@@ -78,3 +82,14 @@ def alloc_delegation_id(state_path: Path) -> str:
         did = next_delegation_id(st)
         save(state_path, st)
     return did
+
+
+def touch_activity(state: dict, idle_threshold_s: int = 3000, now: datetime | None = None) -> None:
+    """Mutate state in-place recording last activity and scheduling next keepalive.
+
+    Caller is responsible for calling save() after this.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    state["last_activity_ts"] = now.isoformat()
+    state["next_keepalive_ts"] = (now + timedelta(seconds=idle_threshold_s)).isoformat()

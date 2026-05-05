@@ -385,6 +385,8 @@ def _create_delegation(p: dict[str, Path], task: str, *, goal: str, tier: str | 
         goal=goal,
         success="task completed; final JSON block emitted as required.",
         tier=tier,
+        chain=None,
+        force=False,
     )
     _capture(cli_mod.cmd_delegate, args)
     return _state(p).get("last_delegation")
