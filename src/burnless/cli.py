@@ -23,6 +23,18 @@ from . import dashboard
 from . import live_runner
 from .estimator import estimate_tokens
 
+_THOUGHT_HINTS = (
+    "planeje", "plano", "plan", "design", "desenhe", "arquitetura", "architecture",
+    "decida", "decidir", "decision", "analise", "análise", "analyze", "review",
+    "investigue", "investigar", "inspect", "study", "estude", "spec", "brief",
+    "proposta", "proposal", "brainstorm", "ideia", "idea",
+)
+_EXECUTION_HINTS = (
+    "implemente", "implementar", "fix", "corrija", "corrigir", "patch", "test",
+    "teste", "write", "escreva", "editar", "edit", "create", "criar", "run",
+    "execute", "executar", "validate", "validar",
+)
+
 MAESTRO_TIER_MODEL = {
     "gold": "claude-opus-4-7",
     "silver": "claude-sonnet-4-6",
@@ -299,11 +311,13 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     did = state_mod.alloc_delegation_id(p["state"])
     goal = args.goal or text
     success = args.success or "task completed; final JSON block emitted as required."
+    kind_hint = _infer_kind_hint(text)
     body = deleg_mod.render_delegation(
         delegation_id=did,
         goal=goal,
         task=text,
         success=success,
+        kind_hint=kind_hint,
         agent_name=agent_cfg["name"],
         tier=tier,
         routed_by=kw,
@@ -452,22 +466,31 @@ def cmd_run(args: argparse.Namespace) -> int:
     extracted_json = deleg_mod.extract_result_json(result.get("stdout", ""))
     if extracted_json is not None:
         summary = extracted_json
+        summary["kind"] = _normalize_report_kind(summary.get("kind") or summary.get("report_kind") or _infer_kind_hint(prompt))
         _ev = summary.get("evidence")
         if not isinstance(_ev, list) or not _ev:
-            print("EVIDENCE_MISSING", file=sys.stderr)
-            _retry_msg = (
-                "\n\n---\nSua resposta não incluiu o campo evidence. "
-                "evidence é obrigatório. Inclua: comando exato executado, "
-                "path verificado, saída observada. Campo vazio = tarefa incompleta."
-            )
-            _retry_result = agents_mod.run(
-                agent_cfg, prompt + _retry_msg, timeout=args.timeout, cwd=root.parent
-            )
-            with log_path.open("a", encoding="utf-8") as _lf:
-                _lf.write("\n\n--- EVIDENCE_RETRY ---\n" + _retry_result.get("stdout", "") + "\n")
-            _retry_json = deleg_mod.extract_result_json(_retry_result.get("stdout", ""))
-            if _retry_json is not None:
-                summary = _retry_json
+            if summary["kind"] == "thought":
+                summary["status"] = str(summary.get("status") or "OK").upper()
+                summary.setdefault("validated", [])
+                summary.setdefault("files_touched", [])
+                summary.setdefault("evidence", [])
+                summary.setdefault("issues", [])
+            else:
+                print("EVIDENCE_MISSING", file=sys.stderr)
+                _retry_msg = (
+                    "\n\n---\nSua resposta não incluiu o campo evidence. "
+                    "evidence é obrigatório para trabalho de execução. Inclua: comando exato executado, "
+                    "path verificado, saída observada. Campo vazio = tarefa incompleta."
+                )
+                _retry_result = agents_mod.run(
+                    agent_cfg, prompt + _retry_msg, timeout=args.timeout, cwd=root.parent
+                )
+                with log_path.open("a", encoding="utf-8") as _lf:
+                    _lf.write("\n\n--- EVIDENCE_RETRY ---\n" + _retry_result.get("stdout", "") + "\n")
+                _retry_json = deleg_mod.extract_result_json(_retry_result.get("stdout", ""))
+                if _retry_json is not None:
+                    summary = _retry_json
+                    summary["kind"] = _normalize_report_kind(summary.get("kind") or summary.get("report_kind") or _infer_kind_hint(prompt))
     elif backend_used == "maestro" and result["returncode"] == 0 and not interrupted:
         # Maestro mode: assistant text without explicit JSON still counts as OK.
         snippet = (result.get("stdout") or "").strip().splitlines()
@@ -475,6 +498,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         summary = {
             "id": did,
             "status": "OK",
+            "kind": _infer_kind_hint(prompt),
             "summary": first_line[:160] or "Maestro turn completed.",
             "files_touched": [],
             "validated": [],
@@ -497,6 +521,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         summary = {
             "id": did,
             "status": _status,
+            "kind": _infer_kind_hint(prompt),
             "summary": _summary,
             "files_touched": [],
             "validated": [],
@@ -664,7 +689,22 @@ def _audit_summary_evidence(
     summary = dict(summary)
     status = str(summary.get("status") or "").upper()
     summary["status"] = status or summary.get("status")
+    kind = _normalize_report_kind(summary.get("kind") or summary.get("report_kind") or _infer_kind_hint(prompt))
+    summary["kind"] = kind
     evidence = _summary_evidence(summary)
+    if kind == "thought" and not evidence:
+        audit = {
+            "status": "SKIPPED",
+            "summary": "Thought-only report; execution evidence not required.",
+            "evidence_checked": [],
+            "issues": [],
+            "auditor_tier": None,
+            "auditor_name": None,
+            "attempted_tiers": [],
+            "attempted_auditors": [],
+        }
+        summary["audit"] = audit
+        return summary
     if status == "OK" and not evidence:
         summary["status"] = "PART"
         _append_issue(summary, "missing_evidence")
@@ -796,6 +836,26 @@ Return only a final JSON block:
 }}
 ```
 """
+
+
+def _infer_kind_hint(text: str) -> str:
+    low = text.lower()
+    thought_score = sum(1 for hint in _THOUGHT_HINTS if hint in low)
+    exec_score = sum(1 for hint in _EXECUTION_HINTS if hint in low)
+    if thought_score > exec_score:
+        return "thought"
+    if exec_score > thought_score:
+        return "execution"
+    return "execution"
+
+
+def _normalize_report_kind(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"thought", "thinking", "design", "plan", "analysis"}:
+        return "thought"
+    if text in {"execution", "feito", "done", "implemented"}:
+        return "execution"
+    return "execution"
 
 
 def cmd_status(args: argparse.Namespace) -> int:

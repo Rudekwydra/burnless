@@ -359,9 +359,10 @@ def _friendly_run_result(p: dict[str, Path], did: str, rc: int) -> str:
     capsule_path = p["capsules"] / f"{did}.json"
     if summary_path.exists():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        kind = str(summary.get("kind") or summary.get("report_kind") or "execution").strip().lower()
         status = str(summary.get("status") or ("OK" if rc == 0 else "PART")).upper()
         text = (summary.get("summary") or "").strip()
-        head = f"{status}:{did}"
+        head = f"{'THOUGHT' if kind == 'thought' and status == 'OK' else status}:{did}"
         if text:
             head = f"{head}\n{text}"
         audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}

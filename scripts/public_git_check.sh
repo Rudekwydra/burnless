@@ -40,6 +40,8 @@ tracked_private="$(
     '.pypirc' '*.key' '*.pem' '*.p12' '*.p8' \
     'docs/ops' 'docs/ops/**' \
     '_design/blindless' '_design/blindless/**' \
+    '_design/evidence_rubrica.md' '_design/warm_cache_measurement.md' \
+    'OPERATING_PROFILE.md' 'soul.md' \
     'LAUNCH_PACKAGE.md' 'PITCH_PT.md' \
     2>/dev/null | grep -vx '.env.example' || true
 )"

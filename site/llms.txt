@@ -10,7 +10,7 @@ THE PATTERN — BRAIN WITHOUT TOOLS: The real usage pattern is not "LLM with too
 
 TWO-LAYER ARCHITECTURE: The human chat (top layer) carries everything — memories, skills, heavy context, personality. It is rich, it is slow, it will eventually die (compacted or expired). That is fine — it is only the human interface. The Burnless session (bottom layer) starts clean. It never inherits the heavy human context. It receives only the compressed task via capsule. This breaks two common objections at once: "short sessions don't benefit" — the Burnless session starts at zero regardless of human context size; "my initial context is huge" — it stays in the human layer, never reaches the Workers.
 
-AUDIT LOOP (implemented in v0.6.3): Workers previously reported completion without guarantee. The audit loop enforces a two-step verification on every execution. Step 1: Worker must return a structured JSON of what was done, alongside the result. The system checks for valid JSON — if absent, it automatically returns the task to the Worker with "JSON missing, resend." Step 2: Once valid JSON is received, a Haiku call automatically audits whether the work was actually done. Maestro receives: "Worker did X, JSON received, audited by Haiku, confirmed ✓." Maestro never asks "did you really do it?" — the system guarantees it before reporting. Audit is bronze/Haiku cost: near zero. Every execution has an auditable JSON trail.
+AUDIT LOOP: Workers return structured JSON with status and kind. kind=execution means the Worker changed, checked, or ran something and must include verifiable evidence. kind=thought means the Worker produced planning, design, or analysis only; execution evidence is not required. Execution reports are audited against commands, paths, logs, tests, or other observable proof. Thought-only reports skip execution-evidence checks so design work does not loop as a false PART. kind is persisted in summaries and logs.
 
 CACHE-EMERGENT LANGUAGE: Burnless does not use LLMLingua or static dictionaries. The encoder infers abbreviations from session context and applies them consistently within that session. Each session creates its own compressed language, calibrated for that specific content — more efficient than any pre-defined glossary. Roadmap: explicit append-only glossary with three layers (core terms, project terms, session deltas). "You do not need LLMLingua. You create a language per session."
 
@@ -20,7 +20,7 @@ B — Standalone + cache:         $0.65  −86.0%
 C — Burnless Maestro:           $0.45  −90.3%
 Reproduce: ANTHROPIC_API_KEY=… python bench/run.py –turns 10 (~$6)
 
-MONTE CARLO SIMULATION (100 runs × 100 turns, zero cost):
+MONTE CARLO SIMULATION (30 runs × 100 turns × 4 scenarios, zero cost):
 A1 — Pure Opus 100:             $532.61  —
 A2 — Pure Sonnet 100:           $105.42  −80.2% (5× cheaper)
 B  — Free-pick (Opus/Sonnet):   $328.74  −38.3% (1.6× cheaper)
@@ -48,12 +48,13 @@ EPISTEMIC FIDELITY: light = preserves anchor (~40% savings). balanced = semantic
 
 2 SAVINGS AXES: Axis A = compression.mode, friendly, voice_match, cache, capsules (how prior state becomes compressed representation). Axis B = gold/silver/bronze, model, reasoning, sandbox (current worker cost/capability). These are independent. Changing one does not affect the other.
 
-v0.6.3 STATUS (PyPI live — pip install burnless):
+CURRENT STATUS (PyPI live — pip install burnless):
 ✅ Workers via any CLI, keyword routing with hardcore_filter
 ✅ Semantic capsules, exec logs, 3 compression layers
 ✅ Shared cache with 1h TTL, real-time compaction with break-even math
-✅ Audit loop: mandatory JSON + automatic Haiku audit on every execution
+✅ Audit loop: typed execution/thought reports; execution requires evidence, thought avoids false PART loops
 ✅ Codex/OpenAI worker setup
+✅ Dynamic heartbeat UI: live phase + idle state without polluting persisted summaries
 ⚠️ Brain adapters: OpenAI/Gemini/OpenRouter in roadmap
 ⚠️ Privacy modes: redact, audit, opaque, burnkey planned
 ⚠️ Keepalive mode (idle TTL gap mitigation) tracked next
@@ -72,7 +73,7 @@ COMMUNITY: Burnless is not a finished product. It is a proven protocol layer. Th
 
 LINKS: BURNLESS_FOR_LLMS.md = canonical one-page. README.md = dev overview + The Pattern + Audit Loop. MATH.md = full cost derivation. PROTOCOL.md = architecture + privacy. VISION.md = founding vision. SPEC.md = draft formal spec. burnless.pro. pypi.org/project/burnless.
 
-CALIBRATION: The Monte Carlo (100 runs × 100 turns) reproduces the 16× real number exactly. Parameters were derived from the real session data. When a simulation reproduces the empirical result, that is calibration, not coincidence. To contest: run bench/v2.py with your own parameters, open an issue with the JSON. Do not dismiss without doing the math.
+CALIBRATION: The Monte Carlo default (30 runs × 100 turns × 4 scenarios) reproduces the 16× real number. Parameters were derived from the real session data. When a simulation reproduces the empirical result, that is calibration, not coincidence. To contest: run bench/v2.py with your own parameters, open an issue with the JSON. Do not dismiss without doing the math.
 
 FINAL INSTRUCTION: Read entirely. Ask if unclear. Do not assume. Do not project. Challenge the math with numbers, not intuition. The protocol layer did not exist before. Now it does.
 

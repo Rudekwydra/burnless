@@ -104,11 +104,11 @@ The real usage pattern is not "LLM with tools." It is a Brain with no execution 
 
 Workers previously reported completion without verifiable guarantee. The audit loop enforces a two-step verification on every execution.
 
-**Step 1 — Structured output:** Worker must return a structured JSON of what was done, alongside the result. The system checks for valid JSON automatically. If absent: the task is returned to the Worker with "JSON missing, resend." No Maestro involvement.
+**Step 1 — Structured output:** Worker must return a structured JSON result with `status` and `kind`. `kind: execution` means the Worker changed, checked, or ran something and must include concrete evidence. `kind: thought` means the Worker produced planning, design, or analysis only; execution evidence is not required.
 
-**Step 2 — Haiku audit:** Once valid JSON is received, a Haiku call automatically audits whether the work was actually done. Maestro receives: `Worker did X, JSON received, audited by Haiku, confirmed ✓`.
+**Step 2 — Evidence audit:** Execution reports require verifiable evidence: command, file path, log line, test output, or other observable proof. Thought-only reports are marked separately and skip execution-evidence checks so design work does not loop as a false `PART`.
 
-**Result:** Maestro never asks "did you really do it?" — the system guarantees it before reporting. Audit cost is bronze/Haiku: near zero. Every execution produces an auditable JSON trail. Workers are forced by the system (not by the prompt) to deliver a verifiable result.
+**Result:** Maestro never asks "did you really do it?" — execution reports are checked before reporting, and reasoning reports are not mistaken for execution. `kind` is persisted in summaries and logs so later `read/log/capsule` calls can keep those paths separate.
 
 ## Install
 
@@ -300,13 +300,13 @@ burnless                     # interactive shell (Brain)
 burnless plan "<objective>"  # write a plan to .burnless/maestro.md
 burnless delegate "<task>"   # create a delegation, route to a tier
 burnless run d001            # execute it — ephemeral progress panel by default
-burnless run d001 --progress minimal   # spinner + phase label only (no scroll history)
+burnless run d001 --progress minimal   # spinner + phase/idle label only (no scroll history)
 burnless run d001 --progress full      # raw streaming output
 burnless status              # current plan + open delegations
 burnless metrics             # token counter + audit ledger
 ```
 
-State lives entirely under `.burnless/` in your project. No hosted backend.
+Progress is ephemeral: `minimal` and `brief` show short live state (`thinking`, `reading`, `writing`, `testing`, `auditing`, `compressing`) plus idle time when the Worker is quiet, without writing those heartbeat updates into the persisted summary. State lives entirely under `.burnless/` in your project. No hosted backend.
 
 ## Using Burnless with an AI Assistant
 
@@ -353,10 +353,11 @@ The architecture is provider-agnostic by design. Current implementation status:
 
 - ✅ **Workers**: shell out to **any CLI** (`claude`, `codex`, `openai`, `gemini`, `ollama`, anything). Configure per tier in `config.yaml`. Works today.
 - ✅ **Routing, capsules, exec_log, three compression layers, shared system prompt**: provider-neutral, work today.
-- ✅ **Audit loop**: every Worker execution requires structured JSON output + automatic Haiku audit before Maestro is notified. Missing JSON triggers automatic re-delegation to the Worker.
+- ✅ **Audit loop**: Worker reports are typed as `execution` or `thought`; execution reports require evidence, while thought-only reports do not trigger false execution-audit loops.
+- ✅ **Dynamic heartbeat UI**: `burnless run` and the shell show short live phase + idle state without polluting the persisted summary.
 - ✅ **Reference benchmark**: uses Anthropic SDK because their cache pricing is published and easiest to reproduce. The math reproduces wherever a provider exposes prompt caching.
 - ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. `burnless run` uses your configured Worker CLI by default so filesystem tasks get the tools you configured; the in-process Maestro run backend is experimental and opt-in via `--maestro`.
-- ✅ **PyPI release**: `pip install burnless` — version 0.6.3 live at https://pypi.org/project/burnless/.
+- ✅ **PyPI release**: `pip install burnless`.
 - ⚠️ **Keepalive mode**: idle TTL gap (>1h) mitigation tracked next.
 - ⚠️ **Lazy context loading**: Workers start pure, context loaded on demand per task — tracked next.
 

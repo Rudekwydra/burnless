@@ -319,7 +319,8 @@ $ burnless delegate <span class="a">"fix the failing tests"</span>
 $ burnless delegate <span class="a">"summarize the logs"</span>
    <span class="ok">→ d002 routed to bronze/haiku  (matched: summarize)</span>
 $ burnless run d002
-   <span class="ok">OK:d002 — cache_read=23,000 tokens (warm)</span></pre>
+   <span class="c">heartbeat: reading · idle 7s  (ephemeral)</span>
+   <span class="ok">OK:d002 — typed report + capsule saved</span></pre>
       <p class="small" style="margin-top:16px;">Gold/silver/bronze are quality/cost bands, not vendors. The default setup can mix Claude, Codex and Ollama; users can replace any tier in <code>.burnless/config.yaml</code>.</p>
       <p class="small" style="margin-top:8px;">Cache compaction is realtime ROI math: Burnless freezes immutable blocks and only creates a new super-capsule when future cache-read savings beat the write+compaction cost.</p>
     </div>
@@ -338,6 +339,8 @@ $ burnless run d002
             <li>Full CLI, runs locally</li>
             <li>Brain + Worker + capsule history</li>
             <li>Shared prefix cache, realtime capsule compaction</li>
+            <li>Typed execution/thought reports with evidence audit</li>
+            <li>Ephemeral heartbeat progress without scroll-history noise</li>
             <li>Local burnkey semantics planned in the protocol</li>
             <li>Provider-agnostic — any LLM as Brain or Worker</li>
             <li>Reproducible benchmark</li>

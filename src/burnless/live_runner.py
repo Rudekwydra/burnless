@@ -12,6 +12,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from .agents import AgentError, resolve_command
 
@@ -23,6 +24,16 @@ _PHASE_WORDS: dict[str, set[str]] = {
     "testando":    {"running", "tests", "test", "passed", "failed", "testando"},
     "auditando":   {"audit", "auditando"},
     "compactando": {"compress", "capsule", "compactando", "final json"},
+}
+
+# Maps internal Portuguese phase labels to the English labels shown in the UI.
+_EN_LABELS: dict[str, str] = {
+    "pensando":    "thinking",
+    "lendo":       "reading",
+    "editando":    "writing",
+    "testando":    "testing",
+    "auditando":   "auditing",
+    "compactando": "compressing",
 }
 
 
@@ -50,6 +61,7 @@ class _MinimalSpinner:
         self._did = delegation_id
         self._tier = tier
         self._phase = "pensando"
+        self._last_event = "starting"
         self._frame_i = 0
         self._enabled = sys.stdout.isatty()
 
@@ -57,7 +69,7 @@ class _MinimalSpinner:
         if not self._enabled:
             print(f"Running {self._did} ({self._tier})...", flush=True)
             return False
-        self._render()
+        self._render(idle_s=0.0)
         return True
 
     def stop(self) -> None:
@@ -69,21 +81,24 @@ class _MinimalSpinner:
         phase = _detect_phase(event)
         if phase != self._phase:
             self._phase = phase
+        self._last_event = event
         self._frame_i += 1
-        self._render()
+        self._render(idle_s=0.0)
 
-    def refresh(self, elapsed_s: float) -> None:
+    def refresh(self, elapsed_s: float, *, idle_s: float = 0.0) -> None:
         self._frame_i += 1
-        self._render()
+        self._render(idle_s=idle_s)
 
     def final(self, *, elapsed_s: float, **_) -> None:
         self.stop()
 
-    def _render(self) -> None:
+    def _render(self, *, idle_s: float) -> None:
         if not self._enabled:
             return
         frame = _SPINNER_FRAMES[self._frame_i % len(_SPINNER_FRAMES)]
-        sys.stdout.write(f"\r{frame} {self._did} {self._phase}...   ")
+        label = _EN_LABELS.get(self._phase, self._phase)
+        idle = f" · idle {_format_idle(idle_s)}" if idle_s >= 2.0 else ""
+        sys.stdout.write(f"\r{frame} {self._did} {label}{idle}...   ")
         sys.stdout.flush()
 
 
@@ -129,6 +144,7 @@ def run_with_live_panel(
     cwd: Path | None = None,
     tail_lines: int = 20,
     refresh_rate: float = 0.5,
+    phase_sink: Callable[[str], None] | None = None,
 ) -> RunResult:
     """Run an agent while saving output and showing mode-specific progress."""
     command = resolve_command(agent_cfg)
@@ -185,6 +201,7 @@ def run_with_live_panel(
         stale_worker = False
         last_useful_mono = start_mono
         last_render = start_mono
+        _last_sink_phase = "thinking"
         renderer = _WatchRenderer(
             enabled=mode in {"watch", "brief"},
             delegation_id=delegation_id,
@@ -229,6 +246,11 @@ def run_with_live_panel(
                                 minimal_spinner.emit(panel_event, now - start_mono)
                             else:
                                 renderer.emit(panel_event, now - start_mono)
+                            if phase_sink is not None:
+                                _new_phase = _EN_LABELS.get(_detect_phase(panel_event), "thinking")
+                                if _new_phase != _last_sink_phase:
+                                    phase_sink(_new_phase)
+                                    _last_sink_phase = _new_phase
                     log.write(f"[{stream}] {line}")
                     log.flush()
                     if mode == "full":
@@ -253,12 +275,13 @@ def run_with_live_panel(
                     if not renderer.refresh(
                         elapsed_s=now - start_mono,
                         recent=list(recent),
+                        idle_s=now - last_useful_mono,
                     ):
                         mode = "plain"
                     last_render = now
                 elif mode == "minimal" and now - last_render >= 0.1:
                     if minimal_spinner is not None:
-                        minimal_spinner.refresh(now - start_mono)
+                        minimal_spinner.refresh(now - start_mono, idle_s=now - last_useful_mono)
                     last_render = now
                 elif mode == "quiet" and now - last_render >= 10:
                     _render_quiet(
@@ -299,6 +322,7 @@ def run_with_live_panel(
                     command=command,
                     refresh_rate=refresh_rate,
                     event_filter=event_filter,
+                    phase_sink=phase_sink,
                 )
         except Exception:
             if mode in {"watch", "brief"}:
@@ -377,7 +401,10 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
     log_path = kwargs["log_path"]
     burnless_tokens = kwargs["burnless_tokens"]
     refresh_rate = kwargs["refresh_rate"]
+    phase_sink: Callable[[str], None] | None = kwargs.get("phase_sink")
+    last_sink_phase = "thinking"
     last_render = start_mono
+    last_useful_mono = start_mono
     renderer = _WatchRenderer(
         enabled=mode in {"watch", "brief"},
         delegation_id=delegation_id,
@@ -409,6 +436,7 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
                 stderr_parts.append(line)
             clean = line.rstrip("\n")
             if clean:
+                last_useful_mono = now
                 panel_event = event_filter.feed(clean)
                 if panel_event:
                     recent.append(panel_event)
@@ -416,6 +444,11 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
                         minimal_spinner2.emit(panel_event, now - start_mono)
                     else:
                         renderer.emit(panel_event, now - start_mono)
+                    if phase_sink is not None:
+                        new_phase = _EN_LABELS.get(_detect_phase(panel_event), "thinking")
+                        if new_phase != last_sink_phase:
+                            phase_sink(new_phase)
+                            last_sink_phase = new_phase
             log.write(f"[{stream}] {line}")
             log.flush()
             if mode == "full":
@@ -425,12 +458,12 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
         if proc.poll() is not None and events.empty():
             break
         if mode in {"watch", "brief"} and now - last_render >= refresh_rate:
-            if not renderer.refresh(elapsed_s=now - start_mono, recent=list(recent)):
+            if not renderer.refresh(elapsed_s=now - start_mono, recent=list(recent), idle_s=now - last_useful_mono):
                 mode = "plain"
             last_render = now
         elif mode == "minimal" and now - last_render >= 0.1:
             if minimal_spinner2 is not None:
-                minimal_spinner2.refresh(now - start_mono)
+                minimal_spinner2.refresh(now - start_mono, idle_s=now - last_useful_mono)
             last_render = now
         elif mode == "quiet" and now - last_render >= 10:
             _render_quiet(
@@ -504,6 +537,7 @@ class _WatchRenderer:
         self._transient = transient
         self._live = None
         self._using_rich = False
+        self._phase = "thinking"
 
     def start(self) -> bool:
         if not self.enabled:
@@ -520,7 +554,7 @@ class _WatchRenderer:
             if not console.is_terminal:
                 return False
             self._live = Live(
-                self._rich_renderable(0, [], "running"),
+                self._rich_renderable(0, [], "running", idle_s=0.0),
                 console=console,
                 refresh_per_second=4,
                 transient=self._transient,
@@ -538,12 +572,12 @@ class _WatchRenderer:
             self._live.stop()
             self._live = None
 
-    def refresh(self, *, elapsed_s: float, recent: list[str], status: str = "running") -> bool:
+    def refresh(self, *, elapsed_s: float, recent: list[str], status: str = "running", idle_s: float = 0.0) -> bool:
         if not self.enabled:
             return False
         if self._using_rich and self._live is not None:
             try:
-                self._live.update(self._rich_renderable(elapsed_s, recent, status))
+                self._live.update(self._rich_renderable(elapsed_s, recent, status, idle_s=idle_s))
                 return True
             except Exception:
                 self.stop()
@@ -552,22 +586,23 @@ class _WatchRenderer:
         return False
 
     def emit(self, event: str, elapsed_s: float) -> None:
-        if not self.enabled or self._using_rich:
+        if not self.enabled:
             return
+        self._phase = _EN_LABELS.get(_detect_phase(event), "thinking")
 
     def final(self, *, elapsed_s: float, recent: list[str], status: str) -> None:
         if not self.enabled:
             return
         if self._using_rich and self._live is not None:
             try:
-                self._live.update(self._rich_renderable(elapsed_s, recent, status))
+                self._live.update(self._rich_renderable(elapsed_s, recent, status, idle_s=0.0))
             except Exception:
                 pass
             finally:
                 self.stop()
                 sys.stdout.write("\n")
 
-    def _rich_renderable(self, elapsed_s: float, recent: list[str], status: str):
+    def _rich_renderable(self, elapsed_s: float, recent: list[str], status: str, *, idle_s: float = 0.0):
         from rich import box
         from rich.console import Group
         from rich.panel import Panel
@@ -575,11 +610,14 @@ class _WatchRenderer:
 
         body = recent[-self.tail_lines:] or ["Worker is starting..."]
         worker = Text("\n".join(body), no_wrap=False)
+        idle = f" · idle {_format_idle(idle_s)}" if idle_s >= 2.0 else ""
+        heartbeat = f"heartbeat: {self._phase}{idle}"
         return Group(
             "🔥 Burnless",
             "",
             f"{self.delegation_id} → {self.tier}/{self.agent}",
             f"status: {status}",
+            heartbeat,
             f"elapsed: {_format_elapsed(elapsed_s)}",
             f"log: {_display_path(self.log_path)}",
             "",
@@ -690,3 +728,11 @@ def _format_elapsed(seconds: float) -> str:
     if hours:
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
+
+
+def _format_idle(seconds: float) -> str:
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}s"
+    m, remainder = divmod(s, 60)
+    return f"{m}m {remainder}s"

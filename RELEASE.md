@@ -48,6 +48,17 @@ The script first runs `scripts/public_git_check.sh`, then reads the version from
 isolated sdist+wheel, and runs `twine check` against only that version's
 artifacts. No PyPI token is required for build/check.
 
+## Update Order
+
+When a Free/Core change ships, keep these in sync:
+
+1. code and tests in `src/burnless/` and `tests/`
+2. `CHANGELOG.md`
+3. `README.md`, `llms.txt`, `site/llms.txt`, `site/index.html`
+4. `RELEASE.md` if the build or deploy flow changed
+
+Do not publish a version bump without the matching changelog and public docs update.
+
 ## Public Git Check
 
 ```bash
