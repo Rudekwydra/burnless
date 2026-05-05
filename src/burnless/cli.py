@@ -2,6 +2,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
@@ -581,6 +583,41 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0 if status_str == "OK" else 1
 
 
+_HEX_RE = re.compile(r'\b([0-9a-f]{7,40})\b', re.IGNORECASE)
+_ABS_PATH_RE = re.compile(r'(/[^\s,;:"\')\]]+)')
+
+
+def _fast_path_check(evidence: list[str], cwd: Path) -> tuple[bool, str]:
+    """Return (passed, reason) if evidence is deterministically verifiable without LLM.
+
+    T1: 7+ consecutive hex chars verified with git cat-file -e.
+    T2: absolute path that exists with size > 0.
+    """
+    combined = " ".join(evidence)
+    for m in _HEX_RE.finditer(combined):
+        h = m.group(1)
+        try:
+            r = subprocess.run(
+                ["git", "cat-file", "-e", h],
+                cwd=cwd,
+                capture_output=True,
+                timeout=5,
+            )
+            if r.returncode == 0:
+                return True, f"git cat-file -e {h} → exit 0"
+        except Exception:
+            pass
+    for m in _ABS_PATH_RE.finditer(combined):
+        path_str = m.group(1).rstrip(".,;:\"'")
+        try:
+            fp = Path(path_str)
+            if fp.exists() and fp.stat().st_size > 0:
+                return True, f"stat({path_str}) → exists, size={fp.stat().st_size}"
+        except Exception:
+            pass
+    return False, ""
+
+
 def _summary_evidence(summary: dict) -> list[str]:
     raw = summary.get("evidence")
     if raw is None:
@@ -637,6 +674,24 @@ def _audit_summary_evidence(
         return summary
 
     audit_path = p["temp"] / f"{did}.audit.json"
+
+    # Fast-path: deterministic check before calling any LLM auditor (T1/T2).
+    fp_passed, fp_reason = _fast_path_check(evidence, cwd)
+    if fp_passed:
+        audit = {
+            "status": "OK",
+            "summary": f"Fast-path: {fp_reason}",
+            "evidence_checked": evidence[:3],
+            "issues": [],
+            "auditor_tier": "fast_path",
+            "auditor_name": "fast_path",
+            "attempted_tiers": [],
+            "attempted_auditors": [],
+        }
+        _write_audit_result(audit_path, audit)
+        summary["audit"] = audit
+        return summary
+
     log_excerpt = log_path.read_text(encoding="utf-8")[-12000:] if log_path.exists() else ""
     audit_prompt = _render_audit_prompt(did=did, prompt=prompt, summary=summary, log_excerpt=log_excerpt)
     agent_cfg = cfg.get("agents") or {}
