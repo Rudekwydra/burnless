@@ -1,6 +1,8 @@
 # Burnless
 
-**Intent-compressed intelligence orchestration.**
+**The TCP/IP for Agentic LLM Orchestration.**
+
+*Intent-compressed intelligence orchestration.*
 
 A maestro that orchestrates any LLM from any vendor. Multi-turn agent loops cost Θ(N²) by arithmetic — Burnless makes them practically linear by architecture.
 
@@ -305,7 +307,7 @@ The architecture is provider-agnostic by design. Current implementation status:
 - ✅ **Routing, capsules, exec_log, three compression layers, shared system prompt**: provider-neutral, work today.
 - ✅ **Reference benchmark**: uses Anthropic SDK because their cache pricing is published and easiest to reproduce. The math reproduces wherever a provider exposes prompt caching.
 - ⚠️ **`burnless brain` interactive command**: uses the Anthropic SDK in-process today. OpenAI, Gemini, and OpenRouter adapters are tracked next. `burnless run` uses your configured Worker CLI by default so filesystem tasks get the tools you configured; the in-process Maestro run backend is experimental and opt-in via `--maestro`.
-- ✅ **PyPI release**: `pip install burnless` — version 0.6.1 live at https://pypi.org/project/burnless/.
+- ✅ **PyPI release**: `pip install burnless` — version 0.6.3 live at https://pypi.org/project/burnless/.
 
 Honest about gaps. PRs welcome — especially for the OpenAI/Gemini Brain adapter.
 
