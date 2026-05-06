@@ -55,6 +55,22 @@ ministral-3:8b-cloud (   8B cloud)   1.30x  ████████████
 
 3. **Ministral is broken for this use case.** Even with `format: "json"`, `--prompt-style light`, and few-shot examples, Ministral 8B returned nested objects (`{"compressed": {"ação": "...", "motivo": {...}}}`), markdown-fenced JSON, and outright malformed JSON. **Don't use Mistral as the compression filter.** The fail-open path kicks in (passthrough), but you lose the compression on those samples.
 
+### What about more aggressive prompts? (negative findings)
+
+Two prompt variants were tested on `qwen2.5:7b-instruct` against the same 50-sample set, hoping to push compression past 2.5×:
+
+| Prompt style | Final ratio | Verdict |
+|---|---:|---|
+| `light` (1 example, minimal rules) | **2.50×** | sweet spot |
+| `ultra` (drop modifiers/clauses, keep only hard constraints) | 1.90× | **worse** — model interpreted percentages, error codes, and webhook names as "hard constraints" and preserved them in full |
+| `pivot_en` (compress AND translate to English) | 2.30× | **worse** — translation correctly saved tokens on verbs/articles, but the model wrote *prose* in English (descriptive sentences) instead of compressing further |
+
+Lesson: **more rules ≠ more compression** at small model scale. Qwen 7B follows light prompts best because there's less to interpret literally. The instinct to add "be more aggressive!" guard rails backfires — the model becomes more cautious about preserving anything that *might* be a constraint.
+
+This is a real "negative cisne" — counter-intuitive empirical finding. For the open-source filter (`examples/plugins/burnless-compress`), the `light` prompt is the recommended default. Advanced prompt strategies (mix-language, salience-conditional, ensemble) belong in Burnless Cloud where workload tuning is part of the offering.
+
+---
+
 The right axis is **family + size**, not size alone. Practical recommendation:
 
 | Filter destination | Recommended model | Rationale |
