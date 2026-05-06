@@ -532,6 +532,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 max_tokens=DEFAULT_MAX_TOKENS,
                 timeout_s=stale_timeout_s,
                 log_path=log_path,
+                cold_cache=getattr(args, "cold_cache", False),
             )
             backend_used = "cached_worker"
         except Exception as e:
@@ -1900,6 +1901,7 @@ def cmd_do(args: argparse.Namespace) -> int:
         maestro=False,
         no_maestro=False,
         no_cache_worker=False,
+        cold_cache=getattr(args, "cold_cache", False),
     )
     try:
         rc = cmd_run(run_args)
@@ -2098,6 +2100,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="force subprocess backend (claude -p) instead of CachedWorker API",
     )
     sp.add_argument(
+        "--cold-cache",
+        action="store_true",
+        dest="cold_cache",
+        help="inject a nonce into the system block to guarantee a cache miss (useful for cold-cache benchmarks)",
+    )
+    sp.add_argument(
         "--no-decode",
         action="store_true",
         help="skip Haiku roundtrip decode; print terse capsule status instead",
@@ -2185,6 +2193,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="mode_override",
         help="compression mode for this run only (does not modify config permanently)",
+    )
+    sp.add_argument(
+        "--cold-cache",
+        action="store_true",
+        dest="cold_cache",
+        help="inject a nonce to force cache miss — use for cold-cache benchmarks",
     )
     sp.set_defaults(func=cmd_do)
 
