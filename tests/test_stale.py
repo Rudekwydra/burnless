@@ -18,17 +18,23 @@ from burnless.live_runner import RunResult, _stop_process
 # ── 1. Config ────────────────────────────────────────────────────────────────
 
 
-def test_stale_timeout_seconds_in_default_config():
+def test_stale_timeout_seconds_not_in_default_config():
+    # stale_timeout_seconds was removed from DEFAULT_CONFIG so that
+    # _TIER_STALE_DEFAULTS (silver=600, gold=900) are the real fallback
+    # instead of a global 300 that overrides per-tier defaults.
     cfg = config.DEFAULT_CONFIG
-    assert "stale_timeout_seconds" in cfg.get("display", {}), (
-        "display.stale_timeout_seconds missing from DEFAULT_CONFIG"
+    assert "stale_timeout_seconds" not in cfg.get("display", {}), (
+        "display.stale_timeout_seconds must NOT be in DEFAULT_CONFIG — "
+        "use _TIER_STALE_DEFAULTS as fallback instead"
     )
-    assert cfg["display"]["stale_timeout_seconds"] == 300
 
 
-def test_stale_timeout_seconds_loaded_from_config(tmp_path: Path):
+def test_tier_stale_defaults_without_config(tmp_path: Path):
+    # With no config, resolve_stale_timeout uses _TIER_STALE_DEFAULTS
     cfg = config.load(tmp_path / "nonexistent.yaml")
-    assert cfg["display"]["stale_timeout_seconds"] == 300
+    assert config.resolve_stale_timeout(cfg, "silver") == 600
+    assert config.resolve_stale_timeout(cfg, "bronze") == 120
+    assert config.resolve_stale_timeout(cfg, "gold") == 900
 
 
 def test_stale_timeout_seconds_overridable(tmp_path: Path):
@@ -327,7 +333,7 @@ def test_stale_result_produces_part_with_stale_worker_issue(tmp_path: Path, monk
     monkeypatch.setattr(cli_mod.live_runner, "run_with_live_panel", fake_stale_runner)
 
     args = argparse.Namespace(
-        id=did, dry_run=False, timeout=30, mode="plain", maestro=False, no_maestro=False
+        id=did, dry_run=False, timeout=30, mode="plain", maestro=False, no_maestro=False, no_cache_worker=True
     )
     exit_code = cli_mod.cmd_run(args)
 
@@ -378,7 +384,7 @@ def test_stale_output_is_short(tmp_path: Path, monkeypatch, capsys):
     monkeypatch.setattr(cli_mod.live_runner, "run_with_live_panel", fake_stale_runner)
 
     args = argparse.Namespace(
-        id=did, dry_run=False, timeout=30, mode="plain", maestro=False, no_maestro=False
+        id=did, dry_run=False, timeout=30, mode="plain", maestro=False, no_maestro=False, no_cache_worker=True
     )
     cli_mod.cmd_run(args)
 
