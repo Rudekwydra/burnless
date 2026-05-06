@@ -179,16 +179,49 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def _normalize_legacy_tiers(data: dict, *, prefer_diamond: bool = False) -> None:
-    """Drop the legacy diamond key — it's not a real tier (dispatcher maps dia→silver).
-    Only migrates diamond→silver when silver isn't already defined.
+    """Handle the diamond tier key.
+
+    Legacy behaviour (pre-v0.7): diamond was an alias for the Codex/code
+    worker and got collapsed into silver. That migration is preserved when
+    diamond and silver share the same command (i.e. they are the same agent).
+
+    New behaviour: if diamond has a *different* command than silver it is a
+    real opt-in escalation tier (e.g. Opus as a explicit second-opinion tier
+    while gold is Sonnet). In that case diamond is kept as-is — it is never
+    auto-routed, only reachable via --tier diamond.
     """
     agents = data.get("agents")
-    if isinstance(agents, dict) and isinstance(agents.get("diamond"), dict):
-        diamond = dict(agents["diamond"])
-        silver = agents.get("silver")
-        if prefer_diamond or not isinstance(silver, dict):
-            agents["silver"] = diamond
+    if not isinstance(agents, dict):
+        return
+    diamond = agents.get("diamond")
+    if not isinstance(diamond, dict):
+        return
+
+    # prefer_diamond=True means user had ONLY diamond and no silver — always legacy
+    if prefer_diamond:
+        agents["silver"] = dict(diamond)
         agents.pop("diamond", None)
+        routing = data.get("routing")
+        if isinstance(routing, dict):
+            legacy = routing.pop("diamond", None)
+            if isinstance(legacy, list):
+                silver_rules = routing.setdefault("silver", [])
+                if isinstance(silver_rules, list):
+                    for kw in legacy:
+                        if kw not in silver_rules:
+                            silver_rules.append(kw)
+        return
+
+    silver = agents.get("silver")
+    diamond_cmd = diamond.get("command", "")
+    silver_cmd = silver.get("command", "") if isinstance(silver, dict) else ""
+
+    # Different commands → real opt-in tier, preserve diamond untouched
+    if diamond_cmd and silver_cmd and diamond_cmd.strip() != silver_cmd.strip():
+        return
+
+    # Same command → legacy alias, collapse into silver
+    agents.pop("diamond", None)
 
     routing = data.get("routing")
     if isinstance(routing, dict):

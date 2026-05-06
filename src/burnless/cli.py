@@ -2066,7 +2066,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("text", help="task description")
     sp.add_argument("--goal", help="overall goal (defaults to task)")
     sp.add_argument("--success", help="success criteria")
-    sp.add_argument("--tier", choices=["gold", "silver", "bronze"], help="force tier")
+    sp.add_argument("--tier", choices=["diamond", "gold", "silver", "bronze"], help="force tier (diamond = explicit escalation only)")
     sp.add_argument(
         "--chain",
         default=None,
@@ -2183,9 +2183,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("text", help="task description / objective")
     sp.add_argument(
         "--tier",
-        choices=["gold", "silver", "bronze"],
+        choices=["diamond", "gold", "silver", "bronze"],
         default=None,
-        help="force a specific tier (default: auto-route)",
+        help="force a specific tier (diamond = explicit escalation only)",
     )
     sp.add_argument(
         "--mode",
