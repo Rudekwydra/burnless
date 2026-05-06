@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.8] — 2026-05-06
+### Added
+- **Compression filter (Stage 1 LLM + Stage 2 telegrafista)** — example plugin `burnless-compress` in `examples/plugins/` implementing `pre_worker_prompt` and `pre_brain_prompt` hooks (PLUGIN_PROTOCOL.md v0.7). Compresses verbose human prompts before they reach the cloud LLM. Empirical: 2.5× compression on 50 PT samples with `qwen2.5:7b-instruct` local + telegrafista. Stdlib-only, fail-open.
+- **`docs/USING_BURNLESS_FROM_YOUR_LLM.md`** — short operating manual the human points their AI assistant at: install Burnless, then say "use this tool, manual is at this path." Covers core commands, tier semantics, audit contract, and how the compression plugin is consumed.
+- **`bench/COMPRESSION_FINDINGS.md`** with embedded SVG chart — 50 PT samples × 4 LLMs (2 local, 2 Ollama Cloud), tokens via tiktoken cl100k_base. Documents method and counter-intuitive finding: compression depends on family + size, not size alone (Qwen 80B compresses harder than Gemma 27B).
+- **6 new bench scripts**: `cache_warm_check`, `cache_invalidation`, `cache_persistence`, `replay_vs_capsule`, `tier_routing_savings`, `filter_entrada_spike`, `aggregate_compression`. All run via `claude -p` with `--output-format json` to validate cache mechanics on the monthly plan path (no `ANTHROPIC_API_KEY` required).
+- **README "For end users — tell your LLM to use Burnless"** section with explicit caveat that the chat shell is still evolving and community contributions are welcome.
+
+### Changed
+- **Pitch repositioning** in README, llms.txt, BURNLESS_FOR_LLMS.md: capsules-as-invention is now lead, not "shared prefix cache." Multi-LLM delegation, tier routing, and prompt caching are explicitly framed as commodity infrastructure that exists in other frameworks; capsules (`Θ(N²) → Θ(N)`) are the protocol-layer invention.
+- **README `## Design decisions`**: `Brain stores semantic capsules` is now decision #1 ("the only invention in Burnless"), promoted from #2.
+- **Honest path-dependence note** added after the numbers tables: `bench/run.py` (SDK-direct + explicit `cache_control`) is the API-credits ceiling; `claude -p` (Claude Code monthly plan, auto-cache absorbs much of the replay) is the floor at ~1.1–2× per session at low N. The 16× weekly figure was measured on the subscription path over a full development workload, so it holds at scale.
+
+### Fixed
+- `cli.py:_should_use_cached_worker` and `cached_worker.py` module docstrings: removed the false claim that `claude -p` lacks `cache_control`. Empirically: `claude -p` auto-caches user messages with `ephemeral_1h` TTL; CachedWorker is the SDK path for explicit cache_control tuning, not the only path to prefix-cache warmth.
+
+### Privacy
+- `.gitignore` now blocks `*.cast` (asciinema recordings often capture full terminal sessions) and `QTP_*.md` (operational test reports with client PII).
+
 ## [0.6.7] — 2026-05-05
 ### Added
 - **Thought vs execution reports**: Worker JSON now carries `kind: execution | thought`. Thought-only reports can finish as `OK` without execution evidence, while execution reports still require verifiable evidence.
