@@ -57,15 +57,21 @@ ministral-3:8b-cloud (   8B cloud)   1.30x  ████████████
 
 ### What about more aggressive prompts? (negative findings)
 
-Two prompt variants were tested on `qwen2.5:7b-instruct` against the same 50-sample set, hoping to push compression past 2.5×:
+Three prompt variants tested on the same 50-sample set, hoping to push compression past the 2.5× ceiling:
 
-| Prompt style | Final ratio | Verdict |
-|---|---:|---|
-| `light` (1 example, minimal rules) | **2.50×** | sweet spot |
-| `ultra` (drop modifiers/clauses, keep only hard constraints) | 1.90× | **worse** — model interpreted percentages, error codes, and webhook names as "hard constraints" and preserved them in full |
-| `pivot_en` (compress AND translate to English) | 2.30× | **worse** — translation correctly saved tokens on verbs/articles, but the model wrote *prose* in English (descriptive sentences) instead of compressing further |
+| Model | Prompt style | Final ratio | Verdict |
+|---|---|---:|---|
+| qwen2.5:7b | `light` (1 example, minimal rules) | **2.50×** | sweet spot |
+| qwen2.5:7b | `ultra` (drop modifiers, keep only hard constraints) | 1.90× | **worse** |
+| qwen2.5:7b | `pivot_en` (compress AND translate to English) | 2.30× | **worse** |
+| qwen3-next:80b | `light` (cloud, partial N=38) | 2.29× | baseline |
+| qwen3-next:80b | `ultra` | 1.90× | **worse** — confirmed in second model |
 
-Lesson: **more rules ≠ more compression** at small model scale. Qwen 7B follows light prompts best because there's less to interpret literally. The instinct to add "be more aggressive!" guard rails backfires — the model becomes more cautious about preserving anything that *might* be a constraint.
+What `ultra` does wrong: the model interprets percentages (`3%`), error codes (`500`), and webhook names (`payment_failed`) as "hard constraints" and preserves them in full instead of compressing. More rules → more cautious model.
+
+What `pivot_en` does wrong: translation correctly saves tokens on verbs/articles, but the model writes English *prose* (descriptive sentences) instead of compressing the structure. Translation alone doesn't trigger compression.
+
+Lesson confirmed in two model sizes (7B and 80B): **more rules ≠ more compression**. Small and large LLMs both interpret strict prompts more literally — they preserve anything that *might* be a constraint. The "be more aggressive!" instinct backfires.
 
 This is a real "negative cisne" — counter-intuitive empirical finding. For the open-source filter (`examples/plugins/burnless-compress`), the `light` prompt is the recommended default. Advanced prompt strategies (mix-language, salience-conditional, ensemble) belong in Burnless Cloud where workload tuning is part of the offering.
 
