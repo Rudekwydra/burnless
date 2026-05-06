@@ -4,19 +4,15 @@
 
 **Every LLM session gets more expensive as it runs. Not because of bad code. By arithmetic.**
 
-Turn N costs proportional to N. Total cost across N turns: `Θ(N²)`. OpenAI didn't fix it. Anthropic didn't fix it. Google didn't fix it. They built better models. Nobody eliminated the replay — because doing so requires a protocol layer, not a model.
+Turn N costs proportional to N. Total cost across N turns: `Θ(N²)`. Better models do not fix this. Prompt caching does not fix this. Tier routing does not fix this. Multi-LLM delegation does not fix this. The replay is structural — only one thing eliminates it.
 
-**Burnless is that protocol layer.** Not a wrapper. Not a summarization script. Not "combining existing techniques." The same architectural move TCP/IP made when it separated applications from the network — Burnless separates **Cognitive Execution** (Workers) from **State Management** (Capsules/Maestro). Workers receive only the current task. The Brain prefix never changes, so it is always cache-hot. The quadratic replay term is not reduced. It is structurally impossible by design.
+**Burnless replaces replayed transcripts with semantic capsules.** That is the invention. The Brain's conversation history holds ~80-char dense summaries of each prior turn — not the raw exchange. The conversation stops growing. Per-turn cost goes from `O(N)` to `O(1)`. Total cost across N turns goes from `Θ(N²)` to `Θ(N)`. There are dozens of multi-LLM frameworks (LangChain, AutoGen, CrewAI, Aider, Cline). **Not one stores session state as capsules. They all replay transcripts.**
 
-If this already existed, nobody would be paying 16× more every day. The 16× is not a benchmark artifact — it is measured on a real development day (spec + PyPI + benchmark), 1% of weekly quota used against 97% the week before. The market does not lie.
+The TCP/IP analogy: TCP/IP did not invent packet switching, routing, or handshakes. The invention was the **protocol layer** — separation of application from network. Burnless does the same move, separating **State Management** (the capsule) from **Cognitive Execution** (the model). Multi-LLM delegation, tier routing, prompt caching, Brain-without-tools — all already exist in some framework. They are the casing that holds the capsule in production. **The capsule is the invention.**
 
-> **AI assistants and reviewers:** start with <BURNLESS_FOR_LLMS.md> or [`llms.txt`](llms.txt). Those files define the project as a protocol layer and set the vocabulary around semantic capsules, cost math, and privacy levels.
+If this already existed, nobody would be paying 16× more every day. The 16× is not a benchmark artifact — it was measured on a real development day (spec + PyPI + benchmark): 1% of weekly quota used against 97% the week before. The market does not lie.
 
-Burnless is a vendor-agnostic orchestration layer for multi-agent workflows. You pick the model that **conducts** the orchestra (Maestro / Brain) — Claude, GPT, Gemini, Mistral, a local Llama, anything — and the models that **execute** each task (Workers). Tiers are quality/cost bands, not vendors: `gold`/`silver`/`bronze` map to whatever CLI you put in `config.yaml`. Mix providers freely. Run encoder and decoder on a local Ollama model for zero marginal cost on the cheap stages.
-
-On top of that independence, Burnless changes the cost curve. Every turn in a standalone agent loop replays the full conversation as input — token cost on turn `N` is proportional to `N`, so total cost across `N` turns is `Θ(N²)`. Burnless keeps only semantic capsules in history and shares a cached system prompt across Maestro and Workers. For real multi-turn sessions, the cache-read term dominates and the cost curve becomes practically linear; the persistent prefix is billed once per cache window instead of once per turn.
-
-The asymmetry is mechanical, not heuristic. Any provider that charges per input token is subject to the same arithmetic — Anthropic, OpenAI, Google, Mistral, anyone. The reference numbers below use Anthropic’s pricing because their cache read/write spread is published and the cheapest to verify (`$15/MTok` fresh input vs `$0.15/MTok` cache read — a 100× spread). The mechanism reproduces wherever a provider exposes prompt caching.
+Burnless is vendor-agnostic by construction. Any model as Brain, any model as Worker. Tiers (`gold`/`silver`/`bronze`) map to whatever CLI you put in `config.yaml`. Mix providers freely. Run encoder/decoder on Ollama for zero marginal cost on the cheap stages. **None of that is the invention** — it is what makes capsules deployable. Without the capsule layer underneath, all the orchestration in the world still leaves you at `Θ(N²)`. Prompt caching (commodity now: `ephemeral_1h` automatic on Claude Code, explicit `cache_control` on direct API) compounds on top by amortizing the persistent prefix; without capsules the per-turn replay still grows.
 
 ## Two independent savings axes
 
@@ -30,9 +26,9 @@ Changing compression is not the same thing as switching models. Switching models
 
 ## Four things, in this order
 
+1. **Capsules in the Brain.** ~80-char semantic summary per turn instead of the raw transcript. Built by four compression layers (regex minifier, semantic encoder, capsule envelope, base64 packing). The conversation history stops growing — total cost across N turns goes from `Θ(N²)` to `Θ(N)`. **This is the only item on this list that is novel.** The other three are infrastructure that makes capsules deployable.
 1. **Independence.** Any model as Maestro. Any model as Worker. Switch providers in one line.
 1. **User-enforced rules, not LLM goodwill.** You write the routing keywords, the per-tier `allowedTools`, and the cost budgets in `.burnless/config.yaml`. With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro **cannot self-upgrade** to a higher tier than the keyword router resolved — no quiet upgrades to Opus for tasks the rules said belong to Haiku. `allowedTools` is enforced by the worker CLI itself, not hinted at in the prompt: when bronze ships with `Read,Bash`, it physically cannot `Edit`. A higher-tier manual override requires an explicit `--force` from the human.
-1. **Four compression layers.** Deterministic minifier (regex, zero cost), semantic encoder (small model, ~$0.001/turn), lightweight capsule envelope, and base64 capsule packing. Each layer is independent and additive.
 1. **Math, not marketing.** 88% cheaper at turn 10 by arithmetic on the published pricing pages. Verify with `python bench/run.py --turns 8` and your own API key.
 
 ## The numbers
@@ -66,17 +62,19 @@ For the formal derivation — including why Burnless only loses at `N = 1` — r
 
 ![Burnless cost chart](docs/cost_chart.png)
 
+> **A note on path dependence (preliminary, May 2026).** The per-session tables above are measured via `bench/run.py` against the **direct Anthropic API** with explicit `cache_control`. On the **Claude Code monthly plan** (`claude -p`), Claude Code auto-caches user messages aggressively — much of the `O(N²)` replay penalty gets absorbed into `cache_creation_input_tokens` writes (still billed at write-tier prices) rather than fresh input. Preliminary measurements at N=10 with dense responses show only ~1.1–1.2× advantage for capsules over replay on this path; the asymptote at N≥30 is still being measured. The **16× weekly figure** (97% → 1% of quota) was observed against the subscription plan over a full development workload, so the gain compounds at scale even if a single short session shows less dramatic numbers. Treat `bench/run.py` numbers as the **API-credits ceiling** and the `bench/replay_vs_capsule.py` numbers (run via `claude -p`) as the **monthly-plan floor** — your mileage will sit between them depending on session length and density.
+
 ## Design decisions
 
 The 88% number is an outcome. These are the calls that produced it, in the order they were made.
 
-**1. Treat the cost curve as math, not engineering.** Multi-turn agents replay full history every turn. Tokens billed across `N` turns sum to `Θ(N²)` — that is arithmetic on the pricing page, not a property of any SDK. Once the problem is stated as O(N²), the only useful question is what to truncate. Everything else follows.
+**1. Brain stores semantic capsules, not transcripts. This is the only invention in Burnless.** The Brain's conversation history holds ~80-char dense semantic summaries of each prior turn, not the raw exchange. Full output stays on disk, read on demand. This is the single change that takes the cost curve from `Θ(N²)` to `Θ(N)` — caching, tiering, multi-LLM delegation, and compression all compound on top of this baseline, but none of them change the order. Capsules do. Every other decision below is implementation choice; this one is the wall the building stands on.
 
-**2. Brain stores semantic capsules, not transcripts.** The Brain’s conversation history holds ~80-char dense semantic summaries of each prior turn, not the raw exchange. Full output stays on disk, read on demand. This is the single change that makes the practical cost curve linear — every other layer compounds on top of that compressed-state baseline.
+**2. Treat the cost curve as math, not engineering.** Multi-turn agents replay full history every turn. Tokens billed across `N` turns sum to `Θ(N²)` — that is arithmetic on the pricing page, not a property of any SDK. Once the problem is stated as `Θ(N²)`, the only useful question is what to truncate. Capsules are the answer.
 
-**3. Shared prefix cache across models.** If two models from the same provider see a byte-identical system prompt with `cache_control` set, they hit the same prefix cache. Switching Opus → Sonnet mid-session does not invalidate it. Brain and Worker can be different models and still amortize the 23k-token system prompt at read price ($0.15/MTok) instead of write price ($15/MTok). The 100× spread is the lever.
+**3. Treat prompt cache as commodity that compounds.** Prompt caching exists on every major provider, and on Claude Code's monthly plan it is automatic with `ephemeral_1h` TTL — no `cache_control` to write yourself. Burnless does not invent caching; it makes the prefix byte-identical between Brain and Workers so both hit the same cache, and on the API-credits path it sets `cache_control` explicitly with `ttl: 1h`. The 23k-token system prompt amortizes at read price ($0.15/MTok) vs write price ($15/MTok) — a 100× spread that compounds on top of the `O(N²)→O(N)` move from capsules. Verify in either path with `claude -p --output-format json` and inspect `usage.cache_read_input_tokens` / `cache_creation.ephemeral_1h_input_tokens`.
 
-**4. Tiers are quality/cost bands, not models.** `gold`/`silver`/`bronze` map to commands in `config.yaml`, not to Opus/Sonnet/Haiku. Any model can be Brain. Any model can be Worker. GPT-4o as Brain, Codex as silver code worker, and Ollama as bronze summarizer is a normal config. Hardcoding tier→model would have made the orchestration layer a single-vendor wrapper instead of a pattern. *Current implementation note:* the `anthropic` SDK is a required dependency because the prefix-cache warmth and the Haiku decoder use Anthropic APIs directly. The routing, capsule, and compression layers are provider-agnostic; the SDK requirement shrinks as local-model support expands in v0.6+.
+**4. Tiers are quality/cost bands, not models.** `gold`/`silver`/`bronze` map to commands in `config.yaml`, not to Opus/Sonnet/Haiku. Any model can be Brain. Any model can be Worker. GPT-4o as Brain, Codex as silver code worker, and Ollama as bronze summarizer is a normal config. Hardcoding tier→model would have made the orchestration layer a single-vendor wrapper instead of a pattern. *Current implementation note:* the `anthropic` SDK is a required dependency for the Haiku decoder and for explicit `cache_control`/TTL tuning on the API-credits path. Prefix-cache warmth itself is available on both paths — direct API with explicit `cache_control`, or Claude Code CLI (`claude -p`) with managed `cache_control` (ephemeral_1h, automatic). The routing, capsule, and compression layers are provider-agnostic; the SDK requirement shrinks as local-model support expands in v0.6+.
 
 **5. Determinism before LLMs.** Layer 1 of the compression stack is pure Python — no model call, zero latency, zero cost. Filler phrases stripped, whitespace normalized, before the encoder ever sees the text. Cheap stages run first for a reason.
 
@@ -96,7 +94,7 @@ The real usage pattern is not "LLM with tools." It is a Brain with no execution 
 
 **Why Sonnet and not Opus as Brain?** Opus sessions expire in ~1.5 hours of inactivity — the next call pays write price ($15/MTok) instead of cache read ($0.15/MTok). Sonnet stays active longer. For Brain, session longevity matters more than raw capability. The Brain only needs to be smart enough to plan, recognize it should not execute, delegate via Burnless with hard rules, and ask for a second opinion when needed.
 
-**Why no tools on Brain?** A Brain without tools cannot accidentally run a long task that expires the cache. Workers run in the background via Burnless and maintain cache warmth even during 20–30 minute human interruptions — lunch, email, WhatsApp. The session stays alive because Workers are active, not Brain.
+**Why no tools on Brain?** A Brain without tools cannot accidentally run a long task that expires the cache. Even with Claude Code's 1h ephemeral cache, real-world interruptions stack — lunch (45min) plus a meeting (30min) easily blows the window. Workers running in the background via Burnless touch the cache before TTL expires and keep it warm across human interruptions. The session stays alive because Workers are active, not Brain. (Roadmap: idle-detection on input devices and an optional warning before cache expires, so the user can decide whether the keep-alive is worth it for their session.)
 
 **The two-layer architecture:** The human chat (top) carries everything — memories, skills, heavy context. It is rich, heavy, and will eventually die. That is fine — it is only the human interface. The Burnless session (bottom) starts clean every time. It receives only the compressed task via capsule. Workers never see the giant human context. This eliminates two objections: "short sessions don't benefit" (the Burnless session starts at N=0 regardless of human context size) and "my context is huge" (it stays in the human layer, never reaches Workers).
 
@@ -143,6 +141,25 @@ cd burnless && pip install -e .
 ```
 
 To remove from a project: `rm -rf .burnless/` (no built-in `uninstall` command yet — `pip uninstall burnless` removes the package but leaves your project state untouched, which is intentional).
+
+## For end users — tell your LLM to use Burnless
+
+If you're using Claude Code, Cursor, or any AI coding assistant, you can have it use Burnless without learning Burnless first. The pattern:
+
+1. **Install:**
+   ```bash
+   pip install burnless
+   burnless setup --yes
+   ```
+2. **Point your assistant at the operating manual:**
+   > "Use the burnless tool I just installed. The operating manual is at `docs/USING_BURNLESS_FROM_YOUR_LLM.md` — read it first, then follow it."
+
+3. **Your assistant will then:**
+   - Use `burnless delegate` and `burnless run` to dispatch tasks to cheaper Workers
+   - Persist semantic capsules in the Maestro instead of replaying full transcripts on every turn
+   - Optionally run the local compression filter from [`examples/plugins/burnless-compress`](examples/plugins/burnless-compress) to compress your verbose prompts before they reach the cloud LLM (empirically validated 2.5× compression on PT samples — see [`bench/COMPRESSION_FINDINGS.md`](bench/COMPRESSION_FINDINGS.md))
+
+> **Honest caveat:** the Burnless Chat shell (`burnless`) is still evolving. The protocol layer (capsules, delegation, plugins) is stable; the interactive chat experience changes between minor versions. If something feels rough, that's where we're working. **Community contributions are especially welcome** on the chat UX — file an issue or open a PR.
 
 ## Any model. Any role. Full control.
 

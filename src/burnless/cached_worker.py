@@ -1,10 +1,14 @@
-"""Burnless CachedWorker — executes delegations via Anthropic API with cache_control.
+"""Burnless CachedWorker — executes delegations via Anthropic API with explicit cache_control.
 
-Instead of spawning `claude -p` (no cache control), this module calls the
-Anthropic API directly with:
+This is the SDK path. The CLI path (`claude -p`) also has prefix-cache warmth —
+Claude Code injects cache_control automatically with ephemeral_1h TTL — so this
+module is not "the way to get cache." It is the way to control cache explicitly:
   - system blocks with cache_control={type: "ephemeral", ttl: "1h"}
-  - a tool loop handling bash/read/write/ls/grep/glob locally
+  - a tool loop handling bash/read/write/ls/grep/glob in-process (no subprocess)
   - same dict output format as agents.run()
+Use this when you need explicit control over cache breakpoints/TTL or want to
+avoid spawning a subprocess per delegation. On the Claude Code monthly plan,
+claude -p already maintains cache warmth — no SDK required for that benefit.
 
 Cache layout (byte-identical across consecutive delegations):
   block 0: glossary.md  (ttl=1h)
