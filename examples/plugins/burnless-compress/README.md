@@ -60,6 +60,16 @@ Environment variables:
 nuance and refuse to drop "context that might matter." For aggressive compression,
 pick a smaller model.
 
+## Verification
+
+```bash
+python examples/plugins/burnless-compress/integration_test.py
+```
+
+Starts the server on a free port, fires 5 hook payloads (pre_worker_prompt × 4 + pre_brain_prompt × 1, including an empty-string passthrough case), asserts JSON schema, and measures real-token compression with tiktoken. Saves artifacts to `~/.burnless/test_data/plugin_integration/{ts}/` (outside the repo). Zero Anthropic API consumption — Ollama-local only.
+
+Reference run (May 2026, qwen2.5:7b-instruct): **5/5 passed, avg 2.27×** on non-empty inputs (range 1.17×–3.83×).
+
 ## Failure mode
 
 The filter is fail-open: if Ollama is unreachable, the LLM stage falls back to
