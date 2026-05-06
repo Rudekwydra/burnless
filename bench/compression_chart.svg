@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 480" font-family="ui-sans-serif, -apple-system, system-ui, sans-serif">
+  <defs>
+    <linearGradient id="qwen" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="gemma" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ea580c"/>
+      <stop offset="100%" stop-color="#fb923c"/>
+    </linearGradient>
+    <linearGradient id="gptoss" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#16a34a"/>
+      <stop offset="100%" stop-color="#4ade80"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="880" height="480" fill="#0b0b0d"/>
+
+  <!-- Title -->
+  <text x="40" y="48" font-size="22" font-weight="700" fill="#f5f5f5">Burnless compression filter — local + Ollama Cloud</text>
+  <text x="40" y="72" font-size="14" fill="#a1a1aa">N=50 Portuguese samples · tiktoken cl100k_base · higher ratio = more compression</text>
+
+  <!-- Axis grid -->
+  <g stroke="#27272a" stroke-width="1">
+    <line x1="200" y1="120" x2="200" y2="380"/>
+    <line x1="320" y1="120" x2="320" y2="380"/>
+    <line x1="440" y1="120" x2="440" y2="380"/>
+    <line x1="560" y1="120" x2="560" y2="380"/>
+    <line x1="680" y1="120" x2="680" y2="380"/>
+    <line x1="800" y1="120" x2="800" y2="380"/>
+  </g>
+  <g font-size="11" fill="#71717a" text-anchor="middle">
+    <text x="200" y="402">1.0x</text>
+    <text x="320" y="402">1.5x</text>
+    <text x="440" y="402">2.0x</text>
+    <text x="560" y="402">2.5x</text>
+    <text x="680" y="402">3.0x</text>
+    <text x="800" y="402">3.5x</text>
+  </g>
+
+  <!-- Bars -->
+  <!-- ratio mapping: x = 200 + (ratio - 1.0) * 240 -->
+  <!-- ratio=1.0 → x=200; ratio=2.5 → x=560; ratio=3.5 → x=800 -->
+
+  <!-- qwen2.5:7b (local) — 2.50x -->
+  <text x="190" y="155" text-anchor="end" font-size="14" fill="#f5f5f5" font-weight="600">qwen2.5:7b-instruct</text>
+  <text x="190" y="172" text-anchor="end" font-size="11" fill="#71717a">7.6B · local</text>
+  <rect x="200" y="142" width="360" height="34" fill="url(#qwen)" rx="3"/>
+  <text x="568" y="165" font-size="14" fill="#f5f5f5" font-weight="700">2.50×</text>
+
+  <!-- qwen3-next:80b (cloud) — 2.29x -->
+  <text x="190" y="215" text-anchor="end" font-size="14" fill="#f5f5f5" font-weight="600">qwen3-next:80b-cloud</text>
+  <text x="190" y="232" text-anchor="end" font-size="11" fill="#71717a">80B · cloud (N=38)</text>
+  <rect x="200" y="202" width="309" height="34" fill="url(#qwen)" rx="3" opacity="0.85"/>
+  <text x="517" y="225" font-size="14" fill="#f5f5f5" font-weight="700">2.29×</text>
+
+  <!-- gpt-oss:120b (cloud) — 1.90x -->
+  <text x="190" y="275" text-anchor="end" font-size="14" fill="#f5f5f5" font-weight="600">gpt-oss:120b-cloud</text>
+  <text x="190" y="292" text-anchor="end" font-size="11" fill="#71717a">120B · cloud</text>
+  <rect x="200" y="262" width="216" height="34" fill="url(#gptoss)" rx="3"/>
+  <text x="424" y="285" font-size="14" fill="#f5f5f5" font-weight="700">1.90×</text>
+
+  <!-- gemma3:27b (cloud) — 1.90x -->
+  <text x="190" y="335" text-anchor="end" font-size="14" fill="#f5f5f5" font-weight="600">gemma3:27b-cloud</text>
+  <text x="190" y="352" text-anchor="end" font-size="11" fill="#71717a">27B · cloud</text>
+  <rect x="200" y="322" width="216" height="34" fill="url(#gemma)" rx="3"/>
+  <text x="424" y="345" font-size="14" fill="#f5f5f5" font-weight="700">1.90×</text>
+
+  <!-- Family legend -->
+  <g transform="translate(40, 430)">
+    <rect width="14" height="14" fill="url(#qwen)" rx="2"/>
+    <text x="22" y="11" font-size="12" fill="#a1a1aa">Qwen family</text>
+    <rect x="120" width="14" height="14" fill="url(#gptoss)" rx="2"/>
+    <text x="142" y="11" font-size="12" fill="#a1a1aa">gpt-oss</text>
+    <rect x="220" width="14" height="14" fill="url(#gemma)" rx="2"/>
+    <text x="242" y="11" font-size="12" fill="#a1a1aa">Gemma family</text>
+    <text x="380" y="11" font-size="12" fill="#52525b" font-style="italic">family + size, not size alone, predicts compression aggression</text>
+  </g>
+</svg>
