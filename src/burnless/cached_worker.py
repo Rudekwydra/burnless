@@ -226,6 +226,18 @@ tools. When done, emit a final JSON block matching the delegation's success sche
 """
 
 
+def _find_design_dir(project_root: Path) -> Path:
+    """Locate maestro_v1 design dir: project-local first, then Burnless package."""
+    local = project_root / "_design" / "maestro_v1"
+    if local.is_dir():
+        return local
+    # Fall back to the design dir bundled with the Burnless package itself.
+    pkg_design = Path(__file__).parent.parent.parent / "_design" / "maestro_v1"
+    if pkg_design.is_dir():
+        return pkg_design
+    return local  # return non-existent path; _load_text uses fallback strings
+
+
 def build_system_blocks(
     *, project_root: Path, burnless_root: Path, memory_index: Path | None = None
 ) -> list[dict[str, Any]]:
@@ -240,7 +252,7 @@ def build_system_blocks(
     project, so every call after the first within the 1h TTL pays cache_read
     (~10% of input cost) instead of full input cost.
     """
-    design_dir = project_root / "_design" / "maestro_v1"
+    design_dir = _find_design_dir(project_root)
 
     glossary = _load_text(design_dir / "glossary.md", _FALLBACK_GLOSSARY)
     worker_role = _load_text(design_dir / "worker_role.md", _FALLBACK_WORKER_ROLE)
@@ -273,7 +285,9 @@ def build_system_blocks(
             file=sys.stderr,
         )
         # Pad with a harmless comment to reach the minimum threshold.
-        pad_chars = shortfall * int(_CHARS_PER_TOKEN) + 64  # 64 extra as margin
+        # Use ceil division with float ratio + 25% safety margin to avoid
+        # the off-by-one from int truncation.
+        pad_chars = int(shortfall / _CHARS_PER_TOKEN * 4) + 128  # 128 extra as margin
         combined += "\n\n<!-- burnless-cache-pad " + ("." * pad_chars) + " -->"
 
     return [{"type": "text", "text": combined, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
