@@ -170,12 +170,14 @@ def _should_use_maestro_backend(args: argparse.Namespace, cfg: dict, tier: str) 
 
 
 def _should_use_cached_worker(args: argparse.Namespace, cfg: dict, tier: str, api_key: str | None) -> bool:
-    """Use CachedWorker (API direct + cache_control) instead of claude -p subprocess.
+    """Use CachedWorker (API direct, explicit cache_control) instead of claude -p subprocess.
 
     Active only when explicitly opted in via config cache_worker.enabled=true.
-    Default is False — most users run claude -p (Claude Code plan, fixed monthly
-    cost) rather than direct API calls (variable credits). CachedWorker only
-    makes sense when you have high delegation volume AND are paying for API credits.
+    Default is False — claude -p already gets prefix-cache warmth automatically
+    (Claude Code injects cache_control with ephemeral_1h TTL). CachedWorker is the
+    SDK path for users on variable-cost API credits who want explicit cache_control
+    tuning, or whose flow benefits from the in-process tool loop instead of a
+    subprocess. On the fixed monthly plan, claude -p is usually the right default.
     Enable in .burnless/config.yaml:
         cache_worker:
           enabled: true

@@ -19,6 +19,7 @@ exec_log/
 scratch/
 ai_scratch/
 tmp/
+memory/
 
 # Credentials / local config
 .stripe-products.json
@@ -52,9 +53,23 @@ _design/warm_cache_measurement.md
 LAUNCH_PACKAGE.md
 PITCH_PT.md
 
+# Asciinema recordings — capture full terminal sessions (commands + output), private by default
+*.cast
+
+# Operational test reports — contain real client names, quota metrics, delegation IDs
+QTP_*.md
+
 # Internal codex prompts (working notes; runtime artifacts in _design/maestro_v1/ stay)
 _design/*_prompt.md
 _design/maestro_v1/codex_*.md
+
+# Private design docs — product roadmap, pricing strategy, architecture audit
+_design/brecha*.md
+_design/plugin_protocol_v0_hooks_audit.md
+_design/brecha6_brain_adapters_map.md
+_design/brecha7_keepalive_map.md
+_design/brecha8_lazy_context_map.md
+_design/brecha9_sync_barrier_map.md
 
 # Blindless — private design + legal reviews; never commit
 _design/blindless/

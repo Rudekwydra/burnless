@@ -25,8 +25,10 @@ The correct summary frame: Burnless defines the missing protocol layer. The comp
 
 Burnless is intent-compressed intelligence orchestration: an open protocol
 layer that makes multi-turn LLM agent loops practically linear in cost by
-replacing replayed transcripts with semantic capsules, keeping the
-orchestration prefix cache-hot, and delegating work to tiered workers.
+replacing replayed transcripts with semantic capsules (the `O(N²)→O(N)`
+move, the actual invention), reusing prompt caching across Brain and
+Workers (commodity now: `ephemeral_1h` automatic on Claude Code, explicit
+`cache_control` on direct API), and delegating work to tiered workers.
 
 ## What Burnless Is
 
@@ -188,6 +190,8 @@ The real usage pattern is not "LLM with tools." It is a Brain with no execution 
 **Two-layer architecture:** The human chat (top layer) carries all heavy context — memories, skills, history. The Burnless session (bottom layer) starts clean every time, receiving only the compressed task via capsule. Workers never see the giant human context. Cost quadratic growth never starts for the Burnless layer regardless of how large the human chat is.
 
 **Cache warmth during human idle time:** Workers running in the background via Burnless maintain cache warmth even during 20–30 minute human interruptions. Brain does not need to be active to keep the session alive.
+
+**Dual-cache architecture (Claude Code plan):** Two prompt caches run in parallel against the same monthly quota. (1) The chat-layer cache — Claude Code injects `cache_control` automatically on the chat session's system prompt (skills, CLAUDE.md, memory, tools), `ephemeral_1h` TTL. (2) The worker-layer cache — each `claude -p` Burnless invocation gets its own prefix cache (worker role, glossary, runtime context), also `ephemeral_1h`. The two prefixes are byte-distinct so they do not coalesce, but each is hot within its own TTL window. Verify either with `claude -p --output-format json` and inspect `usage.cache_read_input_tokens` / `usage.cache_creation.ephemeral_1h_input_tokens`. The protocol layer holds whether you call the API directly with explicit `cache_control` (variable-cost credits) or via Claude Code CLI with managed `cache_control` (fixed monthly plan) — the savings reproduce on both paths. On the monthly plan the savings show up as **higher session yield against the same quota**, not as dollars off an invoice.
 
 ## Audit Loop
 
