@@ -207,6 +207,13 @@ def _load_text(path: Path, fallback: str) -> str:
         return fallback
 
 
+# Anthropic requires a minimum prefix size for cache to activate.
+# Sonnet/Opus 3.5+: 1024 tokens. Haiku 3.5: 2048. Claude 4.x: 1024.
+# We target 1024 as the safe minimum for Sonnet/gold tiers.
+CACHE_MIN_TOKENS = 1024
+# Conservative chars-per-token ratio for estimation (underestimates slightly)
+_CHARS_PER_TOKEN = 3.5
+
 _FALLBACK_GLOSSARY = """\
 # Burnless Worker context
 Tiers: gold=strategy, silver=execution, bronze=summaries.
@@ -222,7 +229,17 @@ tools. When done, emit a final JSON block matching the delegation's success sche
 def build_system_blocks(
     *, project_root: Path, burnless_root: Path, memory_index: Path | None = None
 ) -> list[dict[str, Any]]:
-    """Build system blocks with cache_control for byte-identical caching."""
+    """Build a single cached system block with all static context.
+
+    All three components (glossary, worker_role, runtime_context) are merged
+    into one block with cache_control ttl=1h. A single breakpoint is simpler
+    and guarantees the minimum token threshold is always met — multiple small
+    breakpoints risk falling below the 1024-token cache minimum individually.
+
+    The combined block is byte-identical across delegations for the same
+    project, so every call after the first within the 1h TTL pays cache_read
+    (~10% of input cost) instead of full input cost.
+    """
     design_dir = project_root / "_design" / "maestro_v1"
 
     glossary = _load_text(design_dir / "glossary.md", _FALLBACK_GLOSSARY)
@@ -242,14 +259,24 @@ def build_system_blocks(
         "- Emit the final JSON block at the end of your response (last lines of output).\n"
     )
 
-    def _cached(text: str, ttl: str = "1h") -> dict[str, Any]:
-        return {"type": "text", "text": text, "cache_control": {"type": "ephemeral", "ttl": ttl}}
+    combined = "\n\n".join([glossary, worker_role, static_context])
 
-    return [
-        _cached(glossary, ttl="1h"),
-        _cached(worker_role, ttl="1h"),
-        _cached(static_context, ttl="1h"),
-    ]
+    # Safety check: warn if estimated tokens are below the API cache minimum.
+    estimated_tokens = len(combined) / _CHARS_PER_TOKEN
+    if estimated_tokens < CACHE_MIN_TOKENS:
+        import sys
+        shortfall = int(CACHE_MIN_TOKENS - estimated_tokens)
+        print(
+            f"[cached_worker] WARNING: system block ~{int(estimated_tokens)} tokens "
+            f"(need {CACHE_MIN_TOKENS} for cache). Adding {shortfall * int(_CHARS_PER_TOKEN)} "
+            "chars of padding to activate cache.",
+            file=sys.stderr,
+        )
+        # Pad with a harmless comment to reach the minimum threshold.
+        pad_chars = shortfall * int(_CHARS_PER_TOKEN) + 64  # 64 extra as margin
+        combined += "\n\n<!-- burnless-cache-pad " + ("." * pad_chars) + " -->"
+
+    return [{"type": "text", "text": combined, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
