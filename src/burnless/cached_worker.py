@@ -293,6 +293,20 @@ def build_system_blocks(
     return [{"type": "text", "text": combined, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
 
 
+def bust_cache(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a copy of blocks with a unique nonce appended to the first block.
+
+    Forces a cache miss on the next API call — useful for cold-cache benchmarks.
+    The nonce is a UTC timestamp so the text changes on every call.
+    """
+    import copy
+    from datetime import datetime, timezone
+    busted = copy.deepcopy(blocks)
+    nonce = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    busted[0]["text"] += f"\n\n<!-- cache-bust:{nonce} -->"
+    return busted
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def run_cached_worker(
@@ -305,6 +319,7 @@ def run_cached_worker(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     timeout_s: int = 600,
     log_path: Path | None = None,
+    cold_cache: bool = False,
 ) -> dict[str, Any]:
     """Run a delegation via Anthropic API with cached system prompt + tool loop.
 
@@ -326,6 +341,10 @@ def run_cached_worker(
         burnless_root=burnless_root,
         memory_index=memory_index,
     )
+    if cold_cache:
+        system = bust_cache(system)
+        import sys as _sys
+        print("[cached_worker] cold_cache=True — nonce injected, cache miss guaranteed", file=_sys.stderr)
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
     stdout_parts: list[str] = []
