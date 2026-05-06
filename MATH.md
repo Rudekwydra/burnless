@@ -76,6 +76,32 @@ The `(N-1) · P` cache-read term dominates for typical `N`, and it's billed at `
 
 **Worker calls** add a constant per delegation (not per turn) — the worker's own `P + capsule_subset + task_input` paid once per spawn.
 
+### 3.1 Compression filter — multiplicative refinement (not an order change)
+
+The compression filter (see [`bench/COMPRESSION_FINDINGS.md`](bench/COMPRESSION_FINDINGS.md)) is a Stage-1 LLM + Stage-2 telegrafista regex that runs locally on each user message before it reaches the Brain. Empirically across 7 models on 50 PT samples: ratio `r ≈ 2.0–2.5×`, with the family of the local LLM dominating (Qwen > Gemma ≈ gpt-oss > Mistral).
+
+This is a **multiplicative constant**, not an order change:
+
+```
+brain_input_with_filter(N)  =  (1/r) · brain_input(N)
+```
+
+The filter does *not* change `Θ(N)` to anything else — it scales the constant by `1/r`. Stacked on top of capsules (§3) and the prefix cache, the cumulative reduction at turn `N` is approximately:
+
+```
+total_savings(N)  ≈  (capsules: ~75× constant reduction)
+                   × (cache_read: ~10× per cached token)
+                   × (filter: 2–2.5× on the per-turn human input)
+```
+
+Each factor is independent and multiplicative. None substitutes for the others:
+
+- Drop **capsules** → the curve reverts to `Θ(N²)`. The filter still applies, but it scales a quadratic-growing input, so the total is `Θ(N²)` again — the filter alone does not save the order.
+- Drop **cache** → the constant rises ~10× per cached prefix read. The curve stays linear (capsules still hold).
+- Drop **filter** → the constant rises 2–2.5× on each turn's human input. The curve stays linear (capsules still hold).
+
+The protocol-layer invention is capsules (§3). The filter is a useful refinement *on top* of the protocol — analogous to gzip on a TCP stream. Worth using, not the invention.
+
 ---
 
 ## 4. From tokens to dollars
