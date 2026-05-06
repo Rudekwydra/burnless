@@ -36,6 +36,8 @@ _EXECUTION_HINTS = (
     "execute", "executar", "validate", "validar",
 )
 
+DEFAULT_MAX_TOKENS = 4096
+
 MAESTRO_TIER_MODEL = {
     "gold": "claude-opus-4-7",
     "silver": "claude-sonnet-4-6",
@@ -165,6 +167,30 @@ def _should_use_maestro_backend(args: argparse.Namespace, cfg: dict, tier: str) 
     if getattr(args, "maestro", False):
         return True
     return bool(cfg.get("maestro", {}).get("run_backend", False))
+
+
+def _should_use_cached_worker(args: argparse.Namespace, cfg: dict, tier: str, api_key: str | None) -> bool:
+    """Use CachedWorker (API direct + cache_control) instead of claude -p subprocess.
+
+    Active when:
+    - ANTHROPIC_API_KEY is available
+    - tier is silver or gold (workload tiers, not bronze summaries)
+    - not explicitly disabled via --no-cache-worker or config cache_worker.enabled=false
+    - maestro backend is not already selected
+    """
+    from . import cached_worker as _cw
+    if not _cw.is_available(api_key):
+        return False
+    if tier not in {"silver", "gold"}:
+        return False
+    if getattr(args, "no_cache_worker", False):
+        return False
+    if getattr(args, "no_maestro", False):
+        return False
+    cw_cfg = cfg.get("cache_worker", {})
+    if cw_cfg.get("enabled") is False:
+        return False
+    return True
 
 
 def _with_runtime_context(
@@ -479,7 +505,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
 
+    api_key = _load_anthropic_key()
     use_maestro = _should_use_maestro_backend(args, cfg, tier)
+    use_cached_worker = not use_maestro and _should_use_cached_worker(args, cfg, tier, api_key)
     result: dict | None = None
     backend_used = "subprocess"
     if use_maestro:
@@ -489,6 +517,25 @@ def cmd_run(args: argparse.Namespace) -> int:
         if result is not None:
             backend_used = "maestro"
             print(f"Running {did} with maestro/{tier} ({result['command'][1]})...")
+
+    if result is None and use_cached_worker:
+        from . import cached_worker as _cw
+        model = MAESTRO_TIER_MODEL.get(tier, MAESTRO_TIER_MODEL["silver"])
+        print(f"Running {did} with cached_worker/{tier} ({model})...", flush=True)
+        try:
+            result = _cw.run_cached_worker(
+                prompt=prompt,
+                model=model,
+                project_root=root.parent,
+                burnless_root=root,
+                api_key=api_key,
+                max_tokens=DEFAULT_MAX_TOKENS,
+                timeout_s=stale_timeout_s,
+                log_path=log_path,
+            )
+            backend_used = "cached_worker"
+        except Exception as e:
+            print(f"CachedWorker failed ({e}); falling back to subprocess.", file=sys.stderr)
 
     if result is None:
         try:
@@ -1986,6 +2033,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-maestro",
         action="store_true",
         help=argparse.SUPPRESS,
+    )
+    sp.add_argument(
+        "--no-cache-worker",
+        action="store_true",
+        help="force subprocess backend (claude -p) instead of CachedWorker API",
     )
     sp.add_argument(
         "--no-decode",
