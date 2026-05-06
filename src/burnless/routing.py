@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-TIER_PRIORITY = ["gold", "silver", "bronze"]
+TIER_PRIORITY = ["diamond", "gold", "silver", "bronze"]
 BUILTIN_SILVER_HINTS = (
     "compression",
     "simulator",
@@ -30,6 +30,9 @@ def route(text: str, routing_rules: dict[str, list[str]], default_tier: str = "b
     if not text:
         return default_tier, ""
     haystack = text.lower()
+    for kw in routing_rules.get("diamond", []):
+        if kw.lower() in haystack:
+            return "diamond", kw
     for kw in routing_rules.get("gold", []):
         if kw.lower() in haystack:
             return "gold", kw
@@ -53,7 +56,7 @@ def explain_route(text: str, routing_rules: dict[str, list[str]]) -> dict:
 # Compression dial → tier modulation.
 # Heavily compressed context tolerates a smaller model; preserved context
 # benefits from a larger one.
-_DEMOTE_ONE = {"gold": "silver", "silver": "bronze", "bronze": "bronze"}
+_DEMOTE_ONE = {"diamond": "gold", "gold": "silver", "silver": "bronze", "bronze": "bronze"}
 _PROMOTE_ONE = {"bronze": "silver", "silver": "silver", "gold": "gold"}
 
 
@@ -66,8 +69,8 @@ def modulate_by_compression(tier: str, matched_kw: str, compression_mode: str) -
     """
     from . import compression as _comp
     compression_mode = _comp.normalize_mode(compression_mode)
-    if tier == "diamond":  # legacy configs: treat old code tier as silver.
-        tier = "silver"
+    if tier == "diamond":
+        return tier, ""  # diamond is a real tier now; no demotion
     mode = (compression_mode or "balanced").lower()
     if mode == "extreme":
         new_tier = _DEMOTE_ONE.get(tier, tier)
