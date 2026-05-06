@@ -92,7 +92,10 @@ def llm_compress(text: str) -> str:
             inner_str = re.sub(r"^```(?:json)?\s*\n?", "", inner_str)
             inner_str = re.sub(r"\n?```\s*$", "", inner_str).strip()
         inner = json.loads(inner_str)
-        compressed = inner.get("compressed", "").strip()
+        val = inner.get("compressed", "")
+        if isinstance(val, (dict, list)):
+            val = json.dumps(val, ensure_ascii=False, separators=(",", ":"))
+        compressed = str(val).strip()
         return compressed if compressed else text
     except Exception:
         return text

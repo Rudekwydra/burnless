@@ -25,31 +25,44 @@ that drops articles and high-frequency 1-token prepositions ("o", "a", "de", "qu
 ![Compression filter results](compression_chart.svg)
 
 
-| Model | Type | Size | Final ratio | Style |
-|---|---|---|---:|---|
-| `qwen2.5:7b-instruct` | local Ollama | 7.6B | **2.50×** | aggressive — drops contextual cues |
-| `qwen3-next:80b-cloud` | Ollama Cloud | 80B | 2.29× (N=38, partial — cloud timed out at sample 39) | aggressive — Qwen family preserves the squeeze style at scale |
-| `gpt-oss:120b-cloud` | Ollama Cloud | 120B | 1.90× | preservation-heavy |
-| `gemma3:27b-cloud` | Ollama Cloud | 27B | 1.90× | preservation-heavy |
+| Model | Type | Size | Family | Final ratio | Notes |
+|---|---|---|---|---:|---|
+| `qwen2.5:7b-instruct` | local Ollama | 7.6B | Qwen | **2.50×** | aggressive — drops contextual cues |
+| `qwen3-next:80b-cloud` | Ollama Cloud | 80B | Qwen | 2.29× | partial N=38 (cloud timed out at sample 39) |
+| `gemma3:4b-cloud` | Ollama Cloud | 4B | Gemma | 2.00× | small Gemma is more aggressive than large |
+| `gpt-oss:120b-cloud` | Ollama Cloud | 120B | GPT-OSS | 1.90× | preservation-heavy |
+| `gemma3:27b-cloud` | Ollama Cloud | 27B | Gemma | 1.90× | preservation-heavy |
+| `gemma3:12b-cloud` | Ollama Cloud | 12B | Gemma | 1.80× | preservation-heavy |
+| `ministral-3:8b-cloud` | Ollama Cloud | 8B | Mistral | **1.30×** ⚠ | **NOT RECOMMENDED** — 9/50 samples failed JSON schema (passthrough). Even with `format: "json"` + few-shot, Ministral returned nested dicts and malformed JSON ~18% of the time |
 
 ASCII-bar comparison (compression ratio, longer = more compression):
 
 ```
-qwen2.5:7b-instruct  ( 7.6B local)   2.50x  ████████████████████████████████████████
-qwen3-next:80b-cloud (  80B cloud)   2.29x  ████████████████████████████████████░░░░
-gpt-oss:120b-cloud   ( 120B cloud)   1.90x  ██████████████████████████████░░░░░░░░░░
-gemma3:27b-cloud     (  27B cloud)   1.90x  ██████████████████████████████░░░░░░░░░░
+qwen2.5:7b-instruct  (  7.6B local)  2.50x  ████████████████████████████████████████  Qwen
+qwen3-next:80b-cloud (  80B cloud)   2.29x  ████████████████████████████████████░░░░  Qwen
+gemma3:4b-cloud      (   4B cloud)   2.00x  ████████████████████████████████░░░░░░░░  Gemma
+gpt-oss:120b-cloud   ( 120B cloud)   1.90x  ██████████████████████████████░░░░░░░░░░  gpt-oss
+gemma3:27b-cloud     (  27B cloud)   1.90x  ██████████████████████████████░░░░░░░░░░  Gemma
+gemma3:12b-cloud     (  12B cloud)   1.80x  █████████████████████████████░░░░░░░░░░░  Gemma
+ministral-3:8b-cloud (   8B cloud)   1.30x  █████████████████░░░░░░░░░░░░░░░░░░░░░░░  Mistral ⚠ unreliable
 ```
 
-### What this reveals
+### What this reveals (3 families × 7 sizes)
 
-The naive "bigger model = more compression" hypothesis is **wrong**. Two observations dominate:
+1. **Model family > model size for compression.** Qwen at any size beats Gemma at any size, beats Mistral at any size. The Qwen family is trained with a terse instruction-following style; that survives at scale. Gemma and gpt-oss prefer to preserve context, regardless of size. Mistral can't be trusted to follow a JSON schema reliably (18% failure rate on this exact prompt).
 
-1. **Model family > model size for compression.** `qwen3-next:80b` (80B params) compresses *more aggressively* than `gemma3:27b` (27B params). The Qwen family was trained with a more terse instruction-following style; that survives at scale. Gemma and gpt-oss prefer to preserve context, regardless of size.
+2. **Within a family, smaller is more aggressive (but not strictly monotonic).** Qwen 7B (2.50×) > Qwen 80B (2.29×). Gemma 4B (2.00×) > Gemma 27B (1.90×) > Gemma 12B (1.80×). The 12B-vs-27B inversion is mild noise, but the trend holds: training favors more terse output at smaller scale.
 
-2. **Within a family, larger = more conservative.** `qwen2.5:7b` (2.50×) compresses harder than `qwen3-next:80b` (2.29×); both are Qwen, the smaller one is more aggressive. Same direction observed for Gemma (`gemma4:e2b` 5.1B at 2.1× in the N=30 sample, vs `gemma3:27b` 27B at 1.9× in N=50).
+3. **Ministral is broken for this use case.** Even with `format: "json"`, `--prompt-style light`, and few-shot examples, Ministral 8B returned nested objects (`{"compressed": {"ação": "...", "motivo": {...}}}`), markdown-fenced JSON, and outright malformed JSON. **Don't use Mistral as the compression filter.** The fail-open path kicks in (passthrough), but you lose the compression on those samples.
 
-So the right axis is **family + size**, not size alone. For aggressive compression of bronze-tier worker prompts, pick a small Qwen. For nuance-preserving compression of gold-tier Brain prompts, pick a larger Gemma or gpt-oss.
+The right axis is **family + size**, not size alone. Practical recommendation:
+
+| Filter destination | Recommended model | Rationale |
+|---|---|---|
+| Worker bronze (deterministic action) | `qwen2.5:7b-instruct` (local) or `qwen3-next:80b-cloud` | aggressive compression OK; Qwen is reliable + terse |
+| Brain (decision making) | `gemma3:27b-cloud` or `gpt-oss:120b-cloud` | preserve nuance for reasoning; large model trustworthy |
+| Long-term capsule | `gemma3:12b-cloud` or `gpt-oss:120b-cloud` | balanced compression + preservation |
+| **Avoid** | `ministral-3:*` (any size) | unreliable JSON schema compliance |
 
 Counterintuitive finding: **larger models compress less, not more.** Big models
 recognize nuance and refuse to drop "context that might matter." Small models don't
