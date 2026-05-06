@@ -645,13 +645,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         _bronze_tier_cfg = cfg.get("agents", {}).get("bronze")
         if _bronze_tier_cfg and agents_mod.is_available(_bronze_tier_cfg):
             print(f"[bronze-rescue] {did}: stale_worker — launching deterministic check", file=sys.stderr)
+            _deleg_created_at = _parse_created_at_from_delegation(deleg_text)
             _rescue_prompt = (
                 f"Verifique se a delegação {did} completou seu trabalho apesar de morrer por stale_worker.\n"
+                f"A delegação foi criada em: {_deleg_created_at or 'desconhecido'}.\n"
+                "IMPORTANTE: só considere rescued=true se os arquivos relevantes foram criados/modificados\n"
+                f"DEPOIS de {_deleg_created_at or 'a criação da delegação'} (verifique mtime via `ls -l --time-style=full-iso` ou `stat`).\n"
+                "Arquivos com timestamp ANTERIOR à delegação são de runs anteriores — retorne rescued=false nesses casos.\n\n"
                 "Cheque deterministicamente (sem reimplementar):\n"
-                "- git diff --stat (arquivos modificados vs esperados)\n"
-                "- Se arquivos existem e têm conteúdo plausível (wc -l, grep para classe/função chave mencionada na spec)\n"
-                "- Se pytest passa (se disponível)\n"
-                "Retorne JSON: {\"rescued\": true|false, \"evidence\": [...], \"files_found\": [...]}\n"
+                "- Timestamps dos arquivos vs data de criação da delegação acima\n"
+                "- Se arquivos existem e têm conteúdo plausível (wc -l, grep para conteúdo chave mencionado na spec)\n"
+                "- Se pytest passa (se disponível)\n\n"
+                "ATENÇÃO: O JSON de resposta deve usar EXATAMENTE este schema (não o schema padrão de delegação):\n"
+                "{\"rescued\": true|false, \"evidence\": [\"<item verificável>\", ...], \"files_found\": [\"<caminho>\", ...]}\n"
+                "NÃO use campos como 'status', 'summary', 'files_touched' — use APENAS rescued, evidence, files_found.\n"
                 "Se rescued=true, o sistema usa como OK capsule automaticamente.\n\n"
                 f"## Delegation spec:\n{deleg_text}\n\n"
                 f"## Burnless Runtime Context\n"
@@ -796,7 +803,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         _audit_obj = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
         _audit_st = str(_audit_obj.get("status") or "").upper()
         _post_status = str(summary.get("status") or "").upper()
-        if _audit_st not in {"OK", "PASS", "SKIPPED", "UNAVAILABLE"} and _post_status in ("PART", "ERR"):
+        _worker_did_real_work = _worker_status == "OK" or "rescued_from_stale" in (summary.get("issues") or [])
+        if (
+            _audit_st not in {"OK", "PASS", "SKIPPED", "UNAVAILABLE"}
+            and _post_status in ("PART", "ERR")
+            and not _worker_did_real_work
+        ):
             _fix_prompt = _build_audit_fix_prompt(prompt, did, _audit_obj)
             print(f"[retry/audit] {did}: audit={_audit_st}, re-running worker", file=sys.stderr)
             try:
@@ -1910,6 +1922,13 @@ def _extract_test_status(summary: dict) -> str:
             if "failed" in text:
                 return "FAIL"
     return "SKIP"
+
+
+def _parse_created_at_from_delegation(md: str) -> str | None:
+    """Extract created_at ISO timestamp from delegation markdown frontmatter."""
+    import re as _re
+    m = _re.search(r"\*\*created_at:\*\*\s*(\S+)", md)
+    return m.group(1) if m else None
 
 
 def _parse_goal_from_delegation(md: str) -> str | None:

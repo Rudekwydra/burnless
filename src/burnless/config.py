@@ -84,7 +84,11 @@ DEFAULT_CONFIG: dict = {
     },
     "display": {
         "progress_detail": "brief",  # minimal | brief | full
-        "stale_timeout_seconds": 300,  # kill worker if no stdout/stderr for this many seconds (0=off)
+        # stale_timeout_seconds intentionally absent from DEFAULT_CONFIG so that
+        # _TIER_STALE_DEFAULTS (bronze=120, silver=600, gold=900) are used as the
+        # fallback instead of a generic 300s value that overrides per-tier defaults.
+        # Users can still override explicitly via display.stale_timeout_seconds or
+        # display.tier_stale_timeout_seconds.<tier> in their config.yaml.
     },
     "retry": {
         "max_attempts": 1,        # automatic retries before escalating to maestro
@@ -108,8 +112,8 @@ def resolve_stale_timeout(cfg: dict, tier: str, cli_override: int | None = None)
     Precedence (high → low):
       1. cli_override (--stale-timeout-s flag)
       2. display.tier_stale_timeout_seconds.<tier>
-      3. display.stale_timeout_seconds (legacy global)
-      4. _TIER_STALE_DEFAULTS[tier]
+      3. display.stale_timeout_seconds (explicit user override only — not present in DEFAULT_CONFIG)
+      4. _TIER_STALE_DEFAULTS[tier]  (bronze=120, silver=600, gold=900, platinum=1800)
       5. 300 (last-resort fallback)
     """
     if cli_override is not None and cli_override > 0:
