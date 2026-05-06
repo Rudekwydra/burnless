@@ -172,23 +172,26 @@ def _should_use_maestro_backend(args: argparse.Namespace, cfg: dict, tier: str) 
 def _should_use_cached_worker(args: argparse.Namespace, cfg: dict, tier: str, api_key: str | None) -> bool:
     """Use CachedWorker (API direct + cache_control) instead of claude -p subprocess.
 
-    Active when:
-    - ANTHROPIC_API_KEY is available
-    - tier is silver or gold (workload tiers, not bronze summaries)
-    - not explicitly disabled via --no-cache-worker or config cache_worker.enabled=false
-    - maestro backend is not already selected
+    Active only when explicitly opted in via config cache_worker.enabled=true.
+    Default is False — most users run claude -p (Claude Code plan, fixed monthly
+    cost) rather than direct API calls (variable credits). CachedWorker only
+    makes sense when you have high delegation volume AND are paying for API credits.
+    Enable in .burnless/config.yaml:
+        cache_worker:
+          enabled: true
     """
     from . import cached_worker as _cw
     if not _cw.is_available(api_key):
         return False
-    if tier not in {"silver", "gold"}:
+    if tier not in {"silver", "gold", "diamond"}:
         return False
     if getattr(args, "no_cache_worker", False):
         return False
     if getattr(args, "no_maestro", False):
         return False
     cw_cfg = cfg.get("cache_worker", {})
-    if cw_cfg.get("enabled") is False:
+    # Opt-in only — default off to avoid draining API credits unintentionally
+    if cw_cfg.get("enabled") is not True:
         return False
     return True
 
