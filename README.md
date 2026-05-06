@@ -191,6 +191,27 @@ agents:
   bronze:  { command: "ollama run llama3" }                      # local model, cheap tasks
 ```
 
+**With the compression filter plugin enabled** (see [`examples/plugins/burnless-compress`](examples/plugins/burnless-compress)) — verbose prompts are compressed locally before reaching the cloud LLM:
+
+```yaml
+agents:
+  gold:    { command: "claude --model claude-sonnet-4-6 -p" }
+  silver:  { command: "claude --model claude-haiku-4-5 -p" }
+  bronze:  { command: "ollama run qwen2.5:7b-instruct" }
+
+plugins:
+  enabled: true                              # opt-in
+  manifests_dir: ~/.burnless/plugins         # default
+
+# 1) Drop the plugin manifest at ~/.burnless/plugins/burnless-compress.json
+#    (already shipped at examples/plugins/burnless-compress/manifest.json)
+# 2) python examples/plugins/burnless-compress/server.py &
+# 3) Verify with examples/plugins/burnless-compress/integration_test.py
+#    Reference run: 5/5 passed, avg 2.27× compression on PT samples
+```
+
+The plugin runs locally via Ollama, so it costs nothing and never sends your verbose prompt to a paid LLM. **Fail-open**: if the plugin server is down, the original prompt passes through unchanged. Empirical compression: 2.5× with `qwen2.5:7b-instruct` local + telegrafista. See [`bench/COMPRESSION_FINDINGS.md`](bench/COMPRESSION_FINDINGS.md) for the full method and per-model comparison.
+
 Each tier gets its own `allowedTools`, routing keywords, and cost budget. The routing layer reads your task description and picks the right tier automatically — or you override it explicitly.
 
 The O(N²) → O(N) math applies to any provider that charges per input token. Burnless is the **orchestration and caching layer**, not a wrapper for one API.
