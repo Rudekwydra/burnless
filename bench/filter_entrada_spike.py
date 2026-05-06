@@ -212,7 +212,11 @@ def call_ollama(prompt: str, model: str) -> str:
             inner_str = re.sub(r"^```(?:json)?\s*\n?", "", inner_str)
             inner_str = re.sub(r"\n?```\s*$", "", inner_str).strip()
         inner = json.loads(inner_str)
-        return inner["compressed"].strip()
+        val = inner.get("compressed", "")
+        # Some models (e.g. ministral) return a structured object; coerce to string
+        if isinstance(val, dict) or isinstance(val, list):
+            val = json.dumps(val, ensure_ascii=False, separators=(",", ":"))
+        return str(val).strip()
     except (json.JSONDecodeError, KeyError) as exc:
         raise RuntimeError(f"unexpected ollama response: {body[:300]}") from exc
 
@@ -283,14 +287,16 @@ def main() -> int:
 
     total_orig = 0
     total_final = 0
+    failed_samples = 0
     for i, msg in enumerate(samples, 1):
         pre_in = deterministic_squeeze(msg) if apply_pre else msg
         prompt = build_filter_prompt(args.lang, pre_in, style=args.prompt_style)
         try:
             llm_out = call_ollama(prompt, args.model)
-        except Exception as exc:  # noqa: BLE001 — surface clean
-            print(f"[{i}] FAILED: {exc}", file=sys.stderr)
-            return 1
+        except Exception as exc:  # noqa: BLE001 — fail-open per-sample, don't kill run
+            print(f"[{i}] WARN: LLM failed ({str(exc)[:100]}); passthrough", file=sys.stderr)
+            llm_out = pre_in
+            failed_samples += 1
         final = deterministic_squeeze(llm_out) if apply_post else llm_out
 
         t_orig = approx_tokens(msg)
@@ -314,7 +320,8 @@ def main() -> int:
 
     r_total = total_orig / total_final if total_final > 0 else float("inf")
     total_savings = (total_orig - total_final) * 3.0 / 1_000_000
-    print(f"OVERALL: orig={total_orig}t -> final={total_final}t ({r_total:.1f}x)  savings=${total_savings:.6f}")
+    fail_note = f" [{failed_samples}/{len(samples)} samples passthrough due to LLM errors]" if failed_samples else ""
+    print(f"OVERALL: orig={total_orig}t -> final={total_final}t ({r_total:.1f}x)  savings=${total_savings:.6f}{fail_note}")
 
     # Save full results JSON for cross-model aggregation
     out_dir = Path.home() / ".burnless" / "test_data" / "filter_runs"
