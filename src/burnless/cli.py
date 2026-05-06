@@ -360,6 +360,14 @@ def cmd_delegate(args: argparse.Namespace) -> int:
         tier, kw = routing_mod.route(text, cfg["routing"])
         comp_mode = cfg.get("compression", {}).get("mode", "balanced")
         tier, modulation_reason = routing_mod.modulate_by_compression(tier, kw, comp_mode)
+    if tier not in cfg["agents"]:
+        fallback = "gold" if tier == "diamond" else "silver"
+        print(
+            f"burnless: tier '{tier}' not configured in this project — falling back to {fallback}.",
+            file=sys.stderr,
+        )
+        print(f"  Add agents.{tier} to .burnless/config.yaml to use this tier.", file=sys.stderr)
+        tier = fallback
     agent_cfg = cfg["agents"][tier]
 
     chain = [x.strip() for x in args.chain.split(",") if x.strip()] if args.chain else []
