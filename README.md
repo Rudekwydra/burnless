@@ -98,6 +98,27 @@ The real usage pattern is not "LLM with tools." It is a Brain with no execution 
 
 **The two-layer architecture:** The human chat (top) carries everything — memories, skills, heavy context. It is rich, heavy, and will eventually die. That is fine — it is only the human interface. The Burnless session (bottom) starts clean every time. It receives only the compressed task via capsule. Workers never see the giant human context. This eliminates two objections: "short sessions don't benefit" (the Burnless session starts at N=0 regardless of human context size) and "my context is huge" (it stays in the human layer, never reaches Workers).
 
+## Burnless Free vs Burnless Cloud
+
+**Burnless Free (MIT, this repository) ships the protocol invention:**
+- Semantic capsules (`Θ(N²) → Θ(N)` — see [`MATH.md`](MATH.md))
+- Multi-LLM delegation with hard tier rules
+- Plugin protocol ([`PLUGIN_PROTOCOL.md`](PLUGIN_PROTOCOL.md) v0.7)
+- Reference plugin: [`examples/plugins/burnless-compress`](examples/plugins/burnless-compress) — self-host for the basic compression filter (light prompt + telegrafista, ~2.5× empirical on PT samples)
+
+**Burnless Cloud adds operational features for production deployment:**
+- Managed compression with workload-tuned prompts (mix-language, salience-conditional, ensemble strategies validated against your real traffic)
+- Salience-weighted capsule retention (keep critical turns, drop mundane — the v2 roadmap)
+- Encoder/decoder drift monitoring (catch hallucination before it shows up in production)
+- Multi-tenant glossary management (append-only, validated, exportable)
+- KMS/HSM key custody, audit logs, retention policies, SSO/RBAC, legal hold, operational SLA
+
+**Pricing — revenue share, not subscription.** 3% of measured token savings. No minimum, no commitment.
+
+If your workload saves $1,000 in cloud LLM cost in a month, Cloud bills $30. If it saves $100, Cloud bills $3. Aligned incentives — Burnless Cloud only earns when your workload measurably saves. We measure on our side and on yours; numbers are auditable.
+
+The protocol stays MIT forever. Cloud monetizes operations and tuning, not the protocol.
+
 ## Audit Loop
 
 Workers previously reported completion without verifiable guarantee. The audit loop enforces a two-step verification on every execution.
