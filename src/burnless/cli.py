@@ -1852,6 +1852,64 @@ def cmd_setup(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_do(args: argparse.Namespace) -> int:
+    """Atomic delegate + run in a single command. Equivalent to `burnless do "prompt"`."""
+    root = paths_mod.require_root()
+    p = paths_mod.paths_for(root)
+
+    # Build delegate args (same defaults as `burnless delegate`)
+    delegate_args = argparse.Namespace(
+        text=args.text,
+        goal=None,
+        success=None,
+        tier=args.tier,
+        chain=None,
+        force=False,
+    )
+    rc = cmd_delegate(delegate_args)
+    if rc != 0:
+        return rc
+
+    # Retrieve the ID that cmd_delegate just saved into state
+    state = state_mod.load(p["state"])
+    did = state.get("last_delegation")
+    if not did:
+        print("burnless: delegate did not produce a delegation ID", file=sys.stderr)
+        return 1
+
+    # If --mode is requested, temporarily override config compression.mode
+    _mode_override = getattr(args, "mode_override", None)
+    _config_patched = False
+    _orig_config_text: str | None = None
+    if _mode_override:
+        cfg = config_mod.load(p["config"])
+        _orig_mode = cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
+        if _orig_mode != _mode_override:
+            _orig_config_text = p["config"].read_text(encoding="utf-8")
+            cfg.setdefault("compression", {})["mode"] = _mode_override
+            config_mod.save(p["config"], cfg)
+            _config_patched = True
+
+    run_args = argparse.Namespace(
+        id=did,
+        dry_run=False,
+        timeout=600,
+        stale_timeout_s=None,
+        mode="plain",
+        progress=None,
+        maestro=False,
+        no_maestro=False,
+        no_cache_worker=False,
+    )
+    try:
+        rc = cmd_run(run_args)
+    finally:
+        if _config_patched and _orig_config_text is not None:
+            p["config"].write_text(_orig_config_text, encoding="utf-8")
+
+    return rc
+
+
 def cmd_shell(args: argparse.Namespace) -> int:
     from . import shell
 
@@ -2109,6 +2167,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("shell", help="open the legacy delegation shell")
     sp.set_defaults(func=cmd_shell)
+
+    sp = sub.add_parser(
+        "do",
+        help="delegate + run in one atomic step  (e.g. burnless do \"fix the tests\")",
+    )
+    sp.add_argument("text", help="task description / objective")
+    sp.add_argument(
+        "--tier",
+        choices=["gold", "silver", "bronze"],
+        default=None,
+        help="force a specific tier (default: auto-route)",
+    )
+    sp.add_argument(
+        "--mode",
+        choices=["balanced", "extreme", "light"],
+        default=None,
+        dest="mode_override",
+        help="compression mode for this run only (does not modify config permanently)",
+    )
+    sp.set_defaults(func=cmd_do)
 
     return p
 
