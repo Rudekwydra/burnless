@@ -27,6 +27,7 @@ memory/
 .env.*
 !.env.example
 .pypirc
+.mcp.json
 *.env
 *.key
 *.pem
