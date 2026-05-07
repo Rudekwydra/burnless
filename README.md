@@ -250,6 +250,23 @@ As local models improve, more tiers move to zero cost. The expensive models (Opu
 
 The O(N²) → O(N) math applies to any provider that exposes prompt caching: **Anthropic, OpenAI, Google Gemini, DeepSeek, Mistral, Qwen** — and any local provider via Ollama. If the provider charges per input token and supports a prefix cache, Burnless works.
 
+### Brain provider switching (SDK-based, single-process)
+
+For users who want the maestro itself (not just workers) to run on a non-Anthropic provider, set `brain_adapter` in `.burnless/config.yaml`:
+
+```yaml
+brain_adapter: openai     # anthropic | openai | gemini | openrouter
+```
+
+| Provider     | Env var                                 | Default model                |
+|--------------|-----------------------------------------|------------------------------|
+| `anthropic`  | `ANTHROPIC_API_KEY`                     | `claude-sonnet-4-6`          |
+| `openai`     | `OPENAI_API_KEY`                        | `gpt-4o`                     |
+| `gemini`     | `GEMINI_API_KEY` / `GOOGLE_API_KEY`     | `gemini-2.5-pro`             |
+| `openrouter` | `OPENROUTER_API_KEY`                    | `anthropic/claude-sonnet-4`  |
+
+Install the optional SDK extra (`pip install 'burnless[brain-openai]'` etc) for non-Anthropic providers. Full reference: [`docs/BRAIN_ADAPTERS.md`](docs/BRAIN_ADAPTERS.md).
+
 ## Four compression layers
 
 Each layer is independent and additive. Layers 1, 3, and 4 are pure Python — zero API calls, zero cost. In v0.5, this is primarily a cost/context protocol. Treat privacy as experimental until `privacy.mode` lands.
