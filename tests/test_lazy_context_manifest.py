@@ -303,6 +303,8 @@ def test_blk_lazy_fetch_triggers_retry(tmp_path, monkeypatch):
     # Real file used as evidence so the fast-path audit check passes
     evidence_file = tmp_path / "result.txt"
     evidence_file.write_text("done\n", encoding="utf-8")
+    # QTP-A: filesystem-first auditor needs files_touched to actually exist
+    (tmp_path / "foo.py").write_text("ok\n", encoding="utf-8")
 
     call_count = 0
 

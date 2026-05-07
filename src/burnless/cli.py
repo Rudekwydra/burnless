@@ -1004,6 +1004,102 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
 
 _HEX_RE = re.compile(r'\b([0-9a-f]{7,40})\b', re.IGNORECASE)
 _ABS_PATH_RE = re.compile(r'(/[^\s,;:"\')\]]+)')
+_VALIDATED_SIZE_RE = re.compile(r'([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+).*?(\d+)\s*bytes', re.IGNORECASE)
+
+
+def _audit_execution_filesystem(summary: dict, cwd: Path) -> dict | None:
+    """QTP-A: filesystem-first audit for kind=execution reports.
+
+    For execution-kind reports, hard evidence (files exist on disk + sizes
+    match declared values) outweighs auditor prose nitpicks. Returns:
+      - audit dict with status OK if all files_touched exist and validated
+        sizes match within 1024B tolerance
+      - audit dict with status FAIL if any declared file is missing or
+        sizes mismatch
+      - None if there's not enough evidence to decide (caller falls back
+        to fast_path / LLM auditor ladder)
+
+    QTP-B: when this returns OK, the runner does not downgrade worker OK
+    based on prose-level audit issues — files on disk are the source of truth.
+    """
+    files_touched = summary.get("files_touched") or []
+    if not isinstance(files_touched, list) or not files_touched:
+        return None
+
+    missing: list[str] = []
+    for path_str in files_touched:
+        if not isinstance(path_str, str) or not path_str:
+            continue
+        p = Path(path_str)
+        if not p.is_absolute():
+            p = cwd / p
+        if not p.exists():
+            missing.append(path_str)
+
+    if missing:
+        return {
+            "status": "FAIL",
+            "summary": f"Filesystem audit: {len(missing)} declared file(s) missing on disk",
+            "evidence_checked": [str(x) for x in files_touched[:5]],
+            "issues": [f"missing: {m}" for m in missing[:5]],
+            "auditor_tier": "filesystem_first",
+            "auditor_name": "filesystem_first",
+            "attempted_tiers": [],
+            "attempted_auditors": [],
+        }
+
+    validated = summary.get("validated") or []
+    size_mismatches: list[str] = []
+    if isinstance(validated, list):
+        for entry in validated:
+            m = _VALIDATED_SIZE_RE.search(str(entry))
+            if not m:
+                continue
+            name, declared = m.group(1), int(m.group(2))
+            actual_path: Path | None = None
+            for ft in files_touched:
+                if not isinstance(ft, str):
+                    continue
+                if name in ft:
+                    p = Path(ft)
+                    if not p.is_absolute():
+                        p = cwd / p
+                    if p.exists():
+                        actual_path = p
+                        break
+            if actual_path is None:
+                continue
+            try:
+                actual_size = actual_path.stat().st_size
+            except OSError:
+                continue
+            if abs(actual_size - declared) > 1024:
+                size_mismatches.append(
+                    f"{name}: declared {declared}B, actual {actual_size}B"
+                )
+
+    if size_mismatches:
+        return {
+            "status": "FAIL",
+            "summary": f"Filesystem audit: size mismatch in {len(size_mismatches)} file(s)",
+            "evidence_checked": [str(x) for x in (validated[:3] if isinstance(validated, list) else [])],
+            "issues": size_mismatches[:5],
+            "auditor_tier": "filesystem_first",
+            "auditor_name": "filesystem_first",
+            "attempted_tiers": [],
+            "attempted_auditors": [],
+        }
+
+    return {
+        "status": "OK",
+        "summary": f"Filesystem audit: {len(files_touched)} file(s) present on disk, sizes match",
+        "evidence_checked": [str(x) for x in files_touched[:5]],
+        "issues": [],
+        "auditor_tier": "filesystem_first",
+        "auditor_name": "filesystem_first",
+        "attempted_tiers": [],
+        "attempted_auditors": [],
+    }
 
 
 def _fast_path_check(evidence: list[str], cwd: Path) -> tuple[bool, str]:
@@ -1134,6 +1230,25 @@ def _audit_summary_evidence(
             return summary
         if _h8.get("override_ladder"):
             auditors_ladder = list(_h8["override_ladder"])
+
+    # QTP-A/B: filesystem-first auditor for kind=execution. When the worker
+    # declared files_touched, treat the filesystem as ground truth. Files
+    # present + sizes match → audit OK regardless of any LLM prose nitpicks.
+    # Files missing or size mismatch → audit FAIL with concrete reason.
+    if kind == "execution":
+        fs_audit = _audit_execution_filesystem(summary, cwd)
+        if fs_audit is not None:
+            _write_audit_result(audit_path, fs_audit)
+            summary["audit"] = fs_audit
+            if fs_audit["status"] == "FAIL" and status == "OK":
+                summary["status"] = "PART"
+                first_issue = (fs_audit.get("issues") or ["filesystem_audit_fail"])[0]
+                _append_issue(summary, first_issue)
+            _pl.call_all_plugins(
+                _plugins, "audit_result_received",
+                {"hook": "audit_result_received", "did": did, "audit": fs_audit, "summary": summary},
+            )
+            return summary
 
     # Fast-path: deterministic check before calling any LLM auditor (T1/T2).
     fp_passed, fp_reason = _fast_path_check(evidence, cwd)
