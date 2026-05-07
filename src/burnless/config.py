@@ -103,6 +103,16 @@ DEFAULT_CONFIG: dict = {
         "min_s": 0.5,
         "max_s": 2.5,
     },
+    "cache_prefix": {
+        # QTP-F: when enabled, prompt is structured as
+        # [fixed runtime context] → [variable task] → [chain manifest] →
+        # [fixed output contract]. Maximizes prompt-cache hit rate across
+        # sibling delegations in the same project. Off by default for
+        # backwards compatibility (v0.7.0 layout puts runtime context
+        # AFTER the task). Turn on for projects with N≥3 sibling
+        # delegations to see cache_read_input_tokens climb.
+        "enabled": False,
+    },
 }
 
 
