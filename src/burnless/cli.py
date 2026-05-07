@@ -1690,31 +1690,46 @@ def _run_basic_brain_repl(run_one, *, handle_slash=None, model: str | None = Non
 def cmd_read(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
+    capsule_path = p["capsules"] / f"{args.id}.json"
     summary_path = p["temp"] / f"{args.id}.json"
-    if not summary_path.exists():
-        print(f"burnless: no summary for {args.id} (run it first?)", file=sys.stderr)
-        return 2
-    raw = summary_path.read_text(encoding="utf-8")
-    try:
-        data = json.loads(raw)
-        worker_s = data.get("worker_status") or data.get("status", "?")
-        _audit_obj = data.get("audit") if isinstance(data.get("audit"), dict) else {}
-        if "audit_status" in data:
-            audit_s = data["audit_status"]
-        else:
-            _raw_ast = str(_audit_obj.get("status") or "").upper()
-            if not _raw_ast or _raw_ast in {"SKIPPED", "UNAVAILABLE"}:
-                audit_s = "SKIP"
-            elif _raw_ast in {"OK", "PASS"}:
-                audit_s = "OK"
+    log_path = p["logs"] / f"{args.id}.log"
+
+    # QTP-D: try capsule (finalized) → temp (mid-flight) → log (raw fallback)
+    if capsule_path.exists():
+        print(f"[capsule] {capsule_path}")
+        print(capsule_path.read_text(encoding="utf-8"))
+        return 0
+
+    if summary_path.exists():
+        raw = summary_path.read_text(encoding="utf-8")
+        try:
+            data = json.loads(raw)
+            worker_s = data.get("worker_status") or data.get("status", "?")
+            _audit_obj = data.get("audit") if isinstance(data.get("audit"), dict) else {}
+            if "audit_status" in data:
+                audit_s = data["audit_status"]
             else:
-                audit_s = _raw_ast or "SKIP"
-        test_s = data.get("test_status") or _extract_test_status(data)
-        print(f"worker: {worker_s} | audit: {audit_s} | tests: {test_s}")
-    except (json.JSONDecodeError, AttributeError):
-        pass
-    print(raw)
-    return 0
+                _raw_ast = str(_audit_obj.get("status") or "").upper()
+                if not _raw_ast or _raw_ast in {"SKIPPED", "UNAVAILABLE"}:
+                    audit_s = "SKIP"
+                elif _raw_ast in {"OK", "PASS"}:
+                    audit_s = "OK"
+                else:
+                    audit_s = _raw_ast or "SKIP"
+            test_s = data.get("test_status") or _extract_test_status(data)
+            print(f"worker: {worker_s} | audit: {audit_s} | tests: {test_s}")
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        print(raw)
+        return 0
+
+    if log_path.exists():
+        print(f"[log fallback — no summary for {args.id}, raw worker output:]", file=sys.stderr)
+        print(log_path.read_text(encoding="utf-8"))
+        return 0
+
+    print(f"burnless: no record of {args.id} (capsule, summary, or log)", file=sys.stderr)
+    return 2
 
 
 def cmd_log(args: argparse.Namespace) -> int:
