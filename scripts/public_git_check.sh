@@ -39,7 +39,10 @@ tracked_private="$(
     '.env' '.env.*' '*.env' \
     '.pypirc' '*.key' '*.pem' '*.p12' '*.p8' \
     'docs/ops' 'docs/ops/**' \
+    'memory' 'memory/**' \
     '_design/blindless' '_design/blindless/**' \
+    '_design/brecha*.md' \
+    '_design/plugin_protocol_v0_hooks_audit.md' \
     '_design/evidence_rubrica.md' '_design/warm_cache_measurement.md' \
     'OPERATING_PROFILE.md' 'soul.md' \
     'LAUNCH_PACKAGE.md' 'PITCH_PT.md' \

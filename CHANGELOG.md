@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] — 2026-05-07
+
+### Plugin Protocol v0.7 (stable)
+- **`PLUGIN_PROTOCOL.md`** — full public spec for the 8-hook protocol: H1 `pre_worker_prompt`, H2 `post_worker_output`, H3 `session_state_read`, H4 `audit_result_received`, H5 `pre_brain_prompt`, H6 `post_brain_output`, H7 `worker_invoke_override`, H8 `pre_audit_call`. HTTP / stdio / HTTPS transports, 5s timeout per hook, fail-open semantics. Burnless calls plugins; plugins never execute inside Burnless.
+- **`src/burnless/plugin_loader.py`** — manifest discovery in `~/.burnless/plugins/*.json`, hook dispatch with timeout, transport abstraction, H3 session-state HTTP server on port 7701.
+
+### Added
+- **`tests/test_retry_loop.py`** — 8 tests covering brecha #2: PART/ERR automatic retry loop, retry prompt builder, audit-fix prompt, stale worker doubled timeout (`stale_timeout_s * 2`, capped at 600s), retry_count/retry_status fields surfaced in summary. Closes brecha #2.
+
+### Hardened
+- `scripts/public_git_check.sh`: extends private-leak filter with `memory/`, `_design/brecha*.md`, `_design/plugin_protocol_v0_hooks_audit.md`. Prevents accidental publication of internal specs.
+
 ## [0.6.8] — 2026-05-06 / 2026-05-07
 ### Site URLs reorganized
 - **`free.burnless.pro`** is now the canonical home of the open-source / community site (the `site/` folder in this repo). Served by Cloudflare Pages, also reachable at `burnless.pages.dev`.
