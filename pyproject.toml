@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "burnless"
-version = "0.7.0"
+version = "0.7.1"
 description = "The TCP/IP of agentic LLM orchestration. Separates cognitive execution from state management to make multi-turn agent loops practically linear in cost."
 readme = "README.md"
 requires-python = ">=3.10"
