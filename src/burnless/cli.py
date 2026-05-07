@@ -198,13 +198,22 @@ def _should_use_cached_worker(args: argparse.Namespace, cfg: dict, tier: str, ap
     return True
 
 
-def _with_runtime_context(
-    prompt: str,
-    *,
-    project_root: Path,
-    burnless_root: Path,
-    chain: list[str] | None = None,
-) -> str:
+_QTP_F_FIXED_SUFFIX = (
+    "\n## Output contract\n\n"
+    "Worker emits a JSON block with: status (OK|PART|ERR|BLK), kind "
+    "(execution|thought), summary, files_touched (absolute or cwd-relative paths), "
+    "validated (\"name N bytes\" entries optional), evidence (concrete commands/checks), "
+    "issues (list), next.\n"
+)
+
+
+def _build_cacheable_runtime_prefix(project_root: Path, burnless_root: Path) -> str:
+    """QTP-F: stable prefix that doesn't change between sibling delegations.
+
+    Putting fixed context BEFORE the variable task description maximizes
+    prompt-cache hit rate (Anthropic ephemeral_1h TTL). Subsequent
+    delegations in the same project share this prefix verbatim.
+    """
     memory_index = burnless_root / "memories" / "index.json"
     memory_hint = (
         f"- Burnless memory index: {memory_index}\n"
@@ -216,7 +225,7 @@ def _with_runtime_context(
             "~/.config/claude, ~/Documents/AI, ~/Documents/notes, ~/notes.\n"
         )
     )
-    context = (
+    return (
         "## Burnless Runtime Context\n\n"
         f"- Working directory for this Worker: {project_root}\n"
         f"- Burnless state directory: {burnless_root}\n"
@@ -228,7 +237,26 @@ def _with_runtime_context(
         "- Do not return BLK solely because the original user phrased the request conversationally; "
         "use the available CLI/filesystem tools first.\n"
     )
-    result = f"{prompt.rstrip()}\n\n{context}"
+
+
+def _with_runtime_context(
+    prompt: str,
+    *,
+    project_root: Path,
+    burnless_root: Path,
+    chain: list[str] | None = None,
+    cache_prefix: bool | None = None,
+) -> str:
+    """Compose worker prompt with runtime context.
+
+    QTP-F: when cache_prefix=True (or config.cache_prefix.enabled),
+    runtime context goes BEFORE the task (cacheable prefix structure).
+    When False (default for backwards compat), context goes after the
+    task as in v0.7.0 and earlier.
+    """
+    runtime = _build_cacheable_runtime_prefix(project_root, burnless_root)
+
+    chain_manifest = ""
     if chain:
         valid: list[str] = []
         for did in chain:
@@ -248,7 +276,20 @@ def _with_runtime_context(
             lines.append("- Delegations referenciadas:")
             lines.append(f"  - .burnless/delegations/{valid[0]}.md")
             lines.append("- Para ler: use sua tool de leitura (Read/cat). Tudo está no cwd.")
-            result = result.rstrip() + "\n" + "\n".join(lines) + "\n"
+            chain_manifest = "\n".join(lines) + "\n"
+
+    if cache_prefix:
+        # QTP-F layout: [FIXED PREFIX] [TASK delta] [chain manifest] [FIXED SUFFIX]
+        parts = [runtime.rstrip(), "", prompt.rstrip()]
+        if chain_manifest:
+            parts.extend(["", chain_manifest.rstrip()])
+        parts.extend(["", _QTP_F_FIXED_SUFFIX.rstrip(), ""])
+        return "\n".join(parts)
+
+    # Legacy layout (pre-QTP-F): task first, runtime context after
+    result = f"{prompt.rstrip()}\n\n{runtime}"
+    if chain_manifest:
+        result = result.rstrip() + "\n" + chain_manifest
     return result
 
 
@@ -483,11 +524,13 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
         return 2
     deleg_text = deleg_path.read_text(encoding="utf-8")
     chain = _parse_chain_from_delegation(deleg_text)
+    cache_prefix = bool((cfg.get("cache_prefix") or {}).get("enabled", False))
     prompt = _with_runtime_context(
         deleg_text,
         project_root=root.parent,
         burnless_root=root,
         chain=chain,
+        cache_prefix=cache_prefix,
     )
 
     # which tier did we pick at delegate time?
