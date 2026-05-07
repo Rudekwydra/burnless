@@ -71,9 +71,17 @@ def telegrafista(text: str) -> str:
     return out
 
 
+SHORT_INPUT_CHARS = 80  # ~20 tokens — below this, LLM call costs more than it saves
+
+
 def llm_compress(text: str) -> str:
-    """Stage 1: ask local LLM to compress. Returns original on any failure."""
-    if not text or len(text) < 80:
+    """Stage 1: ask local LLM to compress. Returns original on any failure.
+
+    Brain-hint: skip LLM entirely on short inputs. Latency of round-trip to
+    Ollama (~3-5s) dominates whatever savings we'd get from a one-line prompt.
+    Telegrafista (Stage 2) still runs after, so 'fix bug auth.py' still has
+    'fix bug auth.py' (no stopwords to drop) returned in microseconds."""
+    if not text or len(text) < SHORT_INPUT_CHARS:
         return text  # too short — skip LLM, just telegrafista
     prompt = PROMPTS.get(LANG, PROMPT_EN).format(message=text)
     payload = json.dumps({"model": MODEL, "prompt": prompt, "stream": False, "format": "json"})
