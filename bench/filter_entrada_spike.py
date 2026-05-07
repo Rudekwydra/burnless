@@ -97,10 +97,99 @@ Example:
 
 _PROMPT_LIGHT_BY_LANG = {"en": _PROMPT_LIGHT_EN, "pt": _PROMPT_LIGHT_PT}
 
+# Ultra-aggressive variant — pushes the model to drop more than the light prompt.
+# Goal: find the empirical ceiling of compression that still preserves intent.
+# The model is told to keep ONLY verbs, nouns, paths, numbers — and to delete
+# every transition word, modifier that's not a hard constraint, and explanatory
+# clause. Targets 4×+ ratio.
+_PROMPT_ULTRA_PT = """Comprima ao MÁXIMO ABSOLUTO. Mantenha SÓ:
+- Verbos de ação
+- Substantivos (objetos, ferramentas, arquivos, libs)
+- Números e paths
+- Constraints duros (versões, quantidades, prazos críticos)
+
+DELETE:
+- Conjunções, preposições, artigos
+- Modificadores que não são constraints duros
+- Cláusulas explicativas, contextuais, justificativas
+- Qualquer "porque", "para que", "considerando"
+- Pontuação além de vírgulas
+
+Saída: JSON {{"compressed":"..."}} numa única linha. Sem code fences. Sem prosa.
+
+Exemplo:
+<message>oi por favor implementa o teste de cache no claude -p mas com haiku primeiro pra economizar quota, valeu!</message>
+{{"compressed":"implementa teste cache claude -p, haiku primeiro"}}
+
+<message>preciso urgente que voce escreva um script python que leia um csv chamado dados.csv com colunas nome idade salario e calcule a media de salario por faixa etaria</message>
+{{"compressed":"script python lê dados.csv (nome,idade,salario), média salario por faixa etária"}}
+
+<message>{message}</message>
+"""
+
+_PROMPT_ULTRA_EN = """Compress to ABSOLUTE MAXIMUM. Keep ONLY:
+- Action verbs
+- Nouns (objects, tools, files, libs)
+- Numbers and paths
+- Hard constraints (versions, quantities, critical deadlines)
+
+DELETE:
+- Conjunctions, prepositions, articles
+- Modifiers that aren't hard constraints
+- Explanatory, contextual, justification clauses
+- Any "because", "in order to", "considering"
+- Punctuation beyond commas
+
+Output: JSON {{"compressed":"..."}} single line. No code fences. No prose.
+
+Example:
+<message>hi please implement the cache test on claude -p but use haiku first to save quota, thanks!</message>
+{{"compressed":"implement cache test claude -p, haiku first"}}
+
+<message>I urgently need you to write a python script that reads a csv called data.csv with columns name age salary and computes mean salary per age bracket</message>
+{{"compressed":"python script reads data.csv (name,age,salary), mean salary per age bracket"}}
+
+<message>{message}</message>
+"""
+
+_PROMPT_ULTRA_BY_LANG = {"en": _PROMPT_ULTRA_EN, "pt": _PROMPT_ULTRA_PT}
+
+# Pivot-EN: input may be Portuguese, output is FORCED to English.
+# Empirical motivation (cl100k_base, May 2026):
+#   "implement" 1 tok < "implementa" 2 tok < "实现" 2 tok
+#   "urgent"    1 tok < "紧急"        4 tok
+# English is the densest BPE language in cl100k_base — translating during
+# compression buys an extra ~10-30% on top of pure squeeze.
+_PROMPT_PIVOT_EN = """Compress AND translate to English. Input may be in any language; output MUST be English.
+
+Keep: action verbs, nouns, file paths, numbers, library/tool names, hard constraints
+Drop: greetings, hedging, repetition, filler, modifiers that aren't constraints
+Translate proper nouns/identifiers as-is (file names, library names, URLs stay verbatim).
+
+Output: JSON {{"compressed":"<one-line English>"}}. No code fences. No prose.
+
+Examples:
+
+<message>oi por favor implementa o teste de cache no claude -p mas com haiku primeiro pra economizar quota, valeu!</message>
+{{"compressed":"implement cache test on claude -p, use haiku first"}}
+
+<message>preciso urgente refatorar a classe UserManager porque tá com 800 linhas, separar em UserService, UserRepository, UserValidator</message>
+{{"compressed":"urgent: refactor UserManager (800 LOC) into UserService, UserRepository, UserValidator"}}
+
+<message>encontrei um bug na função de upload — quando o arquivo passa de 50MB o nginx cortou a conexão antes de chegar no app</message>
+{{"compressed":"bug: upload >50MB, nginx drops connection before reaching app"}}
+
+<message>{message}</message>
+"""
+
 
 def build_filter_prompt(lang: str, message: str, style: str = "full") -> str:
     if lang not in _EXAMPLES_BY_LANG:
         raise ValueError(f"unsupported lang: {lang}. Supported: {list(_EXAMPLES_BY_LANG)}")
+    if style == "pivot_en":
+        return _PROMPT_PIVOT_EN.format(message=message)
+    if style == "ultra":
+        return _PROMPT_ULTRA_BY_LANG[lang].format(message=message)
     if style == "light":
         return _PROMPT_LIGHT_BY_LANG[lang].format(message=message)
     return _PROMPT_BASE.format(
@@ -273,8 +362,8 @@ def main() -> int:
                     help="prompt + sample language (en or pt). User picks per project.")
     ap.add_argument("--squeeze-stage", default="pre", choices=["pre", "post", "both", "none"],
                     help="when to apply deterministic regex squeeze")
-    ap.add_argument("--prompt-style", default="full", choices=["full", "light"],
-                    help="full = 4 examples + strict rules; light = 1 example + minimal")
+    ap.add_argument("--prompt-style", default="full", choices=["full", "light", "ultra", "pivot_en"],
+                    help="full = 4 examples + strict rules; light = 1 example + minimal; ultra = aggressive; pivot_en = compress AND translate to English (densest in cl100k_base)")
     args = ap.parse_args()
 
     print(f"filter_entrada_spike using {args.model} via {OLLAMA_URL}  (lang={args.lang}, squeeze={args.squeeze_stage})")
