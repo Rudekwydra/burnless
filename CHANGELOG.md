@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.1] — 2026-05-07
+
+Operational hardening release driven by real-world findings from the
+QTP delivery batch (5 parallel silver delegations producing client
+deliverables). All four QTP issues plus an opt-in cache-prefix layout
+and a privacy filter extension.
+
+### Audit
+- **QTP-A: filesystem-first auditor** for `kind=execution` reports — when the worker declares `files_touched`, audit by checking files exist on disk + sizes match `validated[]` entries (1024B tolerance) instead of parsing prose. Prose nitpicks become warnings, not blockers. Skips the LLM auditor ladder when filesystem verdict is decisive.
+- **QTP-B: status precedence** — when filesystem audit returns OK, the runner does not downgrade worker OK to PART based on auditor prose. Files on disk are hard evidence; prose is soft.
+
+### Reliability
+- **QTP-C: parallel-launch jitter** — when multiple `burnless do` invocations fire concurrently from shell backgrounding (`do "..." & do "..." &`), workers register a lockfile in `temp/in_flight/` and apply 0.5–2.5 s random jitter before launching if siblings are detected. Avoids the 529 (overload) cascade observed in the QTP test where 5 workers all hit the API in the same 85-second window. Configurable via `parallel_jitter.{enabled,min_s,max_s}`. Default ON.
+- **QTP-D: `burnless read` 3-paths fallback** — `read d###` now tries `capsules/{id}.json` → `temp/{id}.json` → `logs/{id}.log` in order, returning whatever exists. Operator no longer blind on PART/ERR runs that crash before capsule write.
+
+### Cache
+- **QTP-F: cacheable prefix layout (opt-in)** — `cfg.cache_prefix.enabled = True` reorders the worker prompt as `[FIXED RUNTIME PREFIX] → [TASK delta] → [chain manifest] → [FIXED OUTPUT CONTRACT]`. Maximizes Anthropic prompt-cache hit rate (`ephemeral_1h`) across sibling delegations in the same project. Default OFF for backwards compatibility with the v0.7.0 layout.
+
+### Privacy
+- **`.mcp.json`** added to `.gitignore` and `scripts/public_git_check.sh` filter — MCP server endpoints (Supabase project_ref, etc) are environment-local and must never land in tracked files. Defense-in-depth.
+
+### Tests
+- 27 new tests (4 read-3-paths, 8 parallel-jitter, 9 filesystem-first auditor, 7 cache-prefix layout) bringing total to 160/160 passing.
+
 ## [0.7.0] — 2026-05-07
 
 ### Plugin Protocol v0.7 (stable)
