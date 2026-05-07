@@ -74,6 +74,9 @@ _design/brecha9_sync_barrier_map.md
 # Blindless — private design + legal reviews; never commit
 _design/blindless/
 
+# Burnless Pro — proprietary Cloud client, license, advanced prompts; never commit
+_pro/
+
 # Bench legacy (superseded by bench/run.py)
 bench/v4_maestro.py
 bench/benchmark.py
