@@ -95,6 +95,14 @@ DEFAULT_CONFIG: dict = {
         "stale_worker_retry": True,  # retry workers killed by timeout
         "audit_retry": True,      # retry when auditor returns PART
     },
+    "parallel_jitter": {
+        # QTP-C: when multiple `burnless do` invocations fire concurrently,
+        # space out the worker subprocess launches with random jitter to
+        # avoid API 529 (overload) cascades.
+        "enabled": True,
+        "min_s": 0.5,
+        "max_s": 2.5,
+    },
 }
 
 
