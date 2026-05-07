@@ -37,7 +37,7 @@ tracked_private="$(
     'build' 'build/**' \
     'exec_log' 'exec_log/**' \
     '.env' '.env.*' '*.env' \
-    '.pypirc' '*.key' '*.pem' '*.p12' '*.p8' \
+    '.pypirc' '.mcp.json' '*.key' '*.pem' '*.p12' '*.p8' \
     'docs/ops' 'docs/ops/**' \
     'memory' 'memory/**' \
     '_design/blindless' '_design/blindless/**' \
