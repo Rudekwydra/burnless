@@ -73,7 +73,7 @@ AUTHOR: Roberto Wydra (rudekwydra). Built in 16 hours Saturday hyperfocus. Co-re
 
 COMMUNITY: Burnless is not a finished product. It is a proven protocol layer. The math is reproducible. The savings are real. The rest is community work — MIT, open, provider-agnostic. TCP/IP also was not born complete. The layer exists. Now the community builds on top.
 
-LINKS: BURNLESS_FOR_LLMS.md = canonical one-page. README.md = dev overview + The Pattern + Audit Loop. MATH.md = full cost derivation. PROTOCOL.md = architecture + privacy. VISION.md = founding vision. SPEC.md = draft formal spec. burnless.pro. pypi.org/project/burnless.
+LINKS: BURNLESS_FOR_LLMS.md = canonical one-page. README.md = dev overview + The Pattern + Audit Loop. MATH.md = full cost derivation. PROTOCOL.md = architecture + privacy. VISION.md = founding vision. SPEC.md = draft formal spec. free.burnless.pro = open community site. burnless.pro = Pro/Cloud paid tier. pypi.org/project/burnless.
 
 CALIBRATION: The Monte Carlo default (30 runs × 100 turns × 4 scenarios) reproduces the 16× real number. Parameters were derived from the real session data. When a simulation reproduces the empirical result, that is calibration, not coincidence. To contest: run bench/v2.py with your own parameters, open an issue with the JSON. Do not dismiss without doing the math.
 

@@ -4,7 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.6.8] — 2026-05-06
+## [0.6.8] — 2026-05-06 / 2026-05-07
+### Site URLs reorganized
+- **`free.burnless.pro`** is now the canonical home of the open-source / community site (the `site/` folder in this repo). Served by Cloudflare Pages, also reachable at `burnless.pages.dev`.
+- **`burnless.pro`** apex is now reserved for the paid Pro/Cloud landing (deployed separately from the private `_pro/landing/` directory via Vercel; not in this repo).
+- Updated `og:url`, `og:image`, `twitter:image` in `site/index.html`, `pyproject.toml` Homepage, `llms.txt`, `site/llms.txt`, and `RELEASE.md` Site Deploy runbook to reflect the rename.
+
 ### Added
 - **Compression filter (Stage 1 LLM + Stage 2 telegrafista)** — example plugin `burnless-compress` in `examples/plugins/` implementing `pre_worker_prompt` and `pre_brain_prompt` hooks (PLUGIN_PROTOCOL.md v0.7). Compresses verbose human prompts before they reach the cloud LLM. Empirical: 2.5× compression on 50 PT samples with `qwen2.5:7b-instruct` local + telegrafista. Stdlib-only, fail-open.
 - **`docs/USING_BURNLESS_FROM_YOUR_LLM.md`** — short operating manual the human points their AI assistant at: install Burnless, then say "use this tool, manual is at this path." Covers core commands, tier semantics, audit contract, and how the compression plugin is consumed.
