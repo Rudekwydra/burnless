@@ -70,6 +70,12 @@ Starts the server on a free port, fires 5 hook payloads (pre_worker_prompt × 4 
 
 Reference run (May 2026, qwen2.5:7b-instruct): **5/5 passed, avg 2.27×** on non-empty inputs (range 1.17×–3.83×).
 
+## Brain-hint heuristic
+
+The plugin **skips the LLM call entirely** for inputs shorter than 80 characters (~20 tokens). The round-trip latency to Ollama (~3-5s) dominates whatever token savings we'd get on a one-line prompt. Telegrafista (Stage 2 regex) still runs — it's microseconds — so common words still get dropped. Net effect: short prompts feel instant, long prompts get the full filter treatment.
+
+Threshold lives in `SHORT_INPUT_CHARS` in `server.py`. Tune per workload.
+
 ## Failure mode
 
 The filter is fail-open: if Ollama is unreachable, the LLM stage falls back to
