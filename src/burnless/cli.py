@@ -1281,6 +1281,17 @@ def _audit_summary_evidence(
     if kind == "execution":
         fs_audit = _audit_execution_filesystem(summary, cwd)
         if fs_audit is not None:
+            # QTP-E: attach visual thumbnails for png/pdf/pptx/html artifacts
+            from . import visual_review as _vr
+            _vr_cfg = cfg.get("visual_review") or {}
+            if _vr_cfg.get("enabled", True):
+                _vr.attach_thumbnails(
+                    summary, cwd,
+                    enabled=True,
+                    thumbnails=_vr_cfg.get("thumbnails", True),
+                    max_size=int(_vr_cfg.get("max_size", 256)),
+                    max_artifacts=int(_vr_cfg.get("max_artifacts", 5)),
+                )
             _write_audit_result(audit_path, fs_audit)
             summary["audit"] = fs_audit
             if fs_audit["status"] == "FAIL" and status == "OK":

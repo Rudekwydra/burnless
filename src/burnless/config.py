@@ -113,6 +113,18 @@ DEFAULT_CONFIG: dict = {
         # delegations to see cache_read_input_tokens climb.
         "enabled": False,
     },
+    "visual_review": {
+        # QTP-E: when worker emits files_touched containing visual
+        # deliverables (.png/.jpg/.pdf/.pptx/.html/.svg), attach a 256×256
+        # base64 JPEG thumbnail to the audit JSON. Operator can scan for
+        # "obviously wrong" output without opening files. Uses Pillow if
+        # available, sips on macOS as fallback. Default ON; thumbnails on
+        # since both tools are commonly available.
+        "enabled": True,
+        "thumbnails": True,
+        "max_size": 256,
+        "max_artifacts": 5,
+    },
 }
 
 
