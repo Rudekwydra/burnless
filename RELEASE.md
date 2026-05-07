@@ -90,7 +90,14 @@ set +a
 .venv/bin/python -m twine upload dist/burnless-<version>*
 ```
 
-## Site Deploy (burnless.pro)
+## Site Deploy (free.burnless.pro)
+
+> **Naming note (May 2026):** the open-source/community site moved from
+> `burnless.pro` to `free.burnless.pro`. The apex `burnless.pro` is now reserved
+> for the paid Pro/Cloud landing (deployed separately via Vercel from the
+> private `_pro/landing/` folder). This runbook deploys the **Free site** —
+> `site/` in this repo — to Cloudflare Pages, served at `free.burnless.pro`
+> and `burnless.pages.dev`.
 
 **No auto-deploy.** There is no GitHub Actions workflow and no `wrangler.toml`. Every site release requires a manual deploy step after pushing to GitHub.
 
@@ -126,7 +133,7 @@ CLOUDFLARE_API_TOKEN="$CF_TOKEN" npx wrangler pages deploy "$DEPLOY_DIR" \
   --commit-dirty=true
 
 # 4. Verify
-curl -s https://burnless.pro | grep "SUPABASE_URL"
+curl -s https://free.burnless.pro | grep "SUPABASE_URL"
 ```
 
 ### Why credentials are blanked in git
@@ -138,7 +145,7 @@ The Supabase anon key (`sb_publishable_*`) is a client-side public key — it is
 ### Verify after deploy
 
 ```bash
-diff <(curl -s https://burnless.pro) <(
+diff <(curl -s https://free.burnless.pro) <(
   SUPABASE_URL=$(grep "^SUPABASE_URL=" ~/.config/burnless/supabase.env | cut -d= -f2-)
   SUPABASE_KEY=$(grep "^SUPABASE_PUBLISHABLE_KEY=" ~/.config/burnless/supabase.env | cut -d= -f2-)
   sed "s|const SUPABASE_URL = '';|const SUPABASE_URL = '$SUPABASE_URL';|;

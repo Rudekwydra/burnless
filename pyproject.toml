@@ -32,9 +32,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7", "build>=1.2", "twine>=6"]
 release = ["build>=1.2", "twine>=6"]
+brain-openai = ["openai>=1.50"]
+brain-gemini = ["google-genai>=1.0"]
 
 [project.urls]
-Homepage = "https://burnless.pro"
+Homepage = "https://free.burnless.pro"
 Repository = "https://github.com/Rudekwydra/burnless"
 Changelog = "https://github.com/Rudekwydra/burnless/blob/main/CHANGELOG.md"
 
