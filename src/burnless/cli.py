@@ -449,6 +449,28 @@ def _build_audit_fix_prompt(original_prompt: str, did: str, audit: dict) -> str:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """QTP-C wrapper: applies parallel-launch jitter + in-flight lock around _cmd_run_body."""
+    root = paths_mod.require_root()
+    p = paths_mod.paths_for(root)
+    cfg = config_mod.load(p["config"])
+    from . import parallel_jitter as _pj
+    _pj_cfg = cfg.get("parallel_jitter", {})
+    _pj_enabled = bool(_pj_cfg.get("enabled", True))
+    _pj_min = float(_pj_cfg.get("min_s", 0.5))
+    _pj_max = float(_pj_cfg.get("max_s", 2.5))
+    if _pj_enabled:
+        _delay = _pj.maybe_jitter(root, min_s=_pj_min, max_s=_pj_max, enabled=True)
+        if _delay > 0:
+            print(
+                f"[jitter] {_delay:.1f}s before launch (other workers in flight)",
+                file=sys.stderr,
+            )
+        with _pj.in_flight(root, args.id):
+            return _cmd_run_body(args)
+    return _cmd_run_body(args)
+
+
+def _cmd_run_body(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
