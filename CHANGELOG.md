@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.2] — 2026-05-07
+
+### Added
+- **QTP-E: visual review hook** for `kind=execution` audits — when the worker emits `files_touched` containing visual deliverables (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.pdf`, `.pptx`, `.html`), the audit JSON now carries `visual_artifacts` (paths) and `visual_thumbnails` (256×256 base64 JPEG). Operator scans for "obviously wrong" output without opening N files manually. Tool chain: Pillow primary → `sips` (macOS) fallback → paths-only when neither tool is available. Configurable via `visual_review.{enabled, thumbnails, max_size, max_artifacts}`. Default ON. Closes the last open issue from `QTP_OPERATIONAL_TEST_2026-05-06.md`.
+
+### Tests
+- **+13** in `tests/test_visual_review.py` covering extension detection (`.png/.jpg/.pdf/.pptx/.svg/.gif/.webp/.html`), real PNG → JPEG thumbnail roundtrip via Pillow, missing file handling, no-files-touched no-op, no-visuals no-op, relative path resolution, disabled / thumbnails-off / max_artifacts config respect, default config invariants. Brings total to **173/173 passing**.
+
+### Compatibility
+- Zero breaking changes from v0.7.1. The visual review hook attaches new fields to the audit JSON; consumers that ignored unknown fields in v0.7.1 continue to work.
+
 ## [0.7.1] — 2026-05-07
 
 Operational hardening release driven by real-world findings from the
