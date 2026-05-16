@@ -69,6 +69,19 @@ def render_metrics(m: dict, *, show_cost: bool = True) -> str:
         lines.append("Observed compression (local codec, audited):")
         lines.append(f"  avg ratio              {avg:.2f}×")
         lines.append(f"  samples                {ratio_count}")
+    # Composed savings (linear + history + quadratic) — only when we have samples
+    try:
+        from . import savings_formula
+        s = savings_formula.compute(m)
+        if s.samples > 0:
+            lines.append("")
+            lines.append("Total savings (composed):")
+            lines.append(f"  linear (per-call)      {s.linear:,.0f}")
+            lines.append(f"  history (cumulative)   {s.history:,.0f}")
+            lines.append(f"  quadratic bonus        {s.quadratic_bonus:,.0f}")
+            lines.append(f"  total                  {s.total:,.0f}")
+    except Exception:
+        pass
     if show_cost:
         cost = m.get("estimated_cost_avoided_usd", 0)
         lines.append(f"  Estimated cost avoided:     ${cost:,.4f} (rough — uses single $15/MTok rate)")
