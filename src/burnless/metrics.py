@@ -33,6 +33,9 @@ DEFAULT_METRICS: dict = {
     "decoder_calls": 0,
     "decoder_capsule_input_tokens": 0,
     "decoder_expanded_output_tokens": 0,
+    "legacy_run_calls": 0,
+    "legacy_compress_calls": 0,
+    "legacy_decompress_calls": 0,
     "by_source": {
         "raw_logs_isolated": 0,
         "repeated_context_avoided": 0,
@@ -316,6 +319,9 @@ def session_snapshot(metrics_path: Path, *, label: str) -> dict:
         "brain_calls": int(metrics.get("brain_calls", 0)),
         "brain_cache_read_tokens": int(metrics.get("brain_cache_read_tokens", 0)),
         "brain_cache_creation_tokens": int(metrics.get("brain_cache_creation_tokens", 0)),
+        "legacy_run_calls": int(metrics.get("legacy_run_calls", 0)),
+        "legacy_compress_calls": int(metrics.get("legacy_compress_calls", 0)),
+        "legacy_decompress_calls": int(metrics.get("legacy_decompress_calls", 0)),
         "by_source": dict(metrics.get("by_source", {})),
     }
     snapshots = metrics.setdefault("session_snapshots", [])
@@ -349,6 +355,9 @@ def session_diff(metrics_path: Path) -> dict | None:
         "delta_brain_calls": _diff("brain_calls"),
         "delta_brain_cache_read": _diff("brain_cache_read_tokens"),
         "delta_brain_cache_creation": _diff("brain_cache_creation_tokens"),
+        "delta_legacy_run_calls": _diff("legacy_run_calls"),
+        "delta_legacy_compress_calls": _diff("legacy_compress_calls"),
+        "delta_legacy_decompress_calls": _diff("legacy_decompress_calls"),
         "delta_by_source": {
             k: int(b.get("by_source", {}).get(k, 0)) - int(a.get("by_source", {}).get(k, 0))
             for k in set(b.get("by_source", {})) | set(a.get("by_source", {}))
@@ -380,6 +389,16 @@ def increment_keepalive_ping(
         int(by_source.get("keepalive_cache_renewed", 0)) + cache_read_tokens
     )
     save(path, metrics)
+
+
+def bump_legacy_counter(metrics_path: Path, name: str, amount: int = 1) -> None:
+    """Increment a top-level legacy counter. No-op if name not allowed."""
+    allowed = {"legacy_run_calls", "legacy_compress_calls", "legacy_decompress_calls"}
+    if name not in allowed:
+        return
+    m = load(metrics_path)
+    m[name] = int(m.get(name, 0)) + int(amount)
+    save(metrics_path, m)
 
 
 def _fresh() -> dict:

@@ -556,6 +556,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     cfg = config_mod.load(p["config"])
     state = state_mod.load(p["state"])
     metrics = metrics_mod.load(p["metrics"])
+    metrics_mod.bump_legacy_counter(p["metrics"], "legacy_run_calls")
     did = args.id
     deleg_path = p["delegations"] / f"{did}.md"
     if not deleg_path.exists():
@@ -1124,6 +1125,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             usd_per_million=cfg["metrics"]["expensive_model_usd_per_million"],
             capsules_delta=1,
         )
+        metrics_mod.bump_legacy_counter(p["metrics"], "legacy_compress_calls")
     else:
         lifetime_mod.bump(project_root=root.parent, capsules_delta=1)
 
