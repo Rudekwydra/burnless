@@ -441,6 +441,34 @@ def run_cached_worker(
     _log(f"# ended_at: {ended.isoformat()}")
     _log(f"# usage: input={usage_totals.get('input_tokens',0)} output={usage_totals.get('output_tokens',0)} cache_read={cache_read} cache_write={cache_write}")
 
+    # Real-time brain metrics — best effort, never blocks the result path.
+    try:
+        from . import metrics as _metrics_mod
+        from . import paths as _paths_mod
+
+        # Walk up from project_root to find the .burnless dir.
+        bl_root = None
+        for candidate in [project_root, *project_root.parents]:
+            if (candidate / ".burnless").is_dir():
+                bl_root = candidate / ".burnless"
+                break
+            if candidate.name == ".burnless":
+                bl_root = candidate
+                break
+        if bl_root is not None:
+            _p = _paths_mod.paths_for(bl_root)
+            _metrics_mod.record_brain_call(
+                metrics_path=_p["metrics"],
+                audit_path=_p["audit"],
+                cache_read_tokens=cache_read,
+                cache_creation_tokens=cache_write,
+                input_tokens=usage_totals.get("input_tokens", 0),
+                output_tokens=usage_totals.get("output_tokens", 0),
+                model=model,
+            )
+    except Exception:
+        pass  # Observability is never load-bearing.
+
     if log_path:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text("\n".join(log_lines), encoding="utf-8")

@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .brain_adapters import BrainAdapter
 
+from .chat_mode import _load_claude_oauth_token
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_IDLE_THRESHOLD_S = 3000  # 50 min
@@ -19,11 +21,11 @@ _DEFAULT_MAX_CONSECUTIVE_MISSES = 3
 
 
 def keepalive_enabled_by_default(adapter: BrainAdapter | None) -> bool:
-    if adapter is None:
+    if adapter is None or adapter.kind != 'anthropic':
         return False
-    if adapter.kind != "anthropic":
-        return False
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if os.environ.get('ANTHROPIC_API_KEY'):
+        return True
+    return _load_claude_oauth_token() is not None
 
 
 class KeepaliveDaemon(threading.Thread):
@@ -47,6 +49,17 @@ class KeepaliveDaemon(threading.Thread):
         self.stop_event = threading.Event()
         self._pings_sent = 0
         self._consecutive_misses = 0
+        self._mode = ''
+        if os.environ.get('ANTHROPIC_API_KEY'):
+            self._mode = 'api_key'
+            self._idle_threshold_s = getattr(self, '_idle_threshold_s', 3000)
+        else:
+            try:
+                if _load_claude_oauth_token() is not None:
+                    self._mode = 'subscription'
+                    self._idle_threshold_s = 270
+            except Exception:
+                self._mode = ''
 
     def run(self) -> None:
         while not self.stop_event.wait(timeout=_POLL_INTERVAL_S):
@@ -108,6 +121,44 @@ class KeepaliveDaemon(threading.Thread):
     def _send_ping(self) -> None:
         from . import state as state_mod
         from . import metrics as metrics_mod
+
+        if getattr(self, '_mode', '') == 'subscription':
+            import httpx
+            try:
+                token = _load_claude_oauth_token()
+            except Exception:
+                token = None
+            if not token:
+                return
+            headers = {
+                'Authorization': f'Bearer {token}',
+                'anthropic-version': '2023-06-01',
+                'anthropic-beta': 'claude-code-20250219,1',
+                'content-type': 'application/json',
+            }
+            body = {
+                'model': 'claude-haiku-4-5-20251001',
+                'max_tokens': 1,
+                'system': [{'type': 'text', 'text': 'x', 'cache_control': {'type': 'ephemeral'}}],
+                'messages': [{'role': 'user', 'content': 'ping'}],
+            }
+            resp = httpx.post('https://api.anthropic.com/v1/messages', json=body, headers=headers, timeout=15)
+            if resp.status_code == 401:
+                try:
+                    token = _load_claude_oauth_token()
+                except Exception:
+                    token = None
+                if token:
+                    headers['Authorization'] = f'Bearer {token}'
+                    resp = httpx.post('https://api.anthropic.com/v1/messages', json=body, headers=headers, timeout=15)
+            try:
+                st = state_mod.load(self._state_path)
+                st["keepalive_last_ts"] = datetime.now(timezone.utc).isoformat()
+                st["keepalive_last_status"] = "ok"
+                state_mod.save(self._state_path, st)
+            except Exception as exc:
+                logger.warning("keepalive: failed to update state: %s", exc)
+            return
 
         if self._adapter is None or self._adapter.kind != "anthropic":
             return

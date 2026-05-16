@@ -29,15 +29,66 @@ def render_status(state: dict, m: dict) -> str:
 
 def render_metrics(m: dict, *, show_cost: bool = True) -> str:
     bt = fmt_int(int(m.get("burnless_tokens", 0)))
+    by = m.get("by_source", {}) or {}
     lines = [
-        f"{bt} burnless tokens",
-        f"Repeated briefings avoided: {m.get('repeated_briefings_avoided', 0)}",
-        f"Dead logs isolated:         {m.get('dead_logs_isolated', 0)}",
-        f"Expensive calls avoided:    {m.get('expensive_model_calls_avoided', 0)}",
+        f"{bt} burnless tokens (sum of all sources)",
+        "",
+        "By source:",
+        f"  capsule_compression          {fmt_int(int(by.get('capsule_compression', 0))):>12}   (encoder: raw msg → capsule)",
+        f"  output_decompression_avoided {fmt_int(int(by.get('output_decompression_avoided', 0))):>12}   (decoder: brain capsule → expanded prose, floor)",
+        f"  repeated_context_avoided     {fmt_int(int(by.get('repeated_context_avoided', 0))):>12}   (brain: cache-read tokens not paid at full input price)",
+        f"  expensive_model_avoided      {fmt_int(int(by.get('expensive_model_avoided', 0))):>12}   (tier routing: cheap worker handled task gold-tier would have)",
+        f"  raw_logs_isolated            {fmt_int(int(by.get('raw_logs_isolated', 0))):>12}   (worker stdout never replayed into brain)",
+        f"  compact_state                {fmt_int(int(by.get('compact_state', 0))):>12}   (state representation overhead saved)",
+        f"  keepalive_cache_renewed      {fmt_int(int(by.get('keepalive_cache_renewed', 0))):>12}   (cache-read confirmed by keepalive ping)",
+        "",
+        "Counters:",
+        f"  encoder_calls   {m.get('encoder_calls', 0)}",
+        f"  decoder_calls   {m.get('decoder_calls', 0)}",
+        f"  brain_calls     {m.get('brain_calls', 0)}",
+        f"  brain cache_read_tokens     {fmt_int(int(m.get('brain_cache_read_tokens', 0)))}",
+        f"  brain cache_creation_tokens {fmt_int(int(m.get('brain_cache_creation_tokens', 0)))}",
+        f"  brain input_tokens (uncached) {fmt_int(int(m.get('brain_input_tokens', 0)))}",
+        f"  brain output_tokens         {fmt_int(int(m.get('brain_output_tokens', 0)))}",
+        "",
+        "Legacy aggregates:",
+        f"  Repeated briefings avoided: {m.get('repeated_briefings_avoided', 0)}",
+        f"  Dead logs isolated:         {m.get('dead_logs_isolated', 0)}",
+        f"  Expensive calls avoided:    {m.get('expensive_model_calls_avoided', 0)}",
     ]
     if show_cost:
         cost = m.get("estimated_cost_avoided_usd", 0)
-        lines.append(f"Estimated cost avoided:     ${cost:,.2f}")
+        lines.append(f"  Estimated cost avoided:     ${cost:,.4f} (rough — uses single $15/MTok rate)")
+    lines.extend([
+        "",
+        "Note: numbers are floors. Decoder Haiku output is shorter than what",
+        "Brain Sonnet would produce unprompted (RLHF default leans verbose),",
+        "so output_decompression_avoided under-estimates the real saving.",
+    ])
+    return "\n".join(lines)
+
+
+def render_session_diff(diff: dict | None) -> str:
+    if not diff:
+        return "(no session snapshots yet — call `burnless metrics --snapshot start` and `--snapshot end`)"
+    lines = [
+        f"Session: {diff.get('from_label')} → {diff.get('to_label')}",
+        f"  {diff.get('from_ts')} → {diff.get('to_ts')}",
+        "",
+        f"Δ burnless_tokens:        {fmt_int(diff.get('delta_burnless_tokens', 0)):>12}",
+        f"Δ encoder_calls:          {diff.get('delta_encoder_calls', 0):>12}",
+        f"Δ decoder_calls:          {diff.get('delta_decoder_calls', 0):>12}",
+        f"Δ brain_calls:            {diff.get('delta_brain_calls', 0):>12}",
+        f"Δ brain cache_read:       {fmt_int(diff.get('delta_brain_cache_read', 0)):>12}",
+        f"Δ brain cache_creation:   {fmt_int(diff.get('delta_brain_cache_creation', 0)):>12}",
+        "",
+        "By source delta:",
+    ]
+    by_delta = diff.get("delta_by_source", {}) or {}
+    for k in sorted(by_delta.keys()):
+        v = by_delta[k]
+        if v:
+            lines.append(f"  {k:<32} {fmt_int(v):>12}")
     return "\n".join(lines)
 
 

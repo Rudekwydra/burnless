@@ -83,29 +83,103 @@ _FILLERS = (
 _STANDALONE_FILLERS = ("então", "aí", "né", "ok", "certo")
 
 FEW_SHOTS = """
+[TONE_DETECTION]
+Detect the tone of THIS specific user message (per-message, not a user profile —
+same user can switch tones turn to turn) and tag the capsule:
+  [tone:X,lang:Y]
+
+Tone tags (use closest match):
+  formal      — polite, full forms, no contractions
+  casual      — informal, contractions, light
+  mano        — SP/RJ slang ("véi", "mano", "tipo", "treta")
+  diminutivo  — "cadinho", "tipo assim", "parada", "treco"
+  telegraphic — no articles, just key tokens
+  code        — technical, file paths, function names, imperative
+  emotive     — with emojis, "❤️", "!" or affection markers
+  meme        — "kkk", "lol", internet humor
+  bug_report  — stack trace style, line/file references
+  tentative   — "será que", "e se", "ahn", proposing not asserting
+  imperative  — direct command, no padding
+  code_review — PR/review register
+
+Lang tags: pt | en | mix
+
+[FEW_SHOTS]
+
 user: "check the state of delegations d010 and d011 and report back"
-capsule: "raw:check state d010 d011 and report"
+capsule: "raw:check state d010 d011 report [tone:imperative,lang:en]"
 
 user: "implement front 01 and 02 in parallel"
-capsule: "raw:imp app/F01 and app/F02 parallel"
+capsule: "raw:imp app/F01 and app/F02 parallel [tone:imperative,lang:en]"
 
 user: "I had an idea"
-capsule: "raw:had an idea"
+capsule: "raw:had an idea [tone:casual,lang:en]"
 
 user: "what's the status of the auth subsystem?"
-capsule: "raw:status app/auth?"
+capsule: "raw:status app/auth? [tone:casual,lang:en]"
 
 user: "and the dashboard?"
-capsule: "raw:status app/dash?"
+capsule: "raw:status app/dash? [tone:casual,lang:en]"
 
 user: "for F7 I need schema, router and prompts — do all of it"
-capsule: "gld del→T? slv imp app/F7 :: schema+router+prompts"
+capsule: "gld del→T? slv imp app/F7 :: schema+router+prompts [tone:imperative,lang:en]"
 
 user: "full audit of the dashboard service before shipping to prod"
-capsule: "gld del→T? gld aud app/dash :: full audit pre-deploy"
+capsule: "gld del→T? gld aud app/dash :: full audit pre-deploy [tone:imperative,lang:en]"
 
 user: "ok"
-capsule: "raw:ok"
+capsule: "raw:ok [tone:telegraphic,lang:pt]"
+
+user: "véi, manda ver no auth aí"
+capsule: "raw:imp app/auth [tone:mano,lang:pt]"
+
+user: "Por gentileza, implemente o módulo de autenticação conforme a especificação."
+capsule: "raw:imp app/auth conforme spec [tone:formal,lang:pt]"
+
+user: "fix(auth): handle null token in middleware"
+capsule: "raw:fix app/auth handle null token middleware [tone:code,lang:en]"
+
+user: "tipo, vê um cadinho a parada do dashboard?"
+capsule: "raw:check app/dash [tone:diminutivo,lang:pt]"
+
+user: "T51 imp app/auth schema val build"
+capsule: "raw:T51 imp app/auth schema val build [tone:telegraphic,lang:pt]"
+
+user: "bro, can you implement F2 with caching?"
+capsule: "raw:imp app/F2 with caching [tone:casual,lang:en]"
+
+user: "could you please review the architecture of the auth subsystem?"
+capsule: "raw:review app/auth architecture [tone:formal,lang:en]"
+
+user: "kkk a brain comeu mosca, dá uma olhada"
+capsule: "raw:audit brain misbehavior [tone:meme,lang:pt]"
+
+user: "deploy F1 to staging — careful, prod follows next"
+capsule: "raw:deploy app/F1 staging, prod next [tone:imperative,lang:en]"
+
+user: "fala, blz? pode me dar uma força com o roteamento?"
+capsule: "raw:help routing [tone:casual,lang:pt]"
+
+user: "❤️ obrigado por sempre fazer certinho!"
+capsule: "raw:ack thanks [tone:emotive,lang:pt]"
+
+user: "EXCEPTION at line 42: NullPointerException in AuthHandler.validate()"
+capsule: "raw:debug NPE app/auth/AuthHandler.validate L42 [tone:bug_report,lang:en]"
+
+user: "olha só, tava pensando — e se fizéssemos isso aqui em paralelo?"
+capsule: "raw:propose parallelization [tone:tentative,lang:pt]"
+
+user: "F1 tá pronto? me dá um update"
+capsule: "raw:status app/F1? [tone:imperative,lang:pt]"
+
+user: "implementa esse F2 with prompt caching aware, treta?"
+capsule: "raw:imp app/F2 with prompt cache awareness [tone:mano,lang:mix]"
+
+user: "review please: this PR introduces a new audit hook"
+capsule: "raw:review PR audit hook [tone:code_review,lang:en]"
+
+user: "ahn... será que o T44 ficou de pé mesmo?"
+capsule: "raw:verify T44 status? [tone:tentative,lang:pt]"
 """.strip()
 
 
@@ -116,18 +190,41 @@ def encode(
     model: str = DEFAULT_ENCODER_MODEL,
     client: anthropic.Anthropic | None = None,
 ) -> tuple[str, float]:
-    """Encode PT-BR raw text into a Burnless capsule with Haiku."""
+    """Encode PT-BR raw text into a Burnless capsule with Haiku.
+
+    The cacheable prefix (glossary + few-shots) goes into a `system` block
+    with `cache_control: ephemeral 1h`, so repeated calls within the TTL
+    window pay cache-read price (0.1× input) instead of full input price.
+    Break-even at N=3 encoder calls per cache lifetime — see MATH.md.
+
+    Caveat: Anthropic enforces a minimum prefix length for caching. As of
+    early 2025 this is 1024 tokens for Sonnet/Opus and 2048 tokens for
+    Haiku. Current FEW_SHOTS + glossary is ~1381 tokens — below Haiku's
+    2048 threshold, so on Haiku the cache_control directive may be silently
+    ignored until the glossary grows. Verify in production by inspecting
+    `usage.cache_creation_input_tokens` and `usage.cache_read_input_tokens`
+    on the response. If both stay zero, caching isn't activating and the
+    prefix needs to grow (or move encoder to Sonnet, where 1024 suffices).
+    """
     try:
         compressed = minify(raw_message) or raw_message
     except Exception:
         compressed = raw_message
-    prompt = _build_prompt(compressed, project_root=project_root)
+    cached_prefix = _build_cached_prefix(project_root=project_root)
+    user_part = _build_user_part(compressed)
     try:
         client = client or anthropic.Anthropic()
         response = client.messages.create(
             model=model,
             max_tokens=200,
-            messages=[{"role": "user", "content": prompt}],
+            system=[
+                {
+                    "type": "text",
+                    "text": cached_prefix,
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_part}],
         )
     except Exception:
         return _fallback_capsule(raw_message), 0.6
@@ -136,7 +233,53 @@ def encode(
     capsule = _extract_capsule_text(text)
     if not capsule:
         return _fallback_capsule(raw_message), 0.6
-    return _wrap_capsule_lines(capsule), _score_capsule(capsule)
+    final_capsule = _wrap_capsule_lines(capsule)
+    _record_encoder_metrics(
+        project_root=project_root,
+        raw_message=raw_message,
+        response=response,
+    )
+    return final_capsule, _score_capsule(capsule)
+
+
+def _record_encoder_metrics(
+    *,
+    project_root: Path | None,
+    raw_message: str,
+    response: Any,
+) -> None:
+    """Best-effort: log encoder metrics. Silent failure — never block encode."""
+    try:
+        from .. import metrics as metrics_mod
+        from .. import paths as paths_mod
+
+        if project_root is None:
+            return
+        # Find the .burnless root by walking up — encoder may be called from
+        # various depths.
+        root = project_root
+        bl_root = None
+        for candidate in [root, *root.parents]:
+            if (candidate / ".burnless").is_dir():
+                bl_root = candidate / ".burnless"
+                break
+            if candidate.name == ".burnless":
+                bl_root = candidate
+                break
+        if bl_root is None:
+            return
+        p = paths_mod.paths_for(bl_root)
+        usage = getattr(response, "usage", None)
+        capsule_output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        metrics_mod.record_encoder_call(
+            metrics_path=p["metrics"],
+            audit_path=p["audit"],
+            raw_input_chars=len(raw_message or ""),
+            capsule_output_tokens=capsule_output_tokens,
+        )
+    except Exception:
+        # Metrics is observability, never block the hot path.
+        return
 
 
 def minify(text: str) -> str:
@@ -224,18 +367,36 @@ def _glossary_abbrev() -> dict[str, str]:
     return pairs
 
 
-def _build_prompt(raw_message: str, *, project_root: Path | None = None) -> str:
+def _build_cached_prefix(project_root: Path | None = None) -> str:
+    """Cacheable encoder prefix: glossary + few-shot examples.
+
+    Byte-stable within a project, so it benefits from prompt caching.
+    Goes into the `system` block with `cache_control: ephemeral 1h`.
+    """
     return "\n\n".join(
         [
             "[GLOSSARY]",
             load_glossary(project_root),
             "[FEW_SHOTS]",
             FEW_SHOTS,
+        ]
+    )
+
+
+def _build_user_part(raw_message: str) -> str:
+    """Variable per-call encoder input: raw message + capsule cue."""
+    return "\n\n".join(
+        [
             "[USER]",
             raw_message,
             "[CAPSULE]",
         ]
     )
+
+
+def _build_prompt(raw_message: str, *, project_root: Path | None = None) -> str:
+    """Backward-compat: full prompt as a single string (uncached path)."""
+    return _build_cached_prefix(project_root=project_root) + "\n\n" + _build_user_part(raw_message)
 
 
 def _wrap_capsule_lines(text: str) -> str:

@@ -255,11 +255,27 @@ def _new_objective(p: dict[str, Path], user_text: str, objective: str) -> bool:
     cfg = _config(p)
     planned = natural_planner.plan_objective(objective, project_root=p["root"].parent)
     task = planned.task
-    tier, matched = routing_mod.route(task, cfg["routing"])
+
+    # Maestro routing — when the user is in `auto`, every turn lands on the
+    # same Maestro worker (a single tier with session resume) so the chat
+    # keeps a coherent context. The Maestro tier is configurable; default
+    # silver/sonnet — fast enough for chat, smart enough for tool use, and
+    # delegates to gold/bronze itself when it decides to. Keyword routing
+    # only kicks in when the user picks a tier explicitly via /use or --tier.
+    state = _state(p)
+    sticky = state.get("active_tier")
+    maestro_tier = (cfg.get("maestro", {}) or {}).get("tier") or "silver"
+    is_maestro_chat = sticky in (None, "auto")
+    if is_maestro_chat:
+        tier = maestro_tier
+        matched = "maestro-auto"
+    else:
+        tier, matched = routing_mod.route(task, cfg["routing"])
+
     agent = cfg["agents"][tier]["name"]
-    did = _create_delegation(p, task, goal=planned.original, tier=None)
+    did = _create_delegation(p, task, goal=planned.original, tier=tier, chat=is_maestro_chat)
     prefix = f"\033[2m→ {did} · {tier}/{agent}\033[0m"
-    return _run(p, user_text, did, prefix=prefix)
+    return _run(p, user_text, did, prefix=prefix, tier=tier, agent=agent)
 
 
 def _fix(p: dict[str, Path], user_text: str, did: str) -> bool:
@@ -274,7 +290,7 @@ def _fix(p: dict[str, Path], user_text: str, did: str) -> bool:
     )
     new_id = _create_delegation(p, task, goal=f"Fix {did}", tier="silver")
     prefix = f"\033[2m→ {new_id} · fix {did}\033[0m"
-    return _run(p, user_text, new_id, prefix=prefix)
+    return _run(p, user_text, new_id, prefix=prefix, tier="silver")
 
 
 def _continue(p: dict[str, Path], user_text: str) -> bool:
@@ -292,37 +308,201 @@ def _continue(p: dict[str, Path], user_text: str) -> bool:
     )
     new_id = _create_delegation(p, task, goal="Continue from last capsule", tier="silver")
     prefix = f"\033[2m→ {new_id} · continue\033[0m"
-    return _run(p, user_text, new_id, prefix=prefix)
+    return _run(p, user_text, new_id, prefix=prefix, tier="silver")
 
 
-def _run(p: dict[str, Path], user_text: str, did: str, *, prefix: str = "") -> bool:
+def _run(
+    p: dict[str, Path],
+    user_text: str,
+    did: str,
+    *,
+    prefix: str = "",
+    tier: str | None = None,
+    agent: str | None = None,
+) -> bool:
     if prefix:
         print(prefix)
 
-    # Ephemeral spinner: writes to the real fd-1 so it survives _capture's redirect.
+    # Live panel writes to the real fd-1 so it survives _capture's redirect.
     _real_out = sys.__stdout__
     _is_tty = _real_out is not None and hasattr(_real_out, "isatty") and _real_out.isatty()
+
+    _stop_ev: threading.Event | None = None
+    _refresh_t: threading.Thread | None = None
+    _live_ctx = None
 
     if not _is_tty:
         # Non-tty (tests, pipes, CI): print a static marker that _capture won't swallow.
         print("[investigando...]")
-        _stop_ev: threading.Event | None = None
-        _spinner_t: threading.Thread | None = None
     else:
+        log_path = p["logs"] / f"{did}.log"
+        started_mono = _time.monotonic()
         _stop_ev = threading.Event()
-        _frames = ["|", "/", "-", "\\"]
 
-        def _spin() -> None:
-            i = 0
-            while not _stop_ev.wait(0.1):  # type: ignore[union-attr]
-                frame = _frames[i % len(_frames)]
-                assert _real_out is not None
-                _real_out.write(f"\r{frame} {did} investigando...")
-                _real_out.flush()
-                i += 1
+        try:
+            from rich.console import Console
+            from rich.live import Live
+            from rich.panel import Panel
+            from rich.text import Text
+        except ImportError:
+            # rich missing → fall back to the old spinner so the shell still works.
+            _frames = ["|", "/", "-", "\\"]
 
-        _spinner_t = threading.Thread(target=_spin, daemon=True)
-        _spinner_t.start()
+            def _spin() -> None:
+                i = 0
+                while not _stop_ev.wait(0.1):  # type: ignore[union-attr]
+                    frame = _frames[i % len(_frames)]
+                    assert _real_out is not None
+                    _real_out.write(f"\r{frame} {did} investigando...")
+                    _real_out.flush()
+                    i += 1
+
+            _refresh_t = threading.Thread(target=_spin, daemon=True)
+            _refresh_t.start()
+        else:
+            _console = Console(file=_real_out, force_terminal=True)
+            _tier_label = (tier or "auto") + (f"/{agent}" if agent else "")
+
+            def _build_panel() -> Panel:
+                elapsed = _time.monotonic() - started_mono
+                raw_lines: list[str] = []
+                if log_path.exists():
+                    try:
+                        content = log_path.read_text(encoding="utf-8", errors="replace")
+                        raw_lines = [ln.rstrip() for ln in content.splitlines() if ln.strip()]
+                    except OSError:
+                        pass
+
+                # First pass: peel [usage] (latest wins, feeds the title) and
+                # drop static metadata so consolidation only sees event lines.
+                last_usage: dict[str, int] = {}
+                event_lines: list[str] = []
+                for ln in raw_lines:
+                    if ln.startswith("#") or ln == "--- STREAM ---" or ln == "--- END ---":
+                        continue
+                    if ln.startswith("[usage]"):
+                        try:
+                            for pair in ln[len("[usage]"):].strip().split():
+                                k, _, v = pair.partition("=")
+                                last_usage[k] = int(v)
+                        except ValueError:
+                            pass
+                        continue
+                    event_lines.append(ln)
+
+                # Second pass: consolidate consecutive [thinking] / [text]
+                # lines into one growing line each — turns event spam into a
+                # "balloon" the user reads as it fills.
+                consolidated: list[str] = []
+                for ln in event_lines:
+                    if consolidated:
+                        last = consolidated[-1]
+                        for prefix_kind in ("[thinking]", "[text]"):
+                            if ln.startswith(prefix_kind) and last.startswith(prefix_kind):
+                                consolidated[-1] = last + ln[len(prefix_kind):]
+                                break
+                        else:
+                            consolidated.append(ln)
+                    else:
+                        consolidated.append(ln)
+
+                tail = consolidated[-8:] if consolidated else []
+
+                # Trim long [text]/[thinking] consolidations so the panel
+                # doesn't explode vertically when streaming long answers.
+                MAX_STREAM_CHARS = 320
+                tail = [
+                    (
+                        prefix_kind + " …" + ln[len(prefix_kind):][-MAX_STREAM_CHARS:]
+                        if (prefix_kind := ("[thinking]" if ln.startswith("[thinking]")
+                                            else ("[text]" if ln.startswith("[text]") else "")))
+                        and len(ln) - len(prefix_kind) > MAX_STREAM_CHARS
+                        else ln
+                    )
+                    for ln in tail
+                ]
+
+                # Phase detection from last informative line for the header.
+                phase = "iniciando"
+                for ln in reversed(tail):
+                    if ln.startswith("[done]"):
+                        phase = "finalizando"; break
+                    if ln.startswith("[text]"):
+                        phase = "respondendo"; break
+                    if ln.startswith("[tool]"):
+                        phase = ln.split("[tool]", 1)[1].strip().split("(")[0].strip() or "agindo"
+                        break
+                    if ln.startswith("[tool_result]"):
+                        phase = "lendo resultado"; break
+                    if ln.startswith("[thinking]"):
+                        phase = "pensando"; break
+
+                # Apply colors per event prefix.
+                if tail:
+                    body = Text()
+                    for ln in tail:
+                        if ln.startswith("[thinking]"):
+                            body.append(ln + "\n", style="dim")
+                        elif ln.startswith("[tool]"):
+                            body.append(ln + "\n", style="cyan")
+                        elif ln.startswith("[tool_result]"):
+                            body.append(ln + "\n", style="dim cyan")
+                        elif ln.startswith("[text]"):
+                            body.append(ln + "\n", style="white")
+                        elif ln.startswith("[done]"):
+                            body.append(ln + "\n", style="bold green")
+                        elif ln.startswith("[system]"):
+                            body.append(ln + "\n", style="dim italic")
+                        else:
+                            body.append(ln + "\n", style="dim")
+                else:
+                    body = Text("aguardando primeiro output do worker…", style="dim italic")
+
+                def _fmt_t(n: int) -> str:
+                    if n >= 1_000_000:
+                        return f"{n/1_000_000:.1f}M"
+                    if n >= 1_000:
+                        return f"{n/1_000:.1f}k"
+                    return str(n)
+
+                in_t = last_usage.get("in", 0)
+                out_t = last_usage.get("out", 0)
+                cr = last_usage.get("cache_read", 0)
+                tokens_chunk = ""
+                if in_t or out_t:
+                    tokens_chunk = f"↑{_fmt_t(in_t)} ↓{_fmt_t(out_t)}"
+                    if cr:
+                        tokens_chunk += f" ⚡{_fmt_t(cr)}"
+                    tokens_chunk += " · "
+
+                return Panel(
+                    body,
+                    title=f"🧠 {did} · {_tier_label} · {tokens_chunk}{phase} · {elapsed:.1f}s",
+                    title_align="left",
+                    subtitle="ctrl+c interrompe",
+                    subtitle_align="right",
+                    border_style="yellow",
+                    padding=(0, 1),
+                    height=10,
+                )
+
+            _live_ctx = Live(
+                _build_panel(),
+                console=_console,
+                refresh_per_second=8,
+                transient=True,
+            )
+            _live_ctx.__enter__()
+
+            def _refresh() -> None:
+                while not _stop_ev.wait(0.15):  # type: ignore[union-attr]
+                    try:
+                        _live_ctx.update(_build_panel())  # type: ignore[union-attr]
+                    except Exception:
+                        return
+
+            _refresh_t = threading.Thread(target=_refresh, daemon=True)
+            _refresh_t.start()
 
     try:
         _, rc = _capture(
@@ -340,9 +520,15 @@ def _run(p: dict[str, Path], user_text: str, did: str, *, prefix: str = "") -> b
     finally:
         if _stop_ev is not None:
             _stop_ev.set()
-        if _spinner_t is not None:
-            _spinner_t.join(timeout=0.5)
-        if _is_tty and _real_out is not None:
+        if _refresh_t is not None:
+            _refresh_t.join(timeout=0.5)
+        if _live_ctx is not None:
+            try:
+                _live_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+        elif _is_tty and _real_out is not None:
+            # Spinner fallback path: clear the residual line.
             _real_out.write("\r\033[K")
             _real_out.flush()
 
@@ -355,6 +541,13 @@ def _run(p: dict[str, Path], user_text: str, did: str, *, prefix: str = "") -> b
 
 
 def _friendly_run_result(p: dict[str, Path], did: str, rc: int) -> str:
+    # Maestro chat mode — render the worker's natural-text answer instead
+    # of the JSON-schema status. The marker is dropped by cmd_delegate
+    # when --chat is passed.
+    chat_marker = p["root"] / "runs" / f"{did}.chat"
+    if chat_marker.exists():
+        return _render_maestro_chat(p, did, rc)
+
     summary_path = p["temp"] / f"{did}.json"
     capsule_path = p["capsules"] / f"{did}.json"
     if summary_path.exists():
@@ -375,7 +568,55 @@ def _friendly_run_result(p: dict[str, Path], did: str, rc: int) -> str:
     return f"ERR:{did}\nWorker failed before saving a summary."
 
 
-def _create_delegation(p: dict[str, Path], task: str, *, goal: str, tier: str | None) -> str:
+def _render_maestro_chat(p: dict[str, Path], did: str, rc: int) -> str:
+    """Reconstruct the worker's natural-text response from the stream-json log.
+
+    The log has lines like '[text] ...' (assistant deltas), '[thinking] ...',
+    '[tool] Read({...})', '[tool_result] ...'. The user wants to see the
+    final natural answer the Maestro produced — that is the concatenation
+    of consecutive [text] lines, not the JSON status.
+    """
+    log_path = p["logs"] / f"{did}.log"
+    if not log_path.exists():
+        return f"(sem resposta — log de {did} não encontrado)"
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        return f"(erro lendo log de {did}: {e})"
+
+    text_chunks: list[str] = []
+    used_tools: list[str] = []
+    for ln in content.splitlines():
+        ln = ln.rstrip()
+        if ln.startswith("[text] "):
+            text_chunks.append(ln[len("[text] "):])
+        elif ln.startswith("[tool] "):
+            tool_name = ln[len("[tool] "):].split("(", 1)[0].strip()
+            if tool_name and tool_name not in used_tools:
+                used_tools.append(tool_name)
+
+    answer = "".join(text_chunks).strip()
+    if not answer:
+        # Fallback: the worker may have run without stream-json or died
+        # before emitting a `result` event.
+        if rc != 0:
+            return f"(worker {did} terminou com returncode={rc} sem resposta. Log em .burnless/logs/{did}.log)"
+        return f"(sem texto natural emitido em {did}; ver log em .burnless/logs/{did}.log)"
+
+    suffix = ""
+    if used_tools:
+        suffix = f"\n\n\033[2m· usou: {', '.join(used_tools)}\033[0m"
+    return f"{answer}{suffix}"
+
+
+def _create_delegation(
+    p: dict[str, Path],
+    task: str,
+    *,
+    goal: str,
+    tier: str | None,
+    chat: bool = False,
+) -> str:
     if tier is None:
         sticky = _state(p).get("active_tier")
         if sticky:
@@ -387,6 +628,7 @@ def _create_delegation(p: dict[str, Path], task: str, *, goal: str, tier: str | 
         tier=tier,
         chain=None,
         force=False,
+        chat=chat,
     )
     _capture(cli_mod.cmd_delegate, args)
     return _state(p).get("last_delegation")

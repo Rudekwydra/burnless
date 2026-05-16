@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -29,7 +30,16 @@ from . import config as config_mod
 from . import state as state_mod
 
 
-CHAT_BANNER = "Burnless chat — /exit to leave, /clear to reset turns."
+CHAT_BANNER = "Burnless chat — /help for commands, /exit to leave."
+
+_CHAT_HELP = """\
+Commands:
+  /help, /h        — this list
+  /clear           — reset conversation turns (history stays in log)
+  /model NAME      — switch model mid-session (e.g. claude-sonnet-4-6)
+  /info            — current model, tier, turn count
+  /exit, /quit     — leave chat
+"""
 DEFAULT_HISTORY_TURNS = 10
 MEMORY_INJECT_LIMIT = 12_000
 PROJECT_MEMORY_FILES = ("MEMORY.md", "AGENTS.md", "CLAUDE.md")
@@ -163,50 +173,108 @@ def _run_chat_sdk(
     model = _resolve_model(tier, cfg, state)
     system_blocks = _build_system_blocks(p, state)
     history: list[dict] = []
+    last_headers: list[dict] = [{}]  # mutable container for last response headers
 
     print(f"agent: {tier}/{agent_cfg.get('name')}  model: {model}  cache: enabled")
     print()
 
     while True:
         try:
-            user_msg = input(f"chat [{tier}] › ").strip()
+            sys.stdout.write(f"chat [{tier}] › ")
+            sys.stdout.flush()
+            raw = sys.stdin.readline()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
+        if not raw:
+            print()
+            return 0
+        user_msg = raw.rstrip("\n").strip()
         if not user_msg:
             continue
+        # --- slash commands ---
         if user_msg in {"/exit", "/quit", "exit", "quit", "/back", "back"}:
             return 0
         if user_msg in {"/clear", "clear"}:
-            history = []
+            history.clear()
             print("(conversation reset)")
             continue
+        if user_msg in {"/help", "/h", "/commands"}:
+            print(_CHAT_HELP)
+            continue
+        if user_msg == "/info":
+            print(f"model: {model}  tier: {tier}  turns: {len(history) // 2}")
+            continue
+        if user_msg in {"/usage", "/quota", "/limits"}:
+            if last_headers[0]:
+                print()
+                print(_fmt_unified_usage(last_headers[0]))
+                print()
+            else:
+                print("(no usage data yet — send a message first)")
+            continue
+        if user_msg.startswith("/model "):
+            new_model = user_msg.removeprefix("/model ").strip()
+            if new_model:
+                model = new_model
+                print(f"model → {model}")
+            else:
+                print("usage: /model <model-id>")
+            continue
+        if user_msg.startswith("/"):
+            print(f"unknown command: {user_msg!r}  (try /help)")
+            continue
+        # --- end slash ---
 
-        history.append({"role": "user", "content": user_msg})
+        # Minify input: strip fillers + abbreviations, zero API cost.
+        try:
+            from .codec.encoder import minify as _minify
+            compressed = _minify(user_msg) or user_msg
+        except Exception:
+            compressed = user_msg
+
+        history.append({"role": "user", "content": compressed})
         _chat_state = state_mod.load(p["state"])
         state_mod.touch_activity(_chat_state)
         state_mod.save(p["state"], _chat_state)
+
+        # Trim to last N turns before sending so context window stays bounded.
+        send_history = history[-(DEFAULT_HISTORY_TURNS * 2):]
+
+        cache_read = cache_write = input_tok = 0
+        print()
+        sys.stdout.write("\033[2m(thinking…)\033[0m")
+        sys.stdout.flush()
         try:
-            response = client.messages.create(
+            with client.messages.stream(
                 model=model,
                 max_tokens=2048,
                 system=system_blocks,
-                messages=history,
+                messages=send_history,
                 extra_headers={"anthropic-beta": "extended-cache-ttl-2025-04-11"},
-            )
-            assistant_msg = _extract_text(response)
-            usage = response.usage
+            ) as stream:
+                parts: list[str] = []
+                first_token = True
+                for text in stream.text_stream:
+                    if first_token:
+                        sys.stdout.write("\r\033[2K")
+                        first_token = False
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+                    parts.append(text)
+                print()
+                final = stream.get_final_message()
+                try:
+                    last_headers[0] = dict(stream.response.headers)
+                except Exception:
+                    pass
+            assistant_msg = "".join(parts)
+            usage = final.usage
             cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
             cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
             input_tok = getattr(usage, "input_tokens", 0) or 0
-            hint = ""
-            if cache_write > 0 and cache_read == 0:
-                hint = f"  \033[2m[cache written — next turn ~10x cheaper]\033[0m"
-            elif cache_read > 0:
-                saved_pct = int(cache_read / max(1, input_tok + cache_read) * 100)
-                hint = f"  \033[2m[cache hit — saved ~{saved_pct}% input cost]\033[0m"
         except Exception as e:
-            print(f"API error: {e}")
+            print(f"\nAPI error: {e}")
             history.pop()
             continue
 
@@ -215,9 +283,17 @@ def _run_chat_sdk(
         state_mod.touch_activity(_chat_state)
         state_mod.save(p["state"], _chat_state)
 
-        print()
-        print(assistant_msg)
-        print(hint)
+        hints: list[str] = []
+        if cache_write > 0 and cache_read == 0:
+            hints.append("\033[2m[cache written — next turn ~10x cheaper]\033[0m")
+        elif cache_read > 0:
+            saved_pct = int(cache_read / max(1, input_tok + cache_read) * 100)
+            hints.append(f"\033[2m[cache hit — saved ~{saved_pct}% input cost]\033[0m")
+        u5h = last_headers[0].get("anthropic-ratelimit-unified-5h-utilization")
+        if u5h is not None:
+            hints.append(f"\033[2m[session {int(float(u5h) * 100)}% used]\033[0m")
+        if hints:
+            print("  ".join(hints))
         print()
 
         _append_jsonl(log_path, {
@@ -231,6 +307,7 @@ def _run_chat_sdk(
             "user": user_msg,
             "assistant": assistant_msg,
         })
+    return 0
 
 
 def _build_system_blocks(p: dict[str, Path], state: dict) -> list[dict]:
@@ -318,7 +395,88 @@ def _load_api_key(p: dict[str, Path]) -> str | None:
                 val = line.split("=", 1)[1].strip().strip('"').strip("'")
                 if val:
                     return val
-    return None
+    return _load_claude_oauth_token()
+
+
+def _load_claude_oauth_token() -> str | None:
+    """Read Claude Code OAuth token from macOS Keychain (fallback when no API key)."""
+    try:
+        import subprocess, json as _json
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            return None
+        data = _json.loads(r.stdout.strip())
+        return data.get("claudeAiOauth", {}).get("accessToken")
+    except Exception:
+        return None
+
+
+def _fmt_usage_bar(pct: float, width: int = 20) -> str:
+    filled = max(0, min(width, round(pct * width)))
+    return "\033[34m" + "█" * filled + "\033[90m" + "░" * (width - filled) + "\033[0m"
+
+
+def _fmt_unified_usage(headers: dict) -> str:
+    """Format anthropic-ratelimit-unified-* headers into a /usage-style display."""
+    from datetime import datetime, timezone as _tz
+
+    def _reset_str(ts_raw: str) -> str:
+        try:
+            ts = int(ts_raw)
+            dt = datetime.fromtimestamp(ts, tz=_tz.utc)
+            secs = (dt - datetime.now(_tz.utc)).total_seconds()
+            if secs <= 0:
+                return "resetting…"
+            if secs < 3600:
+                m, s = divmod(int(secs), 60)
+                return f"resets in {m}m{s:02d}s"
+            if secs < 86400:
+                h = int(secs // 3600)
+                m = int((secs % 3600) // 60)
+                return f"resets in {h}h{m:02d}m"
+            local = dt.astimezone()
+            return "resets " + local.strftime("%b %-d at %-I:%M%p").lower()
+        except Exception:
+            return ""
+
+    lines: list[str] = []
+
+    u5h = headers.get("anthropic-ratelimit-unified-5h-utilization")
+    r5h = headers.get("anthropic-ratelimit-unified-5h-reset")
+    if u5h is not None:
+        pct = float(u5h)
+        reset = _reset_str(r5h) if r5h else ""
+        line = f"\033[1mCurrent session\033[0m   {_fmt_usage_bar(pct)}  {int(pct * 100)}% used"
+        if reset:
+            line += f" · {reset}"
+        lines.append(line)
+
+    u7d = headers.get("anthropic-ratelimit-unified-7d-utilization")
+    r7d = headers.get("anthropic-ratelimit-unified-7d-reset")
+    if u7d is not None:
+        pct = float(u7d)
+        reset = _reset_str(r7d) if r7d else ""
+        line = f"\033[1mCurrent week\033[0m      {_fmt_usage_bar(pct)}  {int(pct * 100)}% used"
+        if reset:
+            line += f" · {reset}"
+        lines.append(line)
+
+    fallback = headers.get("anthropic-ratelimit-unified-fallback")
+    fpct_raw = headers.get("anthropic-ratelimit-unified-fallback-percentage")
+    overage_status = headers.get("anthropic-ratelimit-unified-overage-status")
+    overage_reason = headers.get("anthropic-ratelimit-unified-overage-disabled-reason")
+    if fallback == "available" and fpct_raw is not None:
+        pct = float(fpct_raw)
+        line = f"\033[1mExtra usage\033[0m       {_fmt_usage_bar(pct)}  {int(pct * 100)}% used"
+        lines.append(line)
+    elif overage_status == "rejected":
+        reason = f" ({overage_reason})" if overage_reason else ""
+        lines.append(f"\033[1mExtra usage\033[0m       \033[90munavailable{reason}\033[0m")
+
+    return "\n".join(lines)
 
 
 # ---- subprocess fallback ------------------------------------------------
@@ -336,10 +494,16 @@ def _run_chat_subprocess(
     turns: list[dict] = []
     while True:
         try:
-            user_msg = input(f"chat [{tier}] › ").strip()
+            sys.stdout.write(f"chat [{tier}] › ")
+            sys.stdout.flush()
+            raw = sys.stdin.readline()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
+        if not raw:
+            print()
+            return 0
+        user_msg = raw.rstrip("\n").strip()
         if not user_msg:
             continue
         if user_msg in {"/exit", "/quit", "exit", "quit", "/back", "back"}:

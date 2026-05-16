@@ -11,6 +11,13 @@ from burnless.brain_adapters import BrainAdapter, BrainCapabilities
 from burnless.keepalive import KeepaliveDaemon
 
 
+@pytest.fixture(autouse=True)
+def mock_oauth_token():
+    """Mock OAuth token loading to isolate API key path testing."""
+    with patch("burnless.keepalive._load_claude_oauth_token", return_value=None):
+        yield
+
+
 def _make_adapter() -> BrainAdapter:
     return BrainAdapter(
         key="anthropic",

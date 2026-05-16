@@ -18,6 +18,8 @@ DEFAULT_STATE: dict = {
     "next_keepalive_ts": None,
     "keepalive_last_ts": None,
     "keepalive_last_status": None,
+    "keepalive_mode": "",  # 'api_key' | 'subscription' | ''
+    "keepalive_ttl_window_s": 0,  # 3000 ou 270
 }
 
 
