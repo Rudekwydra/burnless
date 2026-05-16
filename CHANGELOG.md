@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.3] — 2026-05-08
+
+### Documentation — major recalibration
+- **Honest history note added to README.** Acknowledges that earlier docs (0.3.0 → 0.6.7 era, 2026-05-03 to 2026-05-05) overclaimed novelty and savings, with specific corrections: TCP/IP analogy reframed as design inspiration not architectural equivalence; "16× cheaper" labeled as personal-workload anecdote not universal claim; cross-model cache sharing claim retracted (Anthropic prefix cache is per-model). Git history left intact — no rewrites, no cover.
+- `pyproject.toml description` updated from manifest framing to plain technical description.
+- `README.md`, `llms.txt`, `site/llms.txt`, `BURNLESS_FOR_LLMS.md`, `MATH.md`, `PITCH_PT.md`, `LAUNCH_PACKAGE.md`, `soul.md` recalibrated. `VISION.md` left intact per author preference.
+- `Structural context — why this exists` section added to README explaining per-token billing as structural pressure that produces verbosity drift in RLHF-trained models.
+
+### Cache + tone-aware encoder/decoder
+- **`src/burnless/codec/encoder.py`**: cacheable prefix moved to `system` block with `cache_control: ephemeral 1h`. Few-shots expanded from 8 to 25, covering 12 tone registers (formal / casual / mano / diminutivo / telegraphic / code / emotive / meme / bug_report / tentative / imperative / code_review). Capsule output now carries `[tone:X,lang:Y]` tag detected per-message. Estimated prefix size ~2274 tokens — above Haiku's 2048 cache threshold.
+- **`src/burnless/codec/decoder.py`**: cacheable prefix moved to `system` block with `cache_control: ephemeral 1h`. STYLE_GUIDE expanded from 5 to 18 pairs showing same content rendered in different tones based on capsule tone tag. Voice sample remains in user message for per-turn tone matching.
+- Both fail-safe: caching errors never block the hot path; metrics recording never blocks the result.
+
+### Real-time metrics instrumentation
+- **`src/burnless/metrics.py`**: new functions `record_encoder_call`, `record_decoder_call`, `record_brain_call`, `session_snapshot`, `session_diff`. New counters covering encoder/decoder/brain volumes plus `output_decompression_avoided` source. Numbers are conservative floors by construction (decoder output is shorter than what an unprompted Brain Sonnet would produce — RLHF default leans verbose).
+- Wire-up in `encoder.py`, `decoder.py`, `cached_worker.py` is best-effort: observability is never load-bearing.
+
+### Dashboard + CLI
+- **`src/burnless/dashboard.py`**: `render_metrics` expanded with full source breakdown plus counter table. Honest footer note about floor estimation. New `render_session_diff` for snapshot comparison.
+- **`src/burnless/cli.py`**: `burnless metrics --snapshot LABEL` captures point-in-time snapshot; `burnless metrics --diff` shows delta between two most recent snapshots. `/keepalive on` shows daily idle cost warning (~$0.00045 USD/day on Sonnet, capped at 24 pings).
+
+### Critical operating directives in cached prefix
+- **`_design/maestro_v1/brain_role.md`** and **`worker_role.md`**: anti-hype, anti-cerimony, anti-validation-reflex directives prepended to the cached prefix. Forbids "great question" / "absolutely" / "perfect" / hedging "some version of X was thought of" / output ceremony. Mandates output token economy. Applies to all Brain calls and all Worker subprocess calls.
+
+### Bench
+- **`bench/daily_compare.py`**: paired-measurement bench comparing compressed pipeline (Haiku encoder → Sonnet brain → Haiku decoder) vs raw pipeline (Sonnet direct). 10 fixed prompts varying tone/length. Cost cap configurable (default $0.50/batch). Designed for cron/launchd daily scheduling — produces longitudinal data on cross-pipeline output ratio.
+
+### Tests
+- 173/173 passing. Zero regressions from 0.7.2.
+
+### Compatibility
+- Zero breaking changes from 0.7.2. Metrics fields are additive — existing `metrics.json` files are auto-healed on next read. Encoder/decoder cache_control is opt-in via Anthropic's normal cache mechanism (no code change required for existing users).
+
 ## [0.7.2] — 2026-05-07
 
 ### Added
