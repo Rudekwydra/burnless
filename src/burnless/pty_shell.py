@@ -49,9 +49,17 @@ def _read_metrics(metrics_path: Path) -> tuple[int, int]:
         return 0, 0
 
 
-def _status_line(tokens: int, delegations: int, bin_name: str, hint: str = "") -> str:
+def _status_line(tokens: int, delegations: int, bin_name: str, hint: str = "",
+                 burst_delta: int = 0) -> str:
+    """Format the status bar. When burst_delta > 0, append a bright +N badge."""
     base = f"🔥 {tokens:,} burnless tokens · {delegations} delegations · {bin_name}"
-    return f"{base} · {hint}" if hint else base
+    if burst_delta > 0:
+        # Bright orange burst marker (ANSI 208 ≈ orange)
+        burst = f" \033[38;5;208m+{burst_delta:,}\033[33m"
+        base = base + burst
+    if hint:
+        base = f"{base} · {hint}"
+    return base
 
 
 def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, hint: str = "") -> int:
@@ -88,6 +96,26 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
             except OSError:
                 pass
 
+    _PRO_TIPS = [
+        "Pro: capsules + index server-side · O(N) cross-session",
+        "Pro: bruto nunca persiste no server (zero-retention)",
+        "Pro: nightly consolidation pelo seu Bronze local",
+        "Pro: cache hot compartilhado entre devices",
+        "Free comprova. Pro escala.",
+        "Pro: PageRank cross-capsule emerge do uso",
+    ]
+
+    _session = {
+        "last_metrics_mtime": 0.0,
+        "last_tokens": 0,
+        "burst_until": 0.0,
+        "burst_delta": 0,
+        "tip_index": 0,
+        "tip_last_swap": time.time(),
+    }
+    _TIP_SWAP_EVERY = 10.0   # seconds
+    _BURST_DURATION = 1.0    # seconds the orange "+N" stays visible
+
     # Matches CSI scroll-region commands (ESC [ <opt numbers> r) AND
     # screen clears that imply terminal reset (ESC [ 2J, ESC [ 3J, ESC [ H+2J).
     _SCROLL_RE = _re.compile(rb"\x1b\[[\d;]*r")
@@ -107,16 +135,24 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
         tokens, delegations = 0, 0
         if metrics_path:
             tokens, delegations = _read_metrics(metrics_path)
-        line = _status_line(tokens, delegations, bin_name, hint)[:cur_cols - 1]
-        title_text = f"\U0001f525 {tokens:,} bt · {delegations}d" + (f" · {hint}" if hint else "")
+        # Pull burst + tip from session
+        now = time.time()
+        burst_delta = _session["burst_delta"] if now < _session["burst_until"] else 0
+        # Rotate tip every _TIP_SWAP_EVERY seconds
+        if now - _session["tip_last_swap"] >= _TIP_SWAP_EVERY:
+            _session["tip_index"] = (_session["tip_index"] + 1) % len(_PRO_TIPS)
+            _session["tip_last_swap"] = now
+        active_hint = _PRO_TIPS[_session["tip_index"]] if hint == "" else hint
+        line = _status_line(tokens, delegations, bin_name, active_hint, burst_delta)[:cur_cols - 1]
+        title_text = f"\U0001f525 {tokens:,} bt · {delegations}d"
         bar = (
-            f"\0337"                           # DEC save cursor
-            f"\033[1;{pty_rows}r"              # re-assert scroll region
-            f"\033[{cur_rows};1H"              # jump to last (unprotected) row
-            f"\033[2K"                         # clear
-            f"\033[33m{line}\033[0m"           # yellow status text
-            f"\033]0;{title_text}\007"         # terminal title (survives Claude clear)
-            f"\0338"                           # DEC restore cursor
+            f"\0337"
+            f"\033[1;{pty_rows}r"
+            f"\033[{cur_rows};1H"
+            f"\033[2K"
+            f"\033[33m{line}\033[0m"
+            f"\033]0;{title_text}\007"
+            f"\0338"
         ).encode()
         _write_out(bar)
 
@@ -141,11 +177,32 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
                 except OSError:
                     pass
 
+    def _poll_metrics_for_burst() -> None:
+        """Watch metrics file mtime; trigger burst on detected token delta."""
+        if metrics_path is None or not metrics_path.exists():
+            return
+        try:
+            mtime = metrics_path.stat().st_mtime
+        except OSError:
+            return
+        if mtime <= _session["last_metrics_mtime"]:
+            return
+        _session["last_metrics_mtime"] = mtime
+        tokens, _ = _read_metrics(metrics_path)
+        delta = tokens - _session["last_tokens"]
+        _session["last_tokens"] = tokens
+        if delta > 0:
+            _session["burst_delta"] = delta
+            _session["burst_until"] = time.time() + _BURST_DURATION
+            if _debug_log:
+                _dlog(f"burst triggered: +{delta} tokens")
+
     def _status_updater() -> None:
         # Refresh 5x/s so a stale bar self-corrects within 200ms after any glitch.
         # Cheap: only writes ~200 bytes per tick.
         while not stop_ev.is_set():
             try:
+                _poll_metrics_for_burst()
                 ts2 = os.get_terminal_size()
                 _draw_status(ts2.lines, ts2.columns)
             except OSError:
