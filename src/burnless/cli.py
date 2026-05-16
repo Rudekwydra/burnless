@@ -23,6 +23,7 @@ from . import brain_adapters
 from . import dashboard
 from . import live_runner
 from .estimator import estimate_tokens
+from .codec.decoder import normalize_worker_envelope
 
 _THOUGHT_HINTS = (
     "planeje", "plano", "plan", "design", "desenhe", "arquitetura", "architecture",
@@ -63,6 +64,29 @@ def _load_anthropic_key() -> str | None:
                     os.environ["ANTHROPIC_API_KEY"] = key
                     return key
     return None
+
+
+def _tier_has_multiple_providers(agent_cfg: dict) -> bool:
+    providers = agent_cfg.get("providers")
+    return isinstance(providers, list) and len([p for p in providers if isinstance(p, dict)]) > 1
+
+
+def _select_provider_cfg(agent_cfg: dict, *, tier: str) -> tuple[dict, list[dict]]:
+    ranked = agents_mod.rank_providers(agent_cfg, tier=tier)
+    if not ranked:
+        return agent_cfg, []
+    return ranked[0]["cfg"], ranked
+
+
+def _record_provider_attempt(tier: str, provider_cfg: dict, result: dict) -> None:
+    success = int(result.get("returncode") or 0) == 0 and not bool(result.get("timed_out")) and not bool(result.get("stale"))
+    agents_mod.record_provider_result(
+        tier=tier,
+        provider_cfg=provider_cfg,
+        success=success,
+        latency_s=float(result.get("duration_s") or 0.0),
+        error_at=datetime.now(timezone.utc).isoformat() if not success else None,
+    )
 
 
 def _run_with_maestro(
@@ -422,22 +446,37 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     goal = args.goal or text
     success = args.success or "task completed; final JSON block emitted as required."
     kind_hint = _infer_kind_hint(text)
-    body = deleg_mod.render_delegation(
-        delegation_id=did,
-        goal=goal,
-        task=text,
-        success=success,
-        kind_hint=kind_hint,
-        agent_name=agent_cfg["name"],
-        tier=tier,
-        routed_by=kw,
-    )
+    chat_mode = bool(getattr(args, "chat", False))
+    if chat_mode:
+        body = deleg_mod.render_maestro_chat(
+            delegation_id=did,
+            task=text,
+            agent_name=agent_cfg["name"],
+            tier=tier,
+        )
+    else:
+        body = deleg_mod.render_delegation(
+            delegation_id=did,
+            goal=goal,
+            task=text,
+            success=success,
+            kind_hint=kind_hint,
+            agent_name=agent_cfg["name"],
+            tier=tier,
+            routed_by=kw,
+        )
     deleg_path = p["delegations"] / f"{did}.md"
     if chain:
         header = f"---\nchain: [{', '.join(chain)}]\n---\n"
         deleg_mod.write_delegation(deleg_path, header + body)
     else:
         deleg_mod.write_delegation(deleg_path, body)
+    # Marker file so the shell renderer knows to display the natural-text
+    # response rather than parsing for the JSON schema (which won't exist).
+    if chat_mode:
+        runs_dir = p["root"] / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        (runs_dir / f"{did}.chat").write_text("", encoding="utf-8")
     state = state_mod.load(p["state"])
     state["last_delegation"] = did
     state_mod.save(p["state"], state)
@@ -536,19 +575,24 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     # which tier did we pick at delegate time?
     # cheap parse: look at "agent:" line in the markdown
     tier = _parse_tier_from_delegation(prompt) or "bronze"
+    prompt = agents_mod.maybe_prepend_prior_decision(prompt, tier=tier)
     agent_cfg = cfg["agents"][tier]
+    selected_agent_cfg, ranked_providers = _select_provider_cfg(agent_cfg, tier=tier)
+    selected_provider = selected_agent_cfg.get("provider") or selected_agent_cfg.get("name")
 
     if args.dry_run:
-        print(f"[dry-run] would run: {' '.join(agents_mod.resolve_command(agent_cfg))}")
+        print(f"[dry-run] would run: {' '.join(agents_mod.resolve_command(selected_agent_cfg))}")
+        if selected_provider:
+            print(f"[dry-run] selected provider: {selected_provider}")
         print(f"[dry-run] prompt size: {len(prompt)} chars (~{estimate_tokens(prompt)} tokens)")
         return 0
 
-    if not agents_mod.is_available(agent_cfg):
+    if not agents_mod.is_available(selected_agent_cfg):
         print(
-            f"burnless: agent binary not in PATH for tier {tier} ({agent_cfg.get('name')}).",
+            f"burnless: agent binary not in PATH for tier {tier} ({selected_agent_cfg.get('name')}).",
             file=sys.stderr,
         )
-        print(f"  configured command: {agent_cfg['command']}", file=sys.stderr)
+        print(f"  configured command: {selected_agent_cfg['command']}", file=sys.stderr)
         print("  fix: install the CLI or edit .burnless/config.yaml", file=sys.stderr)
         return 3
 
@@ -574,7 +618,8 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     run_plan = {
         "id": did,
         "tier": tier,
-        "agent": agent_cfg.get("name"),
+        "agent": selected_agent_cfg.get("name"),
+        "provider": selected_provider,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "delegation": str(p["delegations"] / f"{did}.md"),
     }
@@ -584,13 +629,14 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     )
 
     api_key = _load_anthropic_key()
-    use_maestro = _should_use_maestro_backend(args, cfg, tier)
-    use_cached_worker = not use_maestro and _should_use_cached_worker(args, cfg, tier, api_key)
+    multi_provider = _tier_has_multiple_providers(agent_cfg)
+    use_maestro = (not multi_provider) and _should_use_maestro_backend(args, cfg, tier)
+    use_cached_worker = (not multi_provider) and (not use_maestro) and _should_use_cached_worker(args, cfg, tier, api_key)
     result: dict | None = None
     backend_used = "subprocess"
     if use_maestro:
         result = _run_with_maestro(
-            p, did=did, tier=tier, agent_cfg=agent_cfg, prompt=prompt, log_path=log_path,
+            p, did=did, tier=tier, agent_cfg=selected_agent_cfg, prompt=prompt, log_path=log_path,
         )
         if result is not None:
             backend_used = "maestro"
@@ -618,10 +664,10 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
 
     if result is None:
         try:
-            result_obj = live_runner.run_with_live_panel(
+            result_obj = live_runner.run_with_overflow_retries(
                 delegation_id=did,
                 tier=tier,
-                agent_cfg=agent_cfg,
+                agent_cfg=selected_agent_cfg,
                 prompt=prompt,
                 log_path=log_path,
                 mode=run_mode,
@@ -629,13 +675,63 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 timeout=args.timeout,
                 stale_timeout=stale_timeout_s,
                 cwd=root.parent,
+                tier_agents=cfg.get("agents", {}),
             )
             result = result_obj.to_dict()
         except Exception as e:
             print(f"Runner failed; falling back to plain runner. ({e})", file=sys.stderr)
-            print(f"Running {did} with {tier}/{agent_cfg['name']}...")
-            result = agents_mod.run(agent_cfg, prompt, timeout=args.timeout, cwd=root.parent)
+            print(f"Running {did} with {tier}/{selected_agent_cfg['name']}...")
+            result = agents_mod.run(selected_agent_cfg, prompt, timeout=args.timeout, cwd=root.parent)
             deleg_mod.write_log(log_path, result)
+
+    if result is not None and backend_used in {"subprocess", "cached_worker"} and not result.get("provider_attempts"):
+        _record_provider_attempt(tier, selected_agent_cfg, result)
+
+    if (
+        result is not None
+        and ranked_providers
+        and len(ranked_providers) > 1
+        and agents_mod._retryable_provider_failure(result)
+        and int(result.get("returncode") or 0) != 0
+    ):
+        fallback_cfg = ranked_providers[1]["cfg"]
+        print(
+            f"[provider-fallback] {did}: {selected_provider} failed, retrying with {fallback_cfg.get('provider') or fallback_cfg.get('name')}",
+            file=sys.stderr,
+        )
+        if backend_used == "subprocess":
+            fallback_result = live_runner.run_with_live_panel(
+                delegation_id=did,
+                tier=tier,
+                agent_cfg=fallback_cfg,
+                prompt=prompt,
+                log_path=log_path,
+                mode=run_mode,
+                burnless_tokens=bt_before,
+                timeout=args.timeout,
+                stale_timeout=stale_timeout_s,
+                cwd=root.parent,
+                append_log=True,
+            ).to_dict()
+        else:
+            fallback_result = agents_mod.run(fallback_cfg, prompt, timeout=args.timeout, cwd=root.parent, tier=tier)
+            with log_path.open("a", encoding="utf-8") as _lf:
+                _lf.write("\n\n--- PROVIDER FALLBACK ATTEMPT ---\n" + fallback_result.get("stdout", "") + "\n")
+        if not fallback_result.get("provider_attempts"):
+            _record_provider_attempt(tier, fallback_cfg, fallback_result)
+        fallback_result["provider_attempts"] = [
+            {
+                "provider": selected_provider,
+                "returncode": result.get("returncode"),
+                "timed_out": bool(result.get("timed_out")) or bool(result.get("stale")),
+            },
+            {
+                "provider": fallback_cfg.get("provider") or fallback_cfg.get("name"),
+                "returncode": fallback_result.get("returncode"),
+                "timed_out": bool(fallback_result.get("timed_out")) or bool(fallback_result.get("stale")),
+            },
+        ]
+        result = fallback_result
 
     # Always isolate raw log out of the main context.
     raw_size = estimate_tokens(result.get("stdout", "")) + estimate_tokens(result.get("stderr", ""))
@@ -643,7 +739,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
         p,
         source="raw_logs_isolated",
         amount=raw_size,
-        reason=f"raw stdout/stderr from {agent_cfg['name']} kept out of main context",
+        reason=f"raw stdout/stderr from {selected_agent_cfg['name']} kept out of main context",
         delegation_id=did,
         usd_per_million=cfg["metrics"]["expensive_model_usd_per_million"],
     )
@@ -652,7 +748,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     stale = bool(result.get("stale"))
     extracted_json = deleg_mod.extract_result_json(result.get("stdout", ""))
     if extracted_json is not None:
-        summary = extracted_json
+        summary = normalize_worker_envelope(extracted_json)
         summary["kind"] = _normalize_report_kind(summary.get("kind") or summary.get("report_kind") or _infer_kind_hint(prompt))
         _ev = summary.get("evidence")
         if not isinstance(_ev, list) or not _ev:
@@ -670,19 +766,19 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                     "path verificado, saída observada. Campo vazio = tarefa incompleta."
                 )
                 _retry_result = agents_mod.run(
-                    agent_cfg, prompt + _retry_msg, timeout=args.timeout, cwd=root.parent
+                    selected_agent_cfg, prompt + _retry_msg, timeout=args.timeout, cwd=root.parent, tier=tier
                 )
                 with log_path.open("a", encoding="utf-8") as _lf:
                     _lf.write("\n\n--- EVIDENCE_RETRY ---\n" + _retry_result.get("stdout", "") + "\n")
                 _retry_json = deleg_mod.extract_result_json(_retry_result.get("stdout", ""))
                 if _retry_json is not None:
-                    summary = _retry_json
+                    summary = normalize_worker_envelope(_retry_json)
                     summary["kind"] = _normalize_report_kind(summary.get("kind") or summary.get("report_kind") or _infer_kind_hint(prompt))
     elif backend_used == "maestro" and result["returncode"] == 0 and not interrupted:
         # Maestro mode: assistant text without explicit JSON still counts as OK.
         snippet = (result.get("stdout") or "").strip().splitlines()
         first_line = snippet[0] if snippet else ""
-        summary = {
+        summary = normalize_worker_envelope({
             "id": did,
             "status": "OK",
             "kind": _infer_kind_hint(prompt),
@@ -691,7 +787,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             "validated": [],
             "issues": [],
             "next": "",
-        }
+        })
     else:
         if stale:
             _status = "PART"
@@ -705,7 +801,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             _status = "ERR" if result["returncode"] != 0 else "PART"
             _summary = "(agent did not emit final JSON block)"
             _issue = "missing_final_json" if result["returncode"] == 0 else f"returncode={result['returncode']}"
-        summary = {
+        summary = normalize_worker_envelope({
             "id": did,
             "status": _status,
             "kind": _infer_kind_hint(prompt),
@@ -714,7 +810,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             "validated": [],
             "issues": [_issue],
             "next": "",
-        }
+        })
 
     # ── BLK lazy fetch fallback (P3) ─────────────────────────────────────────
     _blk_initial = str(summary.get("status") or "").upper()
@@ -757,6 +853,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                     _lf.write("\n\n--- LAZY_FALLBACK ---\n" + _blk_retry.get("stdout", "") + "\n")
                 _blk_rj = deleg_mod.extract_result_json(_blk_retry.get("stdout", ""))
                 if _blk_rj is not None:
+                    _blk_rj = normalize_worker_envelope(_blk_rj)
                     _blk_rj["kind"] = _normalize_report_kind(
                         _blk_rj.get("kind") or _blk_rj.get("report_kind") or _infer_kind_hint(prompt)
                     )
@@ -812,7 +909,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                     _rescue_evidence = list(_rescue_json.get("evidence") or [])
                     _rescue_files = list(_rescue_json.get("files_found") or [])
                     print(f"[bronze-rescue] {did}: rescued=True — work verified despite stale_worker", file=sys.stderr)
-                    summary = {
+                    summary = normalize_worker_envelope({
                         "id": did,
                         "status": "OK",
                         "kind": _infer_kind_hint(prompt),
@@ -823,7 +920,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                         "issues": ["rescued_from_stale"],
                         "next": "",
                         "_bronze_rescue": _rescue_json,
-                    }
+                    })
                     stale = False
                 else:
                     print(f"[bronze-rescue] {did}: rescued=False — proceeding to retry with timeout*2", file=sys.stderr)
@@ -840,9 +937,15 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
 
     _cur_status = str(summary.get("status") or "").upper()
     if _cur_status in ("PART", "ERR") and not interrupted:
+        _summary_issues = {str(x) for x in (summary.get("issues") or [])}
+        if "context_overflow_retry_exhausted" in _summary_issues:
+            _do_retry = False
+        else:
+            _do_retry = None
         _is_stale = stale and "stale_worker" in (summary.get("issues") or [])
         _attempts_left = 1 if _is_stale else _max_attempts
-        _do_retry = (_is_stale and _stale_retry_enabled) or (not _is_stale and _attempts_left > 0)
+        if _do_retry is None:
+            _do_retry = (_is_stale and _stale_retry_enabled) or (not _is_stale and _attempts_left > 0)
 
         while _do_retry and _attempts_left > 0:
             _attempts_left -= 1
@@ -871,14 +974,14 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             _r_stale = bool(_retry_res.get("stale"))
             _r_interrupted = bool(_retry_res.get("interrupted"))
             if _rj is not None:
-                _r_sum = _rj
+                _r_sum = normalize_worker_envelope(_rj)
                 _r_sum["kind"] = _normalize_report_kind(
                     _r_sum.get("kind") or _r_sum.get("report_kind") or _infer_kind_hint(prompt)
                 )
             else:
                 _r_rc = _retry_res.get("returncode", 1)
                 _r_issue = "stale_worker" if _r_stale else ("missing_final_json" if _r_rc == 0 else f"returncode={_r_rc}")
-                _r_sum = {
+                _r_sum = normalize_worker_envelope({
                     "id": did,
                     "status": "ERR" if _r_rc != 0 else "PART",
                     "kind": _infer_kind_hint(prompt),
@@ -887,7 +990,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                     "validated": [],
                     "issues": [_r_issue],
                     "next": "",
-                }
+                })
 
             _retry_count += 1
             _new_status = str(_r_sum.get("status") or "").upper()
@@ -945,7 +1048,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                     _lf.write("\n\n--- AUDIT_RETRY ---\n" + _ar.get("stdout", "") + "\n")
                 _ar_json = deleg_mod.extract_result_json(_ar.get("stdout", ""))
                 if _ar_json is not None:
-                    _ar_sum = _ar_json
+                    _ar_sum = normalize_worker_envelope(_ar_json)
                     _ar_sum["kind"] = _normalize_report_kind(
                         _ar_sum.get("kind") or _ar_sum.get("report_kind") or _infer_kind_hint(prompt)
                     )
@@ -974,6 +1077,12 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     else:
         summary["audit_status"] = _raw_audit_st
     summary["test_status"] = _extract_test_status(summary)
+    agents_mod.remember_silver_decision(
+        tier=tier,
+        prompt=prompt,
+        summary=summary,
+        stdout=result.get("stdout", ""),
+    )
 
     deleg_mod.write_summary(p["temp"] / f"{did}.json", summary)
 
@@ -1462,13 +1571,146 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_providers_stats(args: argparse.Namespace) -> int:
+    snapshot = agents_mod.provider_health_snapshot()
+    rows = agents_mod.list_provider_stats()
+    last_used = snapshot.get("last_used_provider")
+    if last_used:
+        provider_name = last_used.get("provider") or last_used.get("name") or "-"
+        print(
+            f"last_used_provider={provider_name} "
+            f"tier={last_used.get('tier') or '-'} "
+            f"updated_at={last_used.get('updated_at') or '-'}"
+        )
+    if not rows:
+        print("(no provider health stats)")
+        return 0
+    for row in rows:
+        print(
+            f"{row.get('key')} "
+            f"success_rate={float(row.get('success_rate') or 0.0):.2f} "
+            f"avg_latency={float(row.get('avg_latency') or 0.0):.2f}s "
+            f"last_error_at={row.get('last_error_at') or '-'}"
+        )
+    return 0
+
+
+def cmd_providers_reset(args: argparse.Namespace) -> int:
+    cleared = agents_mod.reset_provider_health()
+    print(f"cleared {cleared} provider health record(s)")
+    return 0
+
+
+def cmd_provider_status(args: argparse.Namespace) -> int:
+    return cmd_providers_stats(args)
+
+
+def cmd_provider_reset(args: argparse.Namespace) -> int:
+    return cmd_providers_reset(args)
+
+
+def cmd_decisions_list(args: argparse.Namespace) -> int:
+    entries = agents_mod.list_decisions()
+    if getattr(args, "json", False):
+        print(json.dumps(entries, indent=2, ensure_ascii=False))
+        return 0
+    if not entries:
+        print("(no cached decisions)")
+        return 0
+    for entry in entries:
+        print(
+            f"{entry.get('decision_hash')} "
+            f"hits={entry.get('hits', 0)} "
+            f"last_used={entry.get('last_used', '')}"
+        )
+        print(f"  context: {entry.get('context_summary', '')}")
+        print(f"  decision: {entry.get('decision_text', '')}")
+    return 0
+
+
+def cmd_decisions_clear(args: argparse.Namespace) -> int:
+    cleared = agents_mod.clear_decisions()
+    print(f"cleared {cleared} cached decision(s)")
+    return 0
+
+
 def cmd_metrics(args: argparse.Namespace) -> int:
+    if getattr(args, "metrics_cmd", None) == "desktop":
+        return cmd_metrics_desktop(args)
+
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
+
+    snapshot_label = getattr(args, "snapshot", None)
+    if snapshot_label:
+        snap = metrics_mod.session_snapshot(p["metrics"], label=snapshot_label)
+        print(f"snapshot saved: {snapshot_label} @ {snap['ts']}")
+        print(f"  burnless_tokens={snap['burnless_tokens']:,}  encoder={snap['encoder_calls']}  decoder={snap['decoder_calls']}  brain={snap['brain_calls']}")
+        return 0
+
+    if getattr(args, "diff", False):
+        diff = metrics_mod.session_diff(p["metrics"])
+        print(dashboard.render_session_diff(diff))
+        return 0
+
     m = metrics_mod.load(p["metrics"])
     show_cost = bool(cfg.get("metrics", {}).get("show_estimated_cost", True))
     print(dashboard.render_metrics(m, show_cost=show_cost))
+    return 0
+
+
+def cmd_metrics_desktop(args: argparse.Namespace) -> int:
+    turns_path = Path.home() / ".burnless" / "desktop" / "turns.jsonl"
+    if not turns_path.exists():
+        print(f"desktop metrics: no turns file at {turns_path}")
+        return 0
+
+    rows: list[dict] = []
+    with turns_path.open("r", encoding="utf-8") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+
+    if not rows:
+        print(f"desktop metrics: no valid rows in {turns_path}")
+        return 0
+
+    total_input = sum(int(row.get("input_tokens", 0) or 0) for row in rows)
+    total_output = sum(int(row.get("output_tokens", 0) or 0) for row in rows)
+    total_cache_read = sum(int(row.get("cache_read_tokens", 0) or 0) for row in rows)
+
+    latency_values = [
+        int(row["latency_ms"])
+        for row in rows
+        if row.get("latency_ms") is not None
+    ]
+    avg_latency = (sum(latency_values) / len(latency_values)) if latency_values else 0.0
+
+    cumulative_compression_ratio = 0.0
+    for row in rows:
+        ratio = row.get("compression_ratio")
+        if ratio is not None:
+            cumulative_compression_ratio += float(ratio or 0)
+            continue
+        original = int(row.get("user_tokens_original", 0) or 0)
+        compressed = int(row.get("user_tokens_compressed", 0) or 0)
+        if compressed > 0:
+            cumulative_compression_ratio += original / compressed
+
+    print(f"Desktop turns: {len(rows)}")
+    print(f"Avg latency: {avg_latency:.1f} ms")
+    print(f"Total tokens: {total_input + total_output}")
+    print(f"Total cache_read: {total_cache_read}")
+    print(f"Cumulative compression_ratio: {cumulative_compression_ratio:.4f}")
+    print(f"Source: {turns_path}")
     return 0
 
 
@@ -1698,7 +1940,21 @@ def cmd_brain(args: argparse.Namespace) -> int:
                 persisted = " (saved)"
             except Exception:
                 persisted = " (not saved)"
-            return f"keepalive: {'enabled' if arg == 'on' else 'disabled'}{persisted}"
+            if arg == "on":
+                # Daily idle cost warning. 1 ping per ~50min, capped at
+                # max_pings_per_session (default 24/day). Each ping = 1 input
+                # + 1 output token. On Sonnet 4.6 ($3/M input + $15/M output)
+                # that is ~$0.000018 per ping × 24 = ~$0.00043/day idle.
+                # Negligible by design — but show it once so the user owns
+                # the choice.
+                return (
+                    f"keepalive: enabled{persisted}\n"
+                    f"  ATTENTION: forgetting keepalive on while idle costs "
+                    f"~$0.00045 USD per full day idle on Sonnet (24 pings × ~$0.000018).\n"
+                    f"  If that's worth keeping cache warm for you, leave it on. "
+                    f"If not, /keepalive off."
+                )
+            return f"keepalive: disabled{persisted}"
         st = state_mod.load(p["state"])
         enabled = ka_cfg.get("enabled", False)
         last_ts = st.get("keepalive_last_ts") or "never"
@@ -2137,6 +2393,12 @@ def cmd_shell(args: argparse.Namespace) -> int:
     return shell.main()
 
 
+def cmd_pty(args: argparse.Namespace) -> int:
+    from . import pty_shell
+
+    return pty_shell.main(argv_extra=getattr(args, "args", None) or [])
+
+
 def cmd_route(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
@@ -2267,9 +2529,43 @@ def _parse_goal_from_delegation(md: str) -> str | None:
     return text or None
 
 
+def cmd_profile(args: argparse.Namespace) -> int:
+    from . import profiles as profiles_mod
+    sub = getattr(args, "profile_cmd", None)
+    if sub == "list":
+        names = profiles_mod.list_profiles()
+        if names:
+            print("\n".join(names))
+        else:
+            print("(no profiles found)")
+        return 0
+    if sub == "init":
+        path = profiles_mod.init_profile(args.name, getattr(args, "template", None))
+        print(f"created {path}")
+        return 0
+    if sub == "show":
+        import yaml as _yaml
+        cfg = profiles_mod.resolve_profile(args.name)
+        print(_yaml.dump(cfg, sort_keys=False, allow_unicode=True), end="")
+        return 0
+    if sub == "switch":
+        print(f"export BURNLESS_PROFILE={args.name}")
+        return 0
+    # no sub-subcommand
+    import argparse as _ap
+    args._parser.print_help()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="burnless", description=TAGLINE)
     p.add_argument("--version", action="version", version=f"burnless {__version__}")
+    p.add_argument(
+        "--profile", "-p",
+        metavar="NAME",
+        default=None,
+        help="use a named profile from ~/.burnless/profiles/<NAME>.yaml (overrides BURNLESS_PROFILE env)",
+    )
     sub = p.add_subparsers(dest="cmd")
 
     sp = sub.add_parser("init", help="initialize .burnless/ in current directory")
@@ -2295,6 +2591,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="manually override the hard tier gate when selecting a higher tier",
+    )
+    sp.add_argument(
+        "--chat",
+        action="store_true",
+        help="Maestro chat mode: render conversational template (no JSON schema, natural-text response)",
     )
     sp.set_defaults(func=cmd_delegate)
 
@@ -2346,7 +2647,51 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_status)
 
     sp = sub.add_parser("metrics", help="show counters and estimated cost avoided")
+    metrics_sub = sp.add_subparsers(dest="metrics_cmd")
+    dsp = metrics_sub.add_parser("desktop", help="show desktop turn metrics from ~/.burnless/desktop/turns.jsonl")
+    dsp.set_defaults(func=cmd_metrics_desktop)
+    sp.add_argument(
+        "--snapshot",
+        metavar="LABEL",
+        help="capture a metrics snapshot with this label (e.g. 'session_start', 'session_end')",
+    )
+    sp.add_argument(
+        "--diff",
+        action="store_true",
+        help="show delta between the two most recent snapshots",
+    )
     sp.set_defaults(func=cmd_metrics)
+
+    sp = sub.add_parser("providers", help="inspect or reset multi-provider health stats")
+    providers_sub = sp.add_subparsers(dest="providers_cmd")
+    sp.set_defaults(func=lambda args, parser=sp: parser.print_help() or 0)
+    psp = providers_sub.add_parser("stats", help="show provider health stats")
+    psp.set_defaults(func=cmd_providers_stats)
+    psp = providers_sub.add_parser("reset", help="clear provider health stats")
+    psp.set_defaults(func=cmd_providers_reset)
+
+    sp = sub.add_parser("provider", help="inspect or reset multi-provider health stats")
+    provider_sub = sp.add_subparsers(dest="provider_cmd")
+    sp.set_defaults(func=lambda args, parser=sp: parser.print_help() or 0)
+    psp = provider_sub.add_parser("status", help="show provider health stats")
+    psp.set_defaults(func=cmd_provider_status)
+    psp = provider_sub.add_parser("reset", help="clear provider health stats")
+    psp.set_defaults(func=cmd_provider_reset)
+
+    sp = sub.add_parser("provider-stats", help="show provider health stats")
+    sp.set_defaults(func=cmd_providers_stats)
+
+    sp = sub.add_parser("provider-reset", help="clear provider health stats")
+    sp.set_defaults(func=cmd_providers_reset)
+
+    sp = sub.add_parser("decisions", help="inspect or clear the silver decisions cache")
+    decisions_sub = sp.add_subparsers(dest="decisions_cmd")
+    sp.set_defaults(func=lambda args, parser=sp: parser.print_help() or 0)
+    dsp = decisions_sub.add_parser("list", help="list cached architectural decisions")
+    dsp.add_argument("--json", action="store_true", help="emit raw JSON")
+    dsp.set_defaults(func=cmd_decisions_list)
+    dsp = decisions_sub.add_parser("clear", help="clear cached architectural decisions")
+    dsp.set_defaults(func=cmd_decisions_clear)
 
     sp = sub.add_parser("brain", help="enter Maestro brain chat (model configurable in .burnless/config.yaml)")
     sp.add_argument("--message", "-m", help="single-shot mode")
@@ -2394,6 +2739,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("shell", help="open the legacy delegation shell")
     sp.set_defaults(func=cmd_shell)
+
+    sp = sub.add_parser("pty", help="spawn the real maestro CLI (claude/codex) with 🔥 Burnless header")
+    sp.add_argument("args", nargs="*", help="extra args forwarded to the maestro binary")
+    sp.set_defaults(func=cmd_pty)
+
+    sp = sub.add_parser("profile", help="manage named profiles (~/.burnless/profiles/)")
+    sp.set_defaults(func=cmd_profile, _parser=sp)
+    profile_sub = sp.add_subparsers(dest="profile_cmd")
+    psp = profile_sub.add_parser("list", help="list available profiles")
+    psp.set_defaults(func=cmd_profile, _parser=psp, profile_cmd="list")
+    psp = profile_sub.add_parser("init", help="create a new profile")
+    psp.add_argument("name", help="profile name")
+    psp.add_argument("--template", "-t", choices=["claude", "codex", "ollama", "antigrav"], default=None)
+    psp.set_defaults(func=cmd_profile, _parser=psp, profile_cmd="init")
+    psp = profile_sub.add_parser("show", help="print resolved YAML for a profile")
+    psp.add_argument("name", help="profile name")
+    psp.set_defaults(func=cmd_profile, _parser=psp, profile_cmd="show")
+    psp = profile_sub.add_parser("switch", help="print export command to activate a profile")
+    psp.add_argument("name", help="profile name")
+    psp.set_defaults(func=cmd_profile, _parser=psp, profile_cmd="switch")
 
     sp = sub.add_parser(
         "do",

@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
+from .codec.decoder import normalize_worker_envelope
+
 
 DELEGATION_TEMPLATE = """\
 # Delegation {id}
@@ -46,10 +48,48 @@ DELEGATION_TEMPLATE = """\
   "files_touched": [],
   "validated": [],
   "evidence": ["<command/file/log/check observed>"],
+  "density": {{"efficiency": 0.5, "creativity": 0.5, "out_of_box": 0.5}},
+  "salience": 0.5,
   "issues": [],
   "next": "<short hint or empty string>"
 }}
 ```
+"""
+
+
+# Maestro chat — used for the persistent brain worker that the user talks
+# to directly in the burnless shell. No JSON schema, no evidence contract:
+# the worker should answer like a colleague in the same chat thread, in
+# the user's language, using tools when needed and explaining what it did.
+# Only sub-delegations (which the Maestro spawns via `burnless do --tier X`)
+# need the JSON schema.
+MAESTRO_CHAT_TEMPLATE = """\
+# Conversa {id} (Maestro)
+
+- **created_at:** {ts}
+- **agent:** {agent_name} ({tier}) — Maestro
+- **session:** persistent (via --resume)
+
+## Mensagem do usuário
+
+{task}
+
+## Como responder
+
+- Você é o Maestro Burnless: o worker principal que conversa direto com o
+  usuário no shell. Mantém continuidade da conversa (turns anteriores
+  estão no contexto via session resume).
+- Responda em português natural, como colega no chat. Sem schema JSON,
+  sem campo "evidence", sem `{{"status":...}}`.
+- Use suas ferramentas (Read, Edit, Write, Bash, Glob, Grep) sempre que
+  precisar olhar/mexer em arquivos. Diga o que fez.
+- Se a tarefa pede execução pesada ou paralela, você pode delegar para
+  sub-workers stateless via Bash:
+    `burnless do --tier silver "tarefa específica"` (silver/sonnet)
+    `burnless do --tier gold "decisão arquitetural"` (gold/opus)
+    `burnless do --tier bronze "leitura/classificação"` (bronze/haiku)
+  Sub-delegações não compartilham seu histórico — passe contexto no prompt.
+- Termine com a próxima ação clara ou pergunta objetiva. Sem JSON ao final.
 """
 
 
@@ -77,6 +117,22 @@ def render_delegation(
     )
 
 
+def render_maestro_chat(
+    *,
+    delegation_id: str,
+    task: str,
+    agent_name: str,
+    tier: str,
+) -> str:
+    return MAESTRO_CHAT_TEMPLATE.format(
+        id=delegation_id,
+        ts=datetime.now(timezone.utc).isoformat(),
+        task=task,
+        agent_name=agent_name,
+        tier=tier,
+    )
+
+
 def extract_result_json(stdout: str) -> dict | None:
     """Find the last fenced ```json block in stdout and parse it. Best-effort."""
     if not stdout:
@@ -91,7 +147,7 @@ def extract_result_json(stdout: str) -> dict | None:
     close = rest.find(end_marker)
     payload = rest[:close] if close != -1 else rest
     try:
-        return json.loads(payload.strip())
+        return normalize_worker_envelope(json.loads(payload.strip()))
     except json.JSONDecodeError:
         return _try_trailing_json(stdout)
 
@@ -110,7 +166,7 @@ def _try_trailing_json(stdout: str) -> dict | None:
             depth -= 1
             if depth == 0:
                 try:
-                    return json.loads(s[i:])
+                    return normalize_worker_envelope(json.loads(s[i:]))
                 except json.JSONDecodeError:
                     return None
     return None

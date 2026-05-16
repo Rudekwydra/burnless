@@ -207,11 +207,11 @@ def suggest(det: Detection) -> dict:
 
     if claude.available:
         out["gold"]["name"] = "opus"
-        out["gold"]["command"] = "claude --model claude-opus-4-7 --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS,WebFetch -p"
+        out["gold"]["command"] = "claude --model claude-opus-4-7 --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS,WebFetch -p --output-format stream-json --verbose --include-partial-messages"
         out["silver"]["name"] = "sonnet"
-        out["silver"]["command"] = "claude --model claude-sonnet-4-6 --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS -p"
+        out["silver"]["command"] = "claude --model claude-sonnet-4-6 --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS -p --output-format stream-json --verbose --include-partial-messages"
         out["bronze"]["name"] = "haiku"
-        out["bronze"]["command"] = "claude --model claude-haiku-4-5-20251001 --allowedTools Read,Bash,Glob,Grep,LS -p"
+        out["bronze"]["command"] = "claude --model claude-haiku-4-5-20251001 --allowedTools Read,Bash,Glob,Grep,LS -p --output-format stream-json --verbose --include-partial-messages"
     elif gemini.available:
         out["gold"]["name"] = "gemini-pro"
         out["gold"]["command"] = "gemini -p --model gemini-pro"

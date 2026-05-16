@@ -12,19 +12,36 @@ DEFAULT_CONFIG: dict = {
         # or any other mix the user wants.
         "gold": {
             "name": "opus",
-            "command": "claude --model opus -p",
+            "command": "claude --model opus -p --output-format stream-json --verbose --include-partial-messages",
             "role": "strategy_architecture",
             "use_for": ["architecture", "complex_reasoning", "high_level_planning"],
         },
         "silver": {
             "name": "sonnet",
-            "command": "claude --model sonnet -p",
+            "command": "claude --model sonnet -p --output-format stream-json --verbose --include-partial-messages",
+            # Optional multi-provider autobalance:
+            # providers:
+            #   - provider: anthropic
+            #     name: sonnet
+            #     command: claude --model sonnet -p --output-format stream-json --verbose --include-partial-messages
+            #   - provider: openai
+            #     name: gpt-5.5
+            #     command: codex exec --model gpt-5.5 --sandbox workspace-write
+            #   - provider: openrouter
+            #     name: sonnet-openrouter
+            #     command: openrouter ...
+            #   - provider: gemini
+            #     name: gemini-pro
+            #     command: gemini -p --model gemini-2.5-pro
+            #   - provider: ollama-local
+            #     name: qwen-local
+            #     command: ollama run qwen2.5-coder
             "role": "documentation_structuring",
             "use_for": ["docs", "prd", "prompts", "specs"],
         },
         "bronze": {
             "name": "haiku",
-            "command": "claude --model haiku -p",
+            "command": "claude --model haiku -p --output-format stream-json --verbose --include-partial-messages",
             "role": "summaries_classification",
             "use_for": ["summarize", "classify", "clean_logs"],
         },
@@ -111,6 +128,10 @@ DEFAULT_CONFIG: dict = {
         # backwards compatibility (v0.7.0 layout puts runtime context
         # AFTER the task). Turn on for projects with N≥3 sibling
         # delegations to see cache_read_input_tokens climb.
+        "enabled": False,
+    },
+    "cache_worker": {
+        # Opt-in SDK worker path with explicit prompt caching controls.
         "enabled": False,
     },
     "visual_review": {

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import importlib.util
+import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import agents as agents_mod
+from ..codec.cipher import decode as cipher_decode
 from ..codec.glossary_loader import load_glossary
 from ..routing import modulate_by_compression
 from . import counter, exec_log
@@ -169,7 +174,8 @@ def run_delegate(
             burnless_root=burnless_root,
             chain=chain,
         )
-    system_prompt = _worker_system_prompt(project_root)
+    prompt_payload = _worker_system_prompt_payload(project_root)
+    system_prompt = prompt_payload["prompt"]
 
     # H1: pre_worker_prompt — plugins may transform prompt and system_prompt
     from .. import plugin_loader as _pl
@@ -205,6 +211,12 @@ def run_delegate(
         )
         return _ensure_exec_ref(capsule, spec.id)
 
+    # Force Claude Code OAuth/subscription auth on the subprocess by
+    # stripping ANTHROPIC_API_KEY from the inherited env. SDK paths still
+    # read the key directly via _load_anthropic_key.
+    worker_env = os.environ.copy()
+    worker_env.pop("ANTHROPIC_API_KEY", None)
+    worker_env.update(prompt_payload["session_env"])
     try:
         proc = subprocess.run(
             run_parts,
@@ -213,6 +225,7 @@ def run_delegate(
             text=True,
             timeout=int(config.get("maestro", {}).get("worker_timeout_s", 900)),
             cwd=str(project_root),
+            env=worker_env,
         )
     except subprocess.TimeoutExpired as e:
         return _finalize_error(
@@ -300,10 +313,80 @@ def _claude_system_flag(executable: str) -> str | None:
 
 
 def _worker_system_prompt(project_root: Path) -> str:
+    return _worker_system_prompt_payload(project_root)["prompt"]
+
+
+def _worker_system_prompt_payload(project_root: Path) -> dict[str, str | dict[str, str]]:
+    cloud_emulator = Path.home() / ".burnless" / "cloud_emulator.py"
+    if cloud_emulator.exists():
+        prompt_payload = _load_cloud_emulator_prompt_payload(cloud_emulator, project_root)
+        if prompt_payload:
+            return prompt_payload
+
     role_path = project_root / "_design" / "maestro_v1" / "worker_role.md"
     role_text = role_path.read_text(encoding="utf-8")
     glossary = load_glossary(project_root)
-    return glossary + "\n\n---\n\n" + role_text
+    return {
+        "prompt": glossary + "\n\n---\n\n" + role_text,
+        "session_env": {},
+    }
+
+
+def _load_cloud_emulator_prompt(module_path: Path, project_root: Path) -> str | None:
+    payload = _load_cloud_emulator_prompt_payload(module_path, project_root)
+    if not payload:
+        return None
+    return str(payload["prompt"])
+
+
+def _load_cloud_emulator_prompt_payload(
+    module_path: Path, project_root: Path
+) -> dict[str, str | dict[str, str]] | None:
+    spec = importlib.util.spec_from_file_location("burnless_cloud_emulator", module_path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    previous_project_root = os.environ.get("BURNLESS_PROJECT_ROOT")
+    previous_session_id = os.environ.get("BURNLESS_SESSION_ID")
+    session_id = secrets.token_hex(16)
+    os.environ["BURNLESS_PROJECT_ROOT"] = str(project_root)
+    os.environ["BURNLESS_SESSION_ID"] = session_id
+    try:
+        spec.loader.exec_module(module)
+        emulator_cls = getattr(module, "CloudEmulator", None)
+        if emulator_cls is None:
+            return None
+        emulator = emulator_cls()
+        payload = emulator.fetch_system_prompt()
+        if not isinstance(payload, Mapping):
+            return None
+        wrapper = payload.get("plaintext_wrapper")
+        ciphertext_b64 = payload.get("ciphertext_block")
+        key_value = payload.get("key_hex")
+        if (
+            not isinstance(wrapper, str)
+            or not isinstance(ciphertext_b64, str)
+            or not isinstance(key_value, str)
+        ):
+            return None
+        return {
+            "prompt": cipher_decode(ciphertext_b64, key_value),
+            "session_env": {
+                "BURNLESS_SESSION_KEY_HEX": key_value,
+                "BURNLESS_SESSION_CIPHERTEXT_B64": ciphertext_b64,
+                "BURNLESS_SESSION_PLAINTEXT_WRAPPER": wrapper,
+                "BURNLESS_SESSION_ID": session_id,
+            },
+        }
+    finally:
+        if previous_project_root is None:
+            os.environ.pop("BURNLESS_PROJECT_ROOT", None)
+        else:
+            os.environ["BURNLESS_PROJECT_ROOT"] = previous_project_root
+        if previous_session_id is None:
+            os.environ.pop("BURNLESS_SESSION_ID", None)
+        else:
+            os.environ["BURNLESS_SESSION_ID"] = previous_session_id
 
 
 def _last_capsule(stdout: str) -> str | None:

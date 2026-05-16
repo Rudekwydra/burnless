@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
 import re
@@ -15,6 +16,147 @@ from pathlib import Path
 from typing import Callable
 
 from .agents import AgentError, resolve_command
+
+_OVERFLOW_PATTERNS = (
+    re.compile(r"prompt is too long", re.IGNORECASE),
+    re.compile(r"context_length_exceeded", re.IGNORECASE),
+    re.compile(r"max_tokens", re.IGNORECASE),
+)
+_OVERFLOW_TIER_ORDER = ("bronze", "silver", "gold", "diamond")
+_OVERFLOW_HISTORY_TURNS = 5
+_OVERFLOW_MAX_ATTEMPTS = 3
+
+
+# --- Session resume per-tier --------------------------------------------------
+#
+# claude -p emits {"type":"result", ..., "session_id":"<uuid>"} at the end of a
+# stream-json run. Saving that ID and replaying it as `--resume <id>` on the
+# next delegation of the same tier gives each worker a stateful, OAuth-backed
+# context lane — what the Maestro design promised but couldn't deliver because
+# the SDK has no OAuth path.
+#
+# Sessions are stored under {burnless_root}/sessions/<tier>.json with a
+# timestamp. We expire after ~50 min to stay under claude's prompt-cache TTL
+# (~1h) — replaying a cold session re-pays the input tokens, which defeats
+# the point.
+
+_SESSION_MAX_AGE_S = 3000  # 50 minutes — under the 1h prompt-cache TTL.
+
+
+def _tier_session_path(burnless_root: Path | None, tier: str | None) -> Path | None:
+    if burnless_root is None or not tier:
+        return None
+    return burnless_root / "sessions" / f"{tier}.json"
+
+
+def _load_tier_session(burnless_root: Path | None, tier: str | None) -> str | None:
+    p = _tier_session_path(burnless_root, tier)
+    if p is None or not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    sid = data.get("session_id")
+    ts = data.get("ts", 0)
+    if not sid or (time.time() - float(ts)) > _SESSION_MAX_AGE_S:
+        return None
+    return sid
+
+
+def _save_tier_session(burnless_root: Path | None, tier: str | None, session_id: str) -> None:
+    p = _tier_session_path(burnless_root, tier)
+    if p is None or not session_id:
+        return
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps({"session_id": session_id, "ts": time.time()}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _translate_stream_json(line: str, text_acc: list[str], session_holder: list[str] | None = None) -> str | None:
+    """If `line` is a claude stream-json NDJSON event, return a one-line human
+    summary and append any consolidated assistant text to `text_acc`. Returns
+    `None` when the line isn't a recognized event (caller should treat as raw).
+    """
+    s = line.strip()
+    if not s.startswith("{"):
+        return None
+    try:
+        ev = json.loads(s)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(ev, dict):
+        return None
+    et = ev.get("type")
+    if et == "assistant":
+        msg = ev.get("message") or {}
+        blocks = msg.get("content") or []
+        labels: list[str] = []
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            bt = b.get("type")
+            if bt == "text":
+                txt = b.get("text") or ""
+                if not txt.strip():
+                    continue
+                text_acc.append(txt)
+                # Full delta — shell consolidates consecutive [text] lines.
+                labels.append(f"[text] {txt}")
+            elif bt == "thinking":
+                th = b.get("thinking") or ""
+                if th.strip():
+                    # Full delta — shell consolidates consecutive [thinking] lines.
+                    labels.append(f"[thinking] {th}")
+            elif bt == "tool_use":
+                name = b.get("name") or "tool"
+                inp = b.get("input") or {}
+                preview = json.dumps(inp, ensure_ascii=False)[:160] if inp else ""
+                labels.append(f"[tool] {name}({preview})")
+            elif bt == "tool_result":
+                content = b.get("content")
+                if isinstance(content, list):
+                    snippet = " ".join(
+                        (c.get("text") or "")[:120]
+                        for c in content
+                        if isinstance(c, dict) and c.get("type") == "text"
+                    )
+                else:
+                    snippet = str(content or "")[:120]
+                labels.append(f"[tool_result] {snippet}".rstrip())
+        # Cumulative usage — emitted as a separate log line so the shell can
+        # surface ↑input/↓output counts on the panel border in real time.
+        usage = msg.get("usage") or {}
+        if usage:
+            in_t = int(usage.get("input_tokens") or 0)
+            out_t = int(usage.get("output_tokens") or 0)
+            cr = int(usage.get("cache_read_input_tokens") or 0)
+            cw = int(usage.get("cache_creation_input_tokens") or 0)
+            if in_t or out_t or cr or cw:
+                labels.append(f"[usage] in={in_t} out={out_t} cache_read={cr} cache_write={cw}")
+        return "\n".join(labels) if labels else None
+    if et == "result":
+        # Final result event — append the consolidated answer if not already
+        # captured via the assistant text deltas.
+        final = ev.get("result")
+        if isinstance(final, str) and final and (not text_acc or final not in "".join(text_acc)):
+            text_acc.append(final)
+        # Capture session_id so the caller can write per-tier resume state.
+        sid = ev.get("session_id")
+        if isinstance(sid, str) and sid and session_holder is not None:
+            session_holder.clear()
+            session_holder.append(sid)
+        rc = ev.get("is_error")
+        return "[done]" + (" (error)" if rc else "")
+    if et == "system":
+        sub = ev.get("subtype") or ev.get("type")
+        return f"[system] {sub}" if sub else None
+    return None
 
 _SPINNER_FRAMES = ["|", "/", "-", "\\"]
 
@@ -145,6 +287,8 @@ def run_with_live_panel(
     tail_lines: int = 20,
     refresh_rate: float = 0.5,
     phase_sink: Callable[[str], None] | None = None,
+    append_log: bool = False,
+    append_label: str | None = None,
 ) -> RunResult:
     """Run an agent while saving output and showing mode-specific progress."""
     command = resolve_command(agent_cfg)
@@ -159,12 +303,34 @@ def run_with_live_panel(
     start_mono = time.monotonic()
     stdout_parts: list[str] = []
     stderr_parts: list[str] = []
+    consolidated_text: list[str] = []  # Built from assistant-text events when stream-json mode is active.
+    saw_stream_json = False
+    session_holder: list[str] = []  # Captures session_id from the result event for per-tier resume.
     recent: deque[str] = deque(maxlen=tail_lines)
     event_filter = _PanelEventFilter()
     events: queue.Queue[tuple[str, str | None]] = queue.Queue()
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with log_path.open("w", encoding="utf-8") as log:
+    # Per-tier session resume — replays the previous worker session on this
+    # tier when one exists and is under cache TTL. Claude Code's prompt cache
+    # keeps the prior turns hot, so this turn pays input tokens only for the
+    # new delta. burnless_root is the project's `.burnless/` directory.
+    burnless_root = log_path.parent.parent if log_path.parent.name == "logs" else log_path.parent
+    resumed_session = _load_tier_session(burnless_root, tier)
+    if resumed_session and "--resume" not in command:
+        command = list(command) + ["--resume", resumed_session]
+
+    # Inject --permission-mode bypassPermissions for `claude` workers so
+    # tool calls never trigger an interactive approval prompt (stdin is
+    # already closed after writing the task — any prompt would freeze the
+    # worker indefinitely).
+    if command and command[0] in ("claude", "claude-cli") and "--permission-mode" not in command:
+        command = list(command) + ["--permission-mode", "bypassPermissions"]
+
+    with log_path.open("a" if append_log else "w", encoding="utf-8") as log:
+        if append_log:
+            header = append_label or "PROVIDER FALLBACK ATTEMPT"
+            log.write(f"\n\n--- {header} @ {datetime.now(timezone.utc).isoformat()} ---\n")
         log.write(
             f"# agent: {agent_cfg.get('name')}\n"
             f"# command: {' '.join(command)}\n"
@@ -176,6 +342,10 @@ def run_with_live_panel(
 
         worker_env = os.environ.copy()
         worker_env["BURNLESS_WORKER"] = "1"
+        # Force `claude -p` (and any tier subprocess) to authenticate via Claude
+        # Code OAuth/subscription instead of falling through to API billing. The
+        # in-process SDK paths still read the key directly from ANTHROPIC_ENV_PATHS.
+        worker_env.pop("ANTHROPIC_API_KEY", None)
         proc = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -237,9 +407,18 @@ def run_with_live_panel(
                     else:
                         stderr_parts.append(line)
                     clean = line.rstrip("\n")
-                    if clean:
+                    # Translate claude stream-json events to human lines for log + panel.
+                    # Falls through to raw mode when the worker isn't streaming NDJSON
+                    # (so legacy text-mode configs keep working).
+                    translated: str | None = None
+                    if clean and stream == "stdout":
+                        translated = _translate_stream_json(clean, consolidated_text, session_holder)
+                        if translated is not None:
+                            saw_stream_json = True
+                    display_line = translated if translated is not None else clean
+                    if display_line:
                         last_useful_mono = now
-                        panel_event = event_filter.feed(clean)
+                        panel_event = event_filter.feed(display_line)
                         if panel_event:
                             recent.append(panel_event)
                             if minimal_spinner is not None:
@@ -251,7 +430,11 @@ def run_with_live_panel(
                                 if _new_phase != _last_sink_phase:
                                     phase_sink(_new_phase)
                                     _last_sink_phase = _new_phase
-                    log.write(f"[{stream}] {line}")
+                    if translated is not None:
+                        # Human-friendly line in the log; raw NDJSON omitted.
+                        log.write(f"{translated}\n")
+                    else:
+                        log.write(f"[{stream}] {line}")
                     log.flush()
                     if mode == "full":
                         target = sys.stdout if stream == "stdout" else sys.stderr
@@ -359,10 +542,22 @@ def run_with_live_panel(
     elif mode == "quiet":
         pass
 
+    # When stream-json events were detected, expose the consolidated assistant
+    # text as stdout so extract_result_json can find the agent's final JSON
+    # block. Otherwise fall back to the raw subprocess stdout (text mode).
+    final_stdout = (
+        "\n".join(consolidated_text) if saw_stream_json and consolidated_text
+        else "".join(stdout_parts)
+    )
+    # Persist session_id for the next delegation on this tier — but only on
+    # clean completion (no SIGTERM/timeout/stale). A bad session is worse
+    # than no session: replaying it would carry over the failure context.
+    if not interrupted and not stale_worker and returncode == 0 and session_holder:
+        _save_tier_session(burnless_root, tier, session_holder[0])
     return RunResult(
         agent=agent_cfg.get("name"),
         command=command,
-        stdout="".join(stdout_parts),
+        stdout=final_stdout,
         stderr="".join(stderr_parts),
         returncode=returncode,
         started_at=started.isoformat(),
@@ -370,6 +565,175 @@ def run_with_live_panel(
         duration_s=(ended - started).total_seconds(),
         interrupted=interrupted,
         stale=stale_worker,
+    )
+
+
+def is_context_overflow_text(text: str) -> bool:
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _OVERFLOW_PATTERNS)
+
+
+def is_context_overflow_result(result: RunResult | dict) -> bool:
+    stdout = result.stdout if isinstance(result, RunResult) else str(result.get("stdout") or "")
+    stderr = result.stderr if isinstance(result, RunResult) else str(result.get("stderr") or "")
+    combined = f"{stdout}\n{stderr}"
+    if not is_context_overflow_text(combined):
+        return False
+    try:
+        from . import delegations as deleg_mod
+        parsed = deleg_mod.extract_result_json(stdout)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict) and str(parsed.get("status") or "").upper() == "OK":
+        return False
+    return True
+
+
+def truncate_prompt_history(prompt: str, *, keep_turns: int = _OVERFLOW_HISTORY_TURNS) -> str:
+    marker = "\n[recent conversation]"
+    next_marker = "\n[new message]"
+    if marker not in prompt or next_marker not in prompt:
+        return prompt
+    prefix, rest = prompt.split(marker, 1)
+    history_block, suffix = rest.split(next_marker, 1)
+    history_lines = [line for line in history_block.splitlines() if line.startswith(("user: ", "assistant: "))]
+    keep_lines = max(keep_turns, 0) * 2
+    if keep_lines <= 0 or len(history_lines) <= keep_lines:
+        return prompt
+    trimmed_lines = history_lines[-keep_lines:]
+    return prefix + marker + "\n" + "\n".join(trimmed_lines) + next_marker + suffix
+
+
+def next_overflow_tier(current_tier: str, tier_agents: dict[str, dict] | None) -> str | None:
+    if not tier_agents:
+        return None
+    try:
+        idx = _OVERFLOW_TIER_ORDER.index(current_tier)
+    except ValueError:
+        return None
+    for candidate in _OVERFLOW_TIER_ORDER[idx + 1:]:
+        if isinstance(tier_agents.get(candidate), dict):
+            return candidate
+    return None
+
+
+def _overflow_error_result(
+    *,
+    delegation_id: str,
+    tier: str,
+    command: list[str],
+    started_at: str,
+    log_path: Path,
+    duration_s: float,
+    last_result: RunResult,
+) -> RunResult:
+    ended = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "id": delegation_id,
+        "status": "ERR",
+        "kind": "execution",
+        "summary": "context overflow persisted after truncation and tier escalation",
+        "files_touched": [],
+        "validated": [],
+        "evidence": [
+            f"log check: {log_path} contains OVERFLOW_RETRY_1",
+            f"log check: {log_path} contains OVERFLOW_RETRY_2",
+        ],
+        "issues": ["context_overflow_retry_exhausted", f"tier={tier}"],
+        "next": "",
+    }
+    return RunResult(
+        agent=last_result.agent,
+        command=command,
+        stdout=f"```json\n{json.dumps(payload, ensure_ascii=False)}\n```",
+        stderr=last_result.stderr,
+        returncode=last_result.returncode,
+        started_at=started_at,
+        ended_at=ended,
+        duration_s=duration_s,
+        interrupted=last_result.interrupted,
+        stale=last_result.stale,
+    )
+
+
+def run_with_overflow_retries(
+    *,
+    delegation_id: str,
+    tier: str,
+    agent_cfg: dict,
+    prompt: str,
+    log_path: Path,
+    mode: str = "watch",
+    burnless_tokens: int = 0,
+    timeout: int = 600,
+    stale_timeout: int = 0,
+    cwd: Path | None = None,
+    tail_lines: int = 20,
+    refresh_rate: float = 0.5,
+    phase_sink: Callable[[str], None] | None = None,
+    tier_agents: dict[str, dict] | None = None,
+    overflow_history_turns: int = _OVERFLOW_HISTORY_TURNS,
+    max_attempts: int = _OVERFLOW_MAX_ATTEMPTS,
+) -> RunResult:
+    current_tier = tier
+    current_cfg = agent_cfg
+    current_prompt = prompt
+    truncated_prompt = prompt
+    log_label: str | None = None
+    saw_truncation = False
+    first_started_at: str | None = None
+    last_result: RunResult | None = None
+    total_start = time.monotonic()
+
+    for attempt_idx in range(max_attempts):
+        result = run_with_live_panel(
+            delegation_id=delegation_id,
+            tier=current_tier,
+            agent_cfg=current_cfg,
+            prompt=current_prompt,
+            log_path=log_path,
+            mode=mode,
+            burnless_tokens=burnless_tokens,
+            timeout=timeout,
+            stale_timeout=stale_timeout,
+            cwd=cwd,
+            tail_lines=tail_lines,
+            refresh_rate=refresh_rate,
+            phase_sink=phase_sink,
+            append_log=attempt_idx > 0,
+            append_label=log_label,
+        )
+        last_result = result
+        first_started_at = first_started_at or result.started_at
+        if not is_context_overflow_result(result):
+            return result
+        if attempt_idx >= max_attempts - 1:
+            break
+        retry_no = attempt_idx + 1
+        if not saw_truncation:
+            truncated_prompt = truncate_prompt_history(prompt, keep_turns=overflow_history_turns)
+            current_prompt = truncated_prompt
+            saw_truncation = True
+            log_label = f"OVERFLOW_RETRY_{retry_no} truncate-history tier={current_tier}"
+            continue
+        next_tier_name = next_overflow_tier(current_tier, tier_agents)
+        if not next_tier_name:
+            break
+        current_tier = next_tier_name
+        current_cfg = tier_agents[next_tier_name]
+        current_prompt = truncated_prompt
+        log_label = f"OVERFLOW_RETRY_{retry_no} escalate tier={tier}->{current_tier}"
+
+    assert last_result is not None
+    return _overflow_error_result(
+        delegation_id=delegation_id,
+        tier=current_tier,
+        command=last_result.command,
+        started_at=first_started_at or last_result.started_at,
+        log_path=log_path,
+        duration_s=max(time.monotonic() - total_start, last_result.duration_s),
+        last_result=last_result,
     )
 
 
