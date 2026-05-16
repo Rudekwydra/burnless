@@ -77,8 +77,21 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
     fd_out = sys.stdout.fileno()
     _out_lock = threading.Lock()
 
-    # Matches any CSI scroll-region command: ESC [ <opt numbers> r
+    _debug = os.environ.get("BURNLESS_PTY_DEBUG") == "1"
+    _debug_log = Path("/tmp/burnless_pty_debug.log") if _debug else None
+
+    def _dlog(msg: str) -> None:
+        if _debug_log:
+            try:
+                with _debug_log.open("a", encoding="utf-8") as f:
+                    f.write(f"{time.time():.3f} {msg}\n")
+            except OSError:
+                pass
+
+    # Matches CSI scroll-region commands (ESC [ <opt numbers> r) AND
+    # screen clears that imply terminal reset (ESC [ 2J, ESC [ 3J, ESC [ H+2J).
     _SCROLL_RE = _re.compile(rb"\x1b\[[\d;]*r")
+    _CLEAR_RE = _re.compile(rb"\x1b\[H\x1b\[[23]J|\x1b\[[23]J")
 
     def _scroll_region_bytes() -> bytes:
         return f"\033[1;{pty_rows}r".encode()
@@ -108,7 +121,7 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
         _write_out(bar)
 
     def _reader() -> None:
-        """Forward PTY output, intercepting scroll-region resets."""
+        """Forward PTY output, intercepting scroll-region resets and screen clears."""
         while not stop_ev.is_set():
             try:
                 data = spawn.read(4096)
@@ -116,16 +129,28 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
                 break
             # Replace any \033[...r with our constrained scroll region
             filtered = _SCROLL_RE.sub(_scroll_region_bytes(), data)
+            had_clear = bool(_CLEAR_RE.search(filtered))
             _write_out(filtered)
+            if had_clear:
+                _dlog("clear detected, redrawing")
+                # Claude cleared screen — re-assert scroll region + redraw status atomically
+                try:
+                    ts4 = os.get_terminal_size()
+                    _write_out(_scroll_region_bytes())
+                    _draw_status(ts4.lines, ts4.columns)
+                except OSError:
+                    pass
 
     def _status_updater() -> None:
+        # Refresh 5x/s so a stale bar self-corrects within 200ms after any glitch.
+        # Cheap: only writes ~200 bytes per tick.
         while not stop_ev.is_set():
             try:
                 ts2 = os.get_terminal_size()
                 _draw_status(ts2.lines, ts2.columns)
             except OSError:
                 pass
-            time.sleep(1)
+            time.sleep(0.2)
 
     stop_ev = threading.Event()
 
