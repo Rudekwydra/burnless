@@ -2428,9 +2428,12 @@ def cmd_do(args: argparse.Namespace) -> int:
 
 
 def cmd_shell(args: argparse.Namespace) -> int:
-    from . import shell
-
-    return shell.main()
+    # `burnless shell` is an alias for `burnless pty` — the legacy REPL was
+    # removed in v0.7.4 because pyd preserves Claude Code commands while
+    # still wrapping the session in Burnless instrumentation.
+    import sys
+    print("\033[2mburnless shell → burnless pty (alias since v0.7.4)\033[0m", file=sys.stderr)
+    return cmd_pty(args)
 
 
 def cmd_pty(args: argparse.Namespace) -> int:
@@ -2779,7 +2782,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--non-interactive", action="store_true", help="no prompts")
     sp.set_defaults(func=cmd_setup)
 
-    sp = sub.add_parser("shell", help="open the legacy delegation shell")
+    sp = sub.add_parser("shell", help="alias for `burnless pty` (legacy REPL removed in v0.7.4)")
+    sp.add_argument("args", nargs=argparse.REMAINDER, help="extra args passed to pty")
     sp.set_defaults(func=cmd_shell)
 
     sp = sub.add_parser("pty", help="spawn the real maestro CLI (claude/codex) with 🔥 Burnless header")
