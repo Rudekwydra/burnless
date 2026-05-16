@@ -85,6 +85,8 @@ DEFAULT_CONFIG: dict = {
         "mode": "balanced",   # canonical: light | balanced | extreme (aliases: safe→light, aggressive→extreme)
         "friendly": True,      # True = Haiku expands capsule into prose; False = print raw capsule (default for extreme)
         "voice_match": True,   # True (default) = decoder mirrors user's tone/slang/warmth in response. ~5% extra input tokens. False = robotic prose.
+        "local_codec": "auto",  # auto | ollama | hint — auto = use ollama if detected, else hint-only
+        "local_codec_model": "qwen2.5-coder:7b",
     },
     "cache_policy": {
         "cache_read_ratio": 0.10,

@@ -69,3 +69,9 @@ def test_describe_both():
 def test_describe_neither_warns():
     out = describe({"claude": None, "codex": None})
     assert "WARNING" in out
+
+
+def test_detect_includes_ollama_path():
+    from burnless.provider_autodetect import detect_providers
+    detected = detect_providers()
+    assert "ollama" in detected

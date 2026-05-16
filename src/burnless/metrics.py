@@ -36,6 +36,8 @@ DEFAULT_METRICS: dict = {
     "legacy_run_calls": 0,
     "legacy_compress_calls": 0,
     "legacy_decompress_calls": 0,
+    "compression_ratio_observed_sum": 0.0,
+    "compression_ratio_observed_count": 0,
     "by_source": {
         "raw_logs_isolated": 0,
         "repeated_context_avoided": 0,
@@ -398,6 +400,14 @@ def bump_legacy_counter(metrics_path: Path, name: str, amount: int = 1) -> None:
         return
     m = load(metrics_path)
     m[name] = int(m.get(name, 0)) + int(amount)
+    save(metrics_path, m)
+
+
+def bump_ratio_observed(metrics_path: Path, ratio: float) -> None:
+    """Accumulate observed compression ratio + count for averaging."""
+    m = load(metrics_path)
+    m["compression_ratio_observed_sum"] = float(m.get("compression_ratio_observed_sum", 0.0)) + float(ratio)
+    m["compression_ratio_observed_count"] = int(m.get("compression_ratio_observed_count", 0)) + 1
     save(metrics_path, m)
 
 

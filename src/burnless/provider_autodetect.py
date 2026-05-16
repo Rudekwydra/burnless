@@ -11,13 +11,15 @@ from typing import TypedDict
 class Detected(TypedDict):
     claude: str | None
     codex: str | None
+    ollama: str | None
 
 
 def detect_providers() -> Detected:
-    """Return absolute paths to claude/codex binaries if found on PATH, else None."""
+    """Return absolute paths to claude/codex/ollama binaries if found on PATH, else None."""
     return {
         "claude": shutil.which("claude"),
         "codex": shutil.which("codex"),
+        "ollama": shutil.which("ollama"),
     }
 
 
