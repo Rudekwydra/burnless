@@ -19,6 +19,7 @@ from . import agents as agents_mod
 from . import delegations as deleg_mod
 from . import compression as compression_mod
 from . import lifetime as lifetime_mod
+from . import claude_integration
 from . import brain_adapters
 from . import dashboard
 from . import live_runner
@@ -337,6 +338,16 @@ def cmd_init(args: argparse.Namespace) -> int:
     state_mod.save(p["state"], initial_state)
     metrics_mod.save(p["metrics"], metrics_mod._fresh())
     lifetime_mod.bump(project_root=cwd)
+    if not getattr(args, "no_claude_md", False):
+        try:
+            from . import __version__ as _v
+        except ImportError:
+            _v = "0.7.4"
+        claude_md = cwd / "CLAUDE.md"
+        action = claude_integration.write_or_update(
+            claude_md, version=_v, project_name=initial_state["project"]
+        )
+        print(f"CLAUDE.md: {action} burnless block at {claude_md}")
     p["maestro"].write_text(
         f"# Maestro — {initial_state['project']}\n\n_No plan yet. Run `burnless plan \"...\"`._\n",
         encoding="utf-8",
@@ -2573,6 +2584,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("init", help="initialize .burnless/ in current directory")
     sp.add_argument("--project", help="project name (default: current dir name)")
     sp.add_argument("--force", action="store_true")
+    sp.add_argument("--no-claude-md", action="store_true", dest="no_claude_md",
+                    help="skip writing the burnless block to CLAUDE.md")
     sp.set_defaults(func=cmd_init)
 
     sp = sub.add_parser("plan", help="set the project plan (compact state)")
