@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "burnless"
-version = "0.7.2"
-description = "The TCP/IP of agentic LLM orchestration. Separates cognitive execution from state management to make multi-turn agent loops practically linear in cost."
+version = "0.7.3"
+description = "Multi-tier LLM orchestration with capsule-based session state, prefix-cache reuse per tier, and filesystem-first audit. Small Python framework for long multi-turn workloads."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Roberto Monticelli Wydra" }]
@@ -27,6 +27,7 @@ dependencies = [
     "prompt-toolkit>=3.0",
     "PyYAML>=6.0",
     "rich>=13.0",
+    "ptyprocess>=0.7",
 ]
 
 [project.optional-dependencies]
