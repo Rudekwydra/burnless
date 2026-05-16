@@ -61,6 +61,14 @@ def render_metrics(m: dict, *, show_cost: bool = True) -> str:
         f"  Dead logs isolated:         {m.get('dead_logs_isolated', 0)}",
         f"  Expensive calls avoided:    {m.get('expensive_model_calls_avoided', 0)}",
     ]
+    ratio_count = int(m.get("compression_ratio_observed_count", 0))
+    if ratio_count > 0:
+        ratio_sum = float(m.get("compression_ratio_observed_sum", 0.0))
+        avg = ratio_sum / ratio_count
+        lines.append("")
+        lines.append("Observed compression (local codec, audited):")
+        lines.append(f"  avg ratio              {avg:.2f}×")
+        lines.append(f"  samples                {ratio_count}")
     if show_cost:
         cost = m.get("estimated_cost_avoided_usd", 0)
         lines.append(f"  Estimated cost avoided:     ${cost:,.4f} (rough — uses single $15/MTok rate)")
@@ -115,3 +123,6 @@ def render_audit(entries: list[dict]) -> str:
 def render_footer(m: dict) -> str:
     bt = fmt_int(int(m.get("burnless_tokens", 0)))
     return f"\n{bt} burnless tokens"
+
+
+render = render_metrics

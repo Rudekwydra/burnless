@@ -608,6 +608,13 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     # cheap parse: look at "agent:" line in the markdown
     tier = _parse_tier_from_delegation(prompt) or "bronze"
     prompt = agents_mod.maybe_prepend_prior_decision(prompt, tier=tier)
+    # Bronze local codec (Free tier — Ollama qwen). Falls back to passthrough.
+    from .codec import ollama_bronze
+    codec_result = ollama_bronze.encode(prompt)
+    if codec_result.used_ollama:
+        prompt = codec_result.compressed_text
+        metrics_mod.bump_ratio_observed(p["metrics"], codec_result.ratio)
+
     agent_cfg = cfg["agents"][tier]
     selected_agent_cfg, ranked_providers = _select_provider_cfg(agent_cfg, tier=tier)
     selected_provider = selected_agent_cfg.get("provider") or selected_agent_cfg.get("name")
