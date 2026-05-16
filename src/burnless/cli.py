@@ -232,6 +232,21 @@ _QTP_F_FIXED_SUFFIX = (
     "issues (list), next.\n"
 )
 
+_TELEGRAPHIC_OUTPUT_HINT = (
+    "\n## Output style — telegraphic\n\n"
+    "Responda em estilo telegráfico: sem fillers, sem prosa expansiva, abreviações curtas.\n"
+    "Abreviações comuns: imp=implementar, val=validar, cfg=configuração, doc=documentação, "
+    "auth=autenticação, repo=repositório, dir=diretório, arq=arquivo, ||=em paralelo.\n\n"
+    "Estrutura obrigatória da saída textual (separada do JSON envelope):\n"
+    "1. Header em uma linha: `<tier> :: <status> <action> <files/refs>` (status: OK|PART|ERR|BLK)\n"
+    "2. Evidence — comandos rodados + outputs LITERAIS (NUNCA abreviar evidence)\n"
+    "3. Relatório breve (1-2 parágrafos): decisões não óbvias, gaps detectados\n\n"
+    "Regra dura: evidence, file_paths, command outputs e validated NUNCA são telegrafados — "
+    "auditor precisa do literal. Só a prosa narrativa do relatório é telegráfica.\n"
+    "O JSON envelope (status, kind, summary, files_touched, validated, evidence, issues, next) "
+    "permanece obrigatório.\n"
+)
+
 
 def _build_cacheable_runtime_prefix(project_root: Path, burnless_root: Path) -> str:
     """QTP-F: stable prefix that doesn't change between sibling delegations.
@@ -309,13 +324,14 @@ def _with_runtime_context(
         parts = [runtime.rstrip(), "", prompt.rstrip()]
         if chain_manifest:
             parts.extend(["", chain_manifest.rstrip()])
-        parts.extend(["", _QTP_F_FIXED_SUFFIX.rstrip(), ""])
+        parts.extend(["", _QTP_F_FIXED_SUFFIX.rstrip(), _TELEGRAPHIC_OUTPUT_HINT.rstrip(), ""])
         return "\n".join(parts)
 
     # Legacy layout (pre-QTP-F): task first, runtime context after
     result = f"{prompt.rstrip()}\n\n{runtime}"
     if chain_manifest:
         result = result.rstrip() + "\n" + chain_manifest
+    result = result.rstrip() + "\n" + _TELEGRAPHIC_OUTPUT_HINT
     return result
 
 

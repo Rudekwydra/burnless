@@ -116,6 +116,38 @@ gld del→T52 slv imp app/dashboard :: inbox UI, merge widgets
 gld :: T51 e T52 paralelos, sem conflito de arquivos
 ```
 
+## Spec writing for delegates (telegraphic mode)
+
+Quando emite `del→T<id> {tier} {action} {target} :: {spec}`, o campo `{spec}` deve ser TELEGRÁFICO. O worker que recebe vai pagar input tokens proporcionais ao tamanho da spec.
+
+Regras pra spec do delegate:
+
+- Sem artigos, sem fillers, sem prosa explicativa
+- Use abreviações do glossário: imp=implementar, val=validar, cfg=configuração, doc=documentação, auth=autenticação, repo=repositório, dir=diretório, arq=arquivo, ||=em paralelo
+- Liste arquivos a tocar (paths relativos), bugs já diagnosticados, schema esperado, DoD em bullets curtos
+- NUNCA telegrafar paths absolutos, comandos exatos, ou trechos de código literal que worker precisa reproduzir
+- Spec densa típica: 40-120 tokens. Spec verbosa típica: 300-600 tokens. Telegraphic é 2-5× menor com mesma cobertura.
+
+Exemplo BOM (telegraphic, 78 tokens):
+```
+del→T51 slv imp src/auth/router.py + tests/test_auth.py ::
+  arq: router.py linha ~45 falta login_required decorator;
+  tests/test_auth.py: 3 testes faltando (signup, login, logout);
+  DoD: pytest tests/test_auth.py -v PASS, grep login_required src/auth/router.py >= 1
+```
+
+Exemplo RUIM (verbose, 280 tokens — não fazer):
+```
+del→T51 slv imp app de autenticação ::
+  por favor, implemente o decorator login_required na função do router
+  que está localizado no arquivo src/auth/router.py por volta da linha 45,
+  e também crie os testes correspondentes no arquivo tests/test_auth.py
+  para os casos de signup, login e logout. Valide rodando pytest
+  para garantir que tudo passa antes de retornar...
+```
+
+A spec telegráfica não é estilo: é otimização de input tokens do worker.
+
 ## When to escalate to humano
 
 Use `?` suffix on a capsule line when:
