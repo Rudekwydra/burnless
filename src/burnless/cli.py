@@ -20,6 +20,7 @@ from . import delegations as deleg_mod
 from . import compression as compression_mod
 from . import lifetime as lifetime_mod
 from . import claude_integration
+from . import provider_autodetect
 from . import brain_adapters
 from . import dashboard
 from . import live_runner
@@ -331,7 +332,10 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 0
     for key in ("delegations", "logs", "temp", "capsules", "archive", "chat", "runs"):
         p[key].mkdir(parents=True, exist_ok=True)
-    config_mod.write_default(p["config"])
+    detected = provider_autodetect.detect_providers()
+    agents_override = provider_autodetect.build_agents(detected)
+    config_mod.write_default(p["config"], agents_override=agents_override)
+    print(provider_autodetect.describe(detected))
     cfg = config_mod.load(p["config"])
     initial_state = dict(state_mod.DEFAULT_STATE)
     initial_state["project"] = args.project or cwd.name

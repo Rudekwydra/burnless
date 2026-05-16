@@ -207,10 +207,14 @@ def load(path: Path) -> dict:
     return data
 
 
-def write_default(path: Path) -> None:
+def write_default(path: Path, agents_override: dict | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = dict(DEFAULT_CONFIG)
+    if agents_override is not None:
+        cfg = dict(cfg)
+        cfg["agents"] = agents_override
     with path.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(DEFAULT_CONFIG, f, sort_keys=False, allow_unicode=True)
+        yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
 
 
 def save(path: Path, config: dict) -> None:
