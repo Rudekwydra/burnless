@@ -1,12 +1,10 @@
 # The Math
 
-> **Burnless is the TCP/IP of agentic LLM orchestration.**
-> Just as TCP/IP separated the application layer from network routing, Burnless separates Cognitive Execution (Workers) from State Management (Capsules/Maestro).
-> The math below derives the cost shape that follows from that architecture.
+> **Pattern note.** Burnless is inspired by TCP/IP's separation of application from network — not at the same scale of abstraction (TCP/IP defines internet infrastructure; Burnless is a small Python framework), but the same kind of design move: separate state management (capsules) from cognitive execution (workers) so each layer can evolve independently. The math below derives the cost shape that follows when the layers are split this way and the prefix between turns stays byte-stable.
 
-Burnless makes one claim: multi-turn agent loops cost `Θ(N²)` in the standalone case and `Θ(N)` in the Burnless case. This document derives both, then composes them with per-model pricing into a single dollar formula you can parameterize against any provider.
+Burnless makes one claim, conditional on the implementation pattern: under naive transcript replay, multi-turn agent loops cost `Θ(N²)` in input tokens; with capsule-based history plus a byte-stable cached prefix per tier, the input-token shape is dominated by the linear cache-read term, so practical cost is much closer to `Θ(N)`. This document derives both, then composes them with per-model pricing into a dollar formula you can parameterize against any provider.
 
-The formula is less than half the story — orchestration of intelligence by compressing intent is the *what*; the cost shape is only the consequence. We publish the math because it is the consequence that pays for your API bill, but read it knowing the bigger thesis sits above it.
+This is a math derivation under stated assumptions, not a universal law. Different cache policies, different transcript shapes, and different providers will move the constants. Run the bench script with your own workload to validate.
 
 The unit of comparison is **`$` per session of `N` turns**. Token counts alone are misleading because Opus, Sonnet, and Haiku tokens have different prices — a fair comparison must price each token at its own model's rate.
 
