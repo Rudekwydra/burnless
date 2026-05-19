@@ -144,7 +144,7 @@ def _translate_stream_json(line: str, text_acc: list[str], session_holder: list[
         # Final result event — append the consolidated answer if not already
         # captured via the assistant text deltas.
         final = ev.get("result")
-        if isinstance(final, str) and final and (not text_acc or final not in "".join(text_acc)):
+        if isinstance(final, str) and final and (not text_acc or not "".join(text_acc).endswith(final)):
             text_acc.append(final)
         # Capture session_id so the caller can write per-tier resume state.
         sid = ev.get("session_id")
