@@ -1,12 +1,8 @@
-"""Composed savings formula.
+"""Savings formulas.
 
-Three components:
-- linear: ratio observado × tokens comprimidos (per-call savings)
-- history: tokens economizados acumulados sobre N delegations
-- quadratic_bonus: ganho composto (sessão Burnless é O(N), sessão linear é O(N²))
-
-Returns a dict so caller decides what to show. Module is pure (no side effects,
-no I/O), all inputs come from a metrics dict.
+`compute` is the legacy composed formula kept for compatibility. `compute_free`
+is the user-facing Free breakdown: text compression, Maestro history/cache,
+worker one-shot isolation, and tier routing.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -19,6 +15,17 @@ class Savings:
     quadratic_bonus: float
     total: float
     samples: int  # how many ratio observations contributed
+
+
+@dataclass
+class FreeSavings:
+    input_compression: float
+    maestro_history: float
+    worker_oneshot: float
+    tier_routing: float
+    other: float
+    total: float
+    samples: int
 
 
 def compute(metrics: dict) -> Savings:
@@ -60,4 +67,41 @@ def compute(metrics: dict) -> Savings:
         quadratic_bonus=round(quadratic_bonus, 2),
         total=round(total, 2),
         samples=ratio_count,
+    )
+
+
+def compute_free(metrics: dict) -> FreeSavings:
+    """Break down Free savings by product mechanism.
+
+    The values are token-equivalent floors already accumulated by metrics.py.
+    This function only groups them into terms a user can understand.
+    """
+    by_source = metrics.get("by_source", {}) if isinstance(metrics.get("by_source"), dict) else {}
+
+    def _num(key: str) -> float:
+        try:
+            return max(float(by_source.get(key, 0) or 0), 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    input_compression = _num("capsule_compression")
+    maestro_history = _num("repeated_context_avoided") + _num("compact_state") + _num("keepalive_cache_renewed")
+    worker_oneshot = _num("raw_logs_isolated")
+    tier_routing = _num("expensive_model_avoided")
+    grouped = input_compression + maestro_history + worker_oneshot + tier_routing
+    try:
+        total_recorded = max(float(metrics.get("burnless_tokens", 0) or 0), 0.0)
+    except (TypeError, ValueError):
+        total_recorded = grouped
+    other = max(total_recorded - grouped, 0.0)
+    samples = int(metrics.get("compression_ratio_observed_count", 0) or 0)
+    total = input_compression + maestro_history + worker_oneshot + tier_routing + other
+    return FreeSavings(
+        input_compression=round(input_compression, 2),
+        maestro_history=round(maestro_history, 2),
+        worker_oneshot=round(worker_oneshot, 2),
+        tier_routing=round(tier_routing, 2),
+        other=round(other, 2),
+        total=round(total, 2),
+        samples=samples,
     )

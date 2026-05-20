@@ -82,18 +82,31 @@ def test_run_reuses_prior_decision_and_updates_cache(tmp_path: Path, monkeypatch
     captured = {}
 
     class _FakeResult:
+        agent = "sonnet"
+        command = ["printf", "ok"]
+        stdout = '```json\n{"id":"d001","status":"OK","kind":"thought","summary":"Use SQLite instead of JSON for local persistence.","evidence":[],"files_touched":[],"validated":[],"issues":[],"next":""}\n```'
+        stderr = ""
+        returncode = 0
+        started_at = "2026-01-01T00:00:00+00:00"
+        ended_at = "2026-01-01T00:00:01+00:00"
+        duration_s = 1.0
+        interrupted = False
+
         def to_dict(self):
             return {
-                "agent": "sonnet",
-                "command": ["printf", "ok"],
-                "stdout": '```json\n{"id":"d001","status":"OK","kind":"thought","summary":"Use SQLite instead of JSON for local persistence.","evidence":[],"files_touched":[],"validated":[],"issues":[],"next":""}\n```',
-                "stderr": "",
-                "returncode": 0,
-                "started_at": "2026-01-01T00:00:00+00:00",
-                "ended_at": "2026-01-01T00:00:01+00:00",
-                "duration_s": 1.0,
-                "interrupted": False,
+                "agent": self.agent,
+                "command": self.command,
+                "stdout": self.stdout,
+                "stderr": self.stderr,
+                "returncode": self.returncode,
+                "started_at": self.started_at,
+                "ended_at": self.ended_at,
+                "duration_s": self.duration_s,
+                "interrupted": self.interrupted,
             }
+
+        def get(self, key, default=None):
+            return self.to_dict().get(key, default)
 
     def fake_runner(**kwargs):
         captured["prompt"] = kwargs["prompt"]

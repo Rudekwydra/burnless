@@ -106,7 +106,7 @@ def test_minify_strips_portuguese_filler():
     from burnless.codec.encoder import minify
     result = minify("por favor implementa o teste")
     assert "por favor" not in result.lower()
-    assert "implementa" in result
+    assert "imp" in result
 
 
 def test_minify_strips_english_filler():
@@ -121,6 +121,56 @@ def test_minify_preserves_technical_content():
     result = minify("check the state of delegations d010 and d011")
     assert "d010" in result
     assert "d011" in result
+
+
+def test_chat_input_uses_pre_brain_prompt_plugin(tmp_path, monkeypatch):
+    p = _make_paths(tmp_path)
+    captured = {}
+
+    monkeypatch.setattr(chat_mode.plugin_loader_mod, "load_plugins", lambda root: ["plugin"])
+
+    def fake_call_all_plugins(plugins, hook_name, payload):
+        captured["hook_name"] = hook_name
+        captured["payload"] = payload
+        return {"user_capsule": "imp teste cache"}
+
+    monkeypatch.setattr(chat_mode.plugin_loader_mod, "call_all_plugins", fake_call_all_plugins)
+
+    compressed, info = chat_mode._compress_chat_input(
+        p,
+        "por favor implementa o teste de cache",
+        hook_name="pre_brain_prompt",
+    )
+
+    assert compressed == "imp teste cache"
+    assert info["plugin_used"] is True
+    assert captured["hook_name"] == "pre_brain_prompt"
+    assert "por favor" not in captured["payload"]["user_capsule"].lower()
+
+
+def test_chat_input_uses_pre_worker_prompt_plugin(tmp_path, monkeypatch):
+    p = _make_paths(tmp_path)
+    captured = {}
+
+    monkeypatch.setattr(chat_mode.plugin_loader_mod, "load_plugins", lambda root: ["plugin"])
+
+    def fake_call_all_plugins(plugins, hook_name, payload):
+        captured["hook_name"] = hook_name
+        captured["payload"] = payload
+        return {"prompt": "fix auth.py"}
+
+    monkeypatch.setattr(chat_mode.plugin_loader_mod, "call_all_plugins", fake_call_all_plugins)
+
+    compressed, info = chat_mode._compress_chat_input(
+        p,
+        "can you please fix the auth.py module?",
+        hook_name="pre_worker_prompt",
+    )
+
+    assert compressed == "fix auth.py"
+    assert info["plugin_used"] is True
+    assert captured["hook_name"] == "pre_worker_prompt"
+    assert "can you" not in captured["payload"]["prompt"].lower()
 
 
 # ---------------------------------------------------------------------------

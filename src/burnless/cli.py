@@ -1678,6 +1678,63 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     if getattr(args, "metrics_cmd", None) == "desktop":
         return cmd_metrics_desktop(args)
 
+    if getattr(args, "global_view", False):
+        from pathlib import Path
+        from datetime import datetime
+        import json as _json
+        path = Path.home() / ".burnless" / "global_metrics.jsonl"
+        if not path.exists():
+            print("No global events yet. Run any `burnless do/delegate/run` to populate.")
+            return 0
+        since = getattr(args, "since", None)
+        since_dt = None
+        if since:
+            try:
+                since_dt = datetime.fromisoformat(since)
+            except Exception:
+                print(f"Invalid --since format: {since}. Use YYYY-MM-DD.")
+                return 1
+        totals_by_source: dict[str, int] = {}
+        totals_by_project: dict[str, int] = {}
+        total_amount = 0
+        total_events = 0
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = _json.loads(line)
+                except Exception:
+                    continue
+                if since_dt:
+                    try:
+                        ev_ts = datetime.fromisoformat(ev.get("ts", "").replace("Z", "+00:00"))
+                        if ev_ts < since_dt:
+                            continue
+                    except Exception:
+                        continue
+                amt = int(ev.get("amount", 0) or 0)
+                src = str(ev.get("source", "unknown"))
+                proj = str(ev.get("project_root") or "unknown")
+                totals_by_source[src] = totals_by_source.get(src, 0) + amt
+                totals_by_project[proj] = totals_by_project.get(proj, 0) + amt
+                total_amount += amt
+                total_events += 1
+        print(f"Burnless global metrics ({total_events} events, since={since or 'beginning'})")
+        print(f"  Total burnless_tokens: {total_amount:,}")
+        print(f"  Estimated cost avoided (rough $15/MTok): ${(total_amount/1_000_000)*15.0:.4f}")
+        print()
+        print("By source:")
+        for src, amt in sorted(totals_by_source.items(), key=lambda x: -x[1]):
+            print(f"  {src:32s} {amt:>12,}")
+        print()
+        print("By project:")
+        for proj, amt in sorted(totals_by_project.items(), key=lambda x: -x[1]):
+            proj_short = proj if len(proj) <= 50 else "..." + proj[-47:]
+            print(f"  {proj_short:50s} {amt:>12,}")
+        return 0
+
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
@@ -2705,6 +2762,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="show delta between the two most recent snapshots",
     )
+    sp.add_argument("--global", dest="global_view", action="store_true",
+                    help="Aggregate metrics across all projects from ~/.burnless/global_metrics.jsonl")
+    sp.add_argument("--since", default=None,
+                    help="ISO date (YYYY-MM-DD) to filter --global events")
     sp.set_defaults(func=cmd_metrics)
 
     sp = sub.add_parser("providers", help="inspect or reset multi-provider health stats")

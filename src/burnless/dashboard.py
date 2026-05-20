@@ -69,16 +69,19 @@ def render_metrics(m: dict, *, show_cost: bool = True) -> str:
         lines.append("Observed compression (local codec, audited):")
         lines.append(f"  avg ratio              {avg:.2f}×")
         lines.append(f"  samples                {ratio_count}")
-    # Composed savings (linear + history + quadratic) — only when we have samples
+    # Free savings breakdown: make the product mechanics visible.
     try:
         from . import savings_formula
-        s = savings_formula.compute(m)
-        if s.samples > 0:
+        s = savings_formula.compute_free(m)
+        if s.total > 0:
             lines.append("")
-            lines.append("Total savings (composed):")
-            lines.append(f"  linear (per-call)      {s.linear:,.0f}")
-            lines.append(f"  history (cumulative)   {s.history:,.0f}")
-            lines.append(f"  quadratic bonus        {s.quadratic_bonus:,.0f}")
+            lines.append("Free savings breakdown:")
+            lines.append(f"  input compression      {s.input_compression:,.0f}   (txt → compact prompt)")
+            lines.append(f"  Maestro history/cache  {s.maestro_history:,.0f}   (linear capsules + warm prefix)")
+            lines.append(f"  worker one-shot        {s.worker_oneshot:,.0f}   (worker logs not replayed)")
+            lines.append(f"  tier routing           {s.tier_routing:,.0f}   (cheap worker vs gold)")
+            if s.other:
+                lines.append(f"  other                  {s.other:,.0f}")
             lines.append(f"  total                  {s.total:,.0f}")
     except Exception:
         pass
@@ -87,9 +90,9 @@ def render_metrics(m: dict, *, show_cost: bool = True) -> str:
         lines.append(f"  Estimated cost avoided:     ${cost:,.4f} (rough — uses single $15/MTok rate)")
     lines.extend([
         "",
-        "Note: numbers are floors. Decoder Haiku output is shorter than what",
-        "Brain Sonnet would produce unprompted (RLHF default leans verbose),",
-        "so output_decompression_avoided under-estimates the real saving.",
+        "Note: numbers are conservative floors. Free saves by compressing input,",
+        "keeping Maestro history linear, running workers one-shot without prior",
+        "chat context, and keeping the stable prefix warm when the provider reports cache hits.",
     ])
     return "\n".join(lines)
 

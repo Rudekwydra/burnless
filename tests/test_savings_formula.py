@@ -1,4 +1,4 @@
-from burnless.savings_formula import compute, Savings
+from burnless.savings_formula import compute, compute_free, Savings
 
 
 def test_zero_when_no_samples():
@@ -71,3 +71,25 @@ def test_total_is_sum_of_components():
     # total should equal sum of non-negative components
     expected = s.linear + s.history + max(0.0, s.quadratic_bonus)
     assert abs(s.total - round(expected, 2)) < 0.01
+
+
+def test_free_breakdown_groups_user_visible_mechanisms():
+    s = compute_free({
+        "burnless_tokens": 1000,
+        "compression_ratio_observed_count": 2,
+        "by_source": {
+            "capsule_compression": 100,
+            "repeated_context_avoided": 200,
+            "compact_state": 50,
+            "keepalive_cache_renewed": 25,
+            "raw_logs_isolated": 300,
+            "expensive_model_avoided": 250,
+        },
+    })
+    assert s.input_compression == 100
+    assert s.maestro_history == 275
+    assert s.worker_oneshot == 300
+    assert s.tier_routing == 250
+    assert s.other == 75
+    assert s.total == 1000
+    assert s.samples == 2

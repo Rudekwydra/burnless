@@ -17,6 +17,8 @@ from . import __version__
 from . import config as config_mod
 from . import metrics as metrics_mod
 from . import paths as paths_mod
+from . import subscription_usage as sub_usage_mod
+from . import usage_meter as usage_meter_mod
 
 
 _PROVIDER_BINS: dict[str, list[str]] = {
@@ -112,9 +114,36 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
         "burst_delta": 0,
         "tip_index": 0,
         "tip_last_swap": time.time(),
+        "last_usage_ts": 0.0,
+        "last_usage_hint": "",
+        "last_quota_ts": 0.0,
+        "last_quota_hint": "",
     }
     _TIP_SWAP_EVERY = 10.0   # seconds
     _BURST_DURATION = 1.0    # seconds the orange "+N" stays visible
+    _USAGE_TTL = 2.0         # seconds
+    _QUOTA_TTL = 15.0        # seconds
+
+    _quota = sub_usage_mod.UsagePoller(ttl_s=60)
+
+    def _fmt_reset_epoch(ts_raw: str | None) -> str:
+        if not ts_raw:
+            return ""
+        try:
+            ts = int(ts_raw)
+            secs = ts - int(time.time())
+            if secs <= 0:
+                return "resetting…"
+            if secs < 3600:
+                m, s = divmod(secs, 60)
+                return f"resets {m}m{s:02d}s"
+            if secs < 86400:
+                h = secs // 3600
+                m = (secs % 3600) // 60
+                return f"resets {h}h{m:02d}m"
+            return "resets >1d"
+        except Exception:
+            return ""
 
     # Matches CSI scroll-region commands (ESC [ <opt numbers> r) AND
     # screen clears that imply terminal reset (ESC [ 2J, ESC [ 3J, ESC [ H+2J).
@@ -143,6 +172,44 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
             _session["tip_index"] = (_session["tip_index"] + 1) % len(_PRO_TIPS)
             _session["tip_last_swap"] = now
         active_hint = _PRO_TIPS[_session["tip_index"]] if hint == "" else hint
+
+        # Optional: show live cache usage from Claude Code JSONL (codeburn-style source),
+        # without depending on codeburn itself.
+        if os.environ.get("BURNLESS_PTY_USAGE", "1").strip() != "0":
+            now2 = time.time()
+            if now2 - float(_session.get("last_usage_ts", 0.0) or 0.0) >= _USAGE_TTL:
+                try:
+                    d = usage_meter_mod.claude_usage_delta(window_seconds=15 * 60)
+                    _session["last_usage_hint"] = usage_meter_mod.fmt_compact(d)
+                except Exception:
+                    _session["last_usage_hint"] = ""
+                _session["last_usage_ts"] = now2
+
+            # If unified quota headers are available (monthly plan), prefer showing
+            # quota % + reset ETA; it matches user mental model (“avoid hitting cap”).
+            if os.environ.get("BURNLESS_PTY_QUOTA", "1").strip() != "0":
+                if now2 - float(_session.get("last_quota_ts", 0.0) or 0.0) >= _QUOTA_TTL:
+                    try:
+                        u = _quota.get()
+                        if u and u.u5h is not None:
+                            pct = int(max(0.0, min(1.0, float(u.u5h))) * 100)
+                            reset = _fmt_reset_epoch(u.r5h)
+                            _session["last_quota_hint"] = f"quota {pct}%{(' · ' + reset) if reset else ''}"
+                        else:
+                            _session["last_quota_hint"] = ""
+                    except Exception:
+                        _session["last_quota_hint"] = ""
+                    _session["last_quota_ts"] = now2
+
+            if _session.get("last_quota_hint"):
+                # Show quota first, then cache-spared tokens for intuition.
+                if _session.get("last_usage_hint"):
+                    active_hint = f"{_session['last_quota_hint']} · {_session['last_usage_hint']}"
+                else:
+                    active_hint = _session["last_quota_hint"]
+            elif _session.get("last_usage_hint"):
+                active_hint = _session["last_usage_hint"]
+
         line = _status_line(tokens, delegations, bin_name, active_hint, burst_delta)[:cur_cols - 1]
         title_text = f"\U0001f525 {tokens:,} bt · {delegations}d"
         bar = (

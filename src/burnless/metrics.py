@@ -50,6 +50,7 @@ DEFAULT_METRICS: dict = {
 }
 
 _CACHE_READ_USD_PER_TOKEN = 0.30 / 1_000_000  # Sonnet $0.30/MTok
+_GLOBAL_EVENTS_PATH = Path.home() / ".burnless" / "global_metrics.jsonl"
 
 VALID_SOURCES = set(DEFAULT_METRICS["by_source"].keys())
 
@@ -79,6 +80,25 @@ def save(path: Path, metrics: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, ensure_ascii=False)
+
+
+
+def _append_global_event(*, source: str, amount: int, reason: str, delegation_id: str | None, project_root: str | None) -> None:
+    """Append one JSON line to ~/.burnless/global_metrics.jsonl. Fail-silent (best-effort)."""
+    try:
+        _GLOBAL_EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        event = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+            "amount": int(amount),
+            "reason": reason,
+            "delegation_id": delegation_id,
+            "project_root": project_root,
+        }
+        with _GLOBAL_EVENTS_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def record(
@@ -130,6 +150,17 @@ def record(
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     with audit_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    try:
+        _append_global_event(
+            source=source,
+            amount=int(amount),
+            reason=reason,
+            delegation_id=delegation_id,
+            project_root=str(metrics_path.parent.parent) if metrics_path.parent.name == ".burnless" else None,
+        )
+    except Exception:
+        pass
 
     return metrics
 

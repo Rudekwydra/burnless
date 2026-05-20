@@ -215,6 +215,10 @@ def run_delegate(
     # stripping ANTHROPIC_API_KEY from the inherited env. SDK paths still
     # read the key directly via _load_anthropic_key.
     worker_env = os.environ.copy()
+    # Allow local PreToolUse guards (e.g. Claude Code hooks) to detect that
+    # this process is a Burnless worker invocation and not an interactive
+    # human session.
+    worker_env["BURNLESS_TASK_ID"] = str(spec.id)
     worker_env.pop("ANTHROPIC_API_KEY", None)
     worker_env.update(prompt_payload["session_env"])
     try:
