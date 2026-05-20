@@ -17,6 +17,7 @@ from mcp.types import Tool, TextContent
 from . import paths, state as state_mod
 from . import delegations, routing, live_runner, config as config_mod
 from .agents import resolve_command
+from .maestro_layer import process_envelope as _maestro_process_envelope
 
 
 server = Server("burnless")
@@ -58,6 +59,13 @@ class ReadInput:
 @dataclass
 class StatusInput:
     id: Optional[str] = None
+    project_root: Optional[str] = None
+
+
+@dataclass
+class MaestroInput:
+    envelope: str
+    compression_mode: Optional[str] = "tight"
     project_root: Optional[str] = None
 
 
@@ -404,6 +412,19 @@ def _status_project_wide(burnless_root: Path) -> dict:
     }
 
 
+async def handle_maestro(envelope: str, compression_mode: Optional[str] = "tight", project_root: Optional[str] = None) -> dict:
+    if not envelope or not envelope.strip():
+        return {"error": "invalid_input", "hint": "envelope must be non-empty"}
+    root = _resolve_root(project_root)
+    if not root:
+        return {"error": "not_initialized", "hint": "run `burnless init` in target project first"}
+    project = root.parent if root.name == ".burnless" else root
+    try:
+        return _maestro_process_envelope(envelope, project, compression_mode or "tight")
+    except Exception as e:
+        return {"error": "maestro_failed", "detail": str(e)}
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
@@ -481,6 +502,19 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="maestro",
+            description="3-layer pipeline: send envelope to persistent Maestro (Sonnet), get structured response + decoder hint. Call from a Haiku encoder/decoder layer in the IDE — user input compressed into envelope, Maestro processes via worker delegation, response decoded back to natural language.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "envelope": {"type": "string", "description": "Compressed user intent envelope (telegraphic intent + markers)"},
+                    "compression_mode": {"type": ["string", "null"], "description": "tight | balanced | loose (default tight)"},
+                    "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                },
+                "required": ["envelope"],
+            },
+        ),
     ]
 
 
@@ -493,6 +527,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "capsule": handle_capsule,
         "read": handle_read,
         "status": handle_status,
+        "maestro": handle_maestro,
     }
 
     handler = handlers.get(name)
