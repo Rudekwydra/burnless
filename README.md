@@ -290,6 +290,8 @@ In progress:
 
 Issues and PRs welcome. Priority areas: OpenAI/Gemini Brain adapter, LangChain memory adapter, keepalive daemon, lazy context loading, chat-shell UX.
 
+Testing map + unification plan: see `docs/testing.md`.
+
 If you contest the numbers in this README, run `python bench/v2.py --runs 100 --turns 100 --seed 42` (zero cost) or `bench/run.py` with your own API key. Open an issue with the JSON from `bench/results/` and the workload parameters. That is the only argument worth having.
 
 ## License

@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Filtro hardcore de delegação Ouro/Prata/Bronze.
+# Bloqueia comandos Bash MUTATIVOS no main loop (Opus), exigindo delegação via Agent tool.
+# SSH/sudo read-only liberados (Opus interpreta output direto = economiza tokens).
+# Sub-agents do Task tool são detectados via transcript_path e liberados.
+set -euo pipefail
+
+INPUT=$(cat)
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
+TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // ""')
+
+LOG=~/.claude/logs/delegation_filter.log
+mkdir -p ~/.claude/logs
+
+log_decision() {
+  local decision="$1"
+  local reason="$2"
+  local snippet="${COMMAND:0:200}"
+  snippet="${snippet//$'\n'/ }"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $decision $reason :: $snippet" >> "$LOG"
+}
+
+# Sub-agent (Task tool) detectado → libera
+if [[ "$TRANSCRIPT" == *"/tasks/"* ]]; then
+  log_decision ALLOW subagent
+  exit 0
+fi
+
+# Trim leading whitespace e detecta override # OURO_OK na primeira linha
+TRIMMED="${COMMAND#"${COMMAND%%[![:space:]]*}"}"
+if [[ "$TRIMMED" == "# OURO_OK"* ]]; then
+  log_decision ALLOW ouro_ok
+  exit 0
+fi
+
+# ============ MUTATION KEYWORDS ============
+# Strings que indicam mutação de estado. Se aparecem (no shell direto ou dentro de SSH),
+# o comando precisa ir pra worker (Haiku/Sonnet).
+MUTATION_RE='(^|[[:space:]\;\&\|\`\$\(])(rm[[:space:]]+-|mv[[:space:]]|sed[[:space:]]+-i|systemctl[[:space:]]+(reload|restart|start|stop|enable|disable)|service[[:space:]]+[^[:space:]]+[[:space:]]+(restart|reload|start|stop)|chmod[[:space:]]|chown[[:space:]]|dd[[:space:]]+if|mkfs|tee[[:space:]]+/|>[[:space:]]*/etc|>>[[:space:]]*/etc|>[[:space:]]*/var|>>[[:space:]]*/var|apt(-get)?[[:space:]]+install|apt(-get)?[[:space:]]+remove|yum[[:space:]]+install|dnf[[:space:]]+install|snap[[:space:]]+install|docker[[:space:]]+(compose[[:space:]]+up|run|rm|kill|stop|start)|git[[:space:]]+push|git[[:space:]]+reset[[:space:]]+--hard|git[[:space:]]+clean|npm[[:space:]]+install|pip[[:space:]]+install|make[[:space:]]+install|crontab[[:space:]]+-e|wp[[:space:]]+(plugin|theme|core)[[:space:]]+(install|activate|deactivate|delete|update))'
+
+# ============ HEAVY-TRANSFER COMMANDS ============
+# Sempre bronze: scp/rsync/lftp (transferência massiva) e SSH sem comando inline (sessão interativa)
+HEAVY=0
+if [[ "$COMMAND" =~ (^|[[:space:]\;\&\|])scp[[:space:]] ]]; then HEAVY=1; fi
+if [[ "$COMMAND" =~ (^|[[:space:]\;\&\|])rsync[[:space:]] ]]; then HEAVY=1; fi
+if [[ "$COMMAND" =~ (^|[[:space:]\;\&\|])lftp[[:space:]] ]]; then HEAVY=1; fi
+
+# ============ SSH ANALYSIS ============
+# SSH com comando inline read-only → libera (Opus interpreta direto)
+# SSH sem comando inline (interativo) → bloqueia
+# SSH com comando inline mutativo → bloqueia
+SSH_BLOCK=0
+if [[ "$COMMAND" =~ (^|[[:space:]\;\&\|])ssh[[:space:]]+ ]]; then
+  # Extrai tudo depois do primeiro user@host
+  SSH_INNER=$(echo "$COMMAND" | grep -oE 'ssh[[:space:]]+([^@[:space:]]+@[^[:space:]]+|-[a-zA-Z]+[[:space:]]+[^[:space:]]+([[:space:]]+-[a-zA-Z]+[[:space:]]+[^[:space:]]+)*[[:space:]]+[^@[:space:]]+@[^[:space:]]+).*$' || true)
+  AFTER_HOST=$(echo "$SSH_INNER" | sed -E 's/^ssh[[:space:]]+(-[^@]*[[:space:]]+)?[^@[:space:]]+@[^[:space:]]+[[:space:]]*//')
+  if [[ -z "$AFTER_HOST" ]]; then
+    # SSH interativo (sem comando) → bloqueia
+    SSH_BLOCK=1
+  elif [[ "$AFTER_HOST" =~ $MUTATION_RE ]]; then
+    # SSH com mutação → bloqueia
+    SSH_BLOCK=1
+  fi
+  # SSH read-only com comando inline → não bloqueia
+fi
+
+# ============ SUDO ANALYSIS ============
+# sudo systemctl is-active|status|cat → libera (read-only)
+# sudo + qualquer mutation keyword → bloqueia
+SUDO_BLOCK=0
+if [[ "$COMMAND" =~ (^|[[:space:]\;\&\|])sudo[[:space:]]+ ]]; then
+  if [[ "$COMMAND" =~ $MUTATION_RE ]]; then
+    SUDO_BLOCK=1
+  fi
+  # sudo cat/ls/cat-equivalent: read-only, libera por omissão
+fi
+
+# ============ DECISION ============
+if [[ $HEAVY -eq 1 || $SSH_BLOCK -eq 1 || $SUDO_BLOCK -eq 1 ]]; then
+  log_decision BLOCK "heavy=$HEAVY ssh=$SSH_BLOCK sudo=$SUDO_BLOCK"
+  cat >&2 <<EOF
+🚨 FILTRO HARDCORE: tarefa Bronze/Prata detectada. Opus bloqueado.
+
+Comando: ${COMMAND:0:120}...
+
+Por que bloqueou:
+  HEAVY (scp/rsync/lftp)   = $HEAVY
+  SSH mutativo/interativo  = $SSH_BLOCK
+  sudo mutativo            = $SUDO_BLOCK
+
+Liberados (read-only) sem precisar delegar:
+  - ssh host 'ls|cat|grep|find|tail|nginx -t|curl|systemctl is-active|...'
+  - sudo cat/ls/nginx -t/systemctl status
+  - nginx -t, curl, ping standalone
+
+Delegue via Agent tool se for mutação real:
+  - model: "haiku"  → Bronze (mecânico, spec fechada)
+  - model: "sonnet" → Prata/Ouro (raciocínio + execução)
+
+Override Opus (raro): primeira linha do comando = "# OURO_OK <razão>"
+Logs em ~/.claude/logs/delegation_filter.log
+EOF
+  exit 2
+fi
+
+log_decision ALLOW clean
+exit 0

@@ -342,6 +342,10 @@ def run_with_live_panel(
 
         worker_env = os.environ.copy()
         worker_env["BURNLESS_WORKER"] = "1"
+        # Let local tool guards recognize this subprocess as a Burnless worker
+        # so delegations aren't blocked by "no direct edits" policies.
+        if delegation_id:
+            worker_env["BURNLESS_TASK_ID"] = str(delegation_id)
         # Force `claude -p` (and any tier subprocess) to authenticate via Claude
         # Code OAuth/subscription instead of falling through to API billing. The
         # in-process SDK paths still read the key directly from ANTHROPIC_ENV_PATHS.

@@ -27,6 +27,8 @@ from typing import Iterable
 
 from . import agents as agents_mod
 from . import config as config_mod
+from . import metrics as metrics_mod
+from . import plugin_loader as plugin_loader_mod
 from . import state as state_mod
 
 
@@ -180,16 +182,10 @@ def _run_chat_sdk(
 
     while True:
         try:
-            sys.stdout.write(f"chat [{tier}] › ")
-            sys.stdout.flush()
-            raw = sys.stdin.readline()
+            user_msg = input(f"chat [{tier}] › ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
-        if not raw:
-            print()
-            return 0
-        user_msg = raw.rstrip("\n").strip()
         if not user_msg:
             continue
         # --- slash commands ---
@@ -226,12 +222,11 @@ def _run_chat_sdk(
             continue
         # --- end slash ---
 
-        # Minify input: strip fillers + abbreviations, zero API cost.
-        try:
-            from .codec.encoder import minify as _minify
-            compressed = _minify(user_msg) or user_msg
-        except Exception:
-            compressed = user_msg
+        compressed, compression_info = _compress_chat_input(
+            p,
+            user_msg,
+            hook_name="pre_brain_prompt",
+        )
 
         history.append({"role": "user", "content": compressed})
         _chat_state = state_mod.load(p["state"])
@@ -273,6 +268,15 @@ def _run_chat_sdk(
             cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
             cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
             input_tok = getattr(usage, "input_tokens", 0) or 0
+            output_tok = getattr(usage, "output_tokens", 0) or 0
+            _record_chat_brain_usage(
+                p,
+                cache_read_tokens=cache_read,
+                cache_creation_tokens=cache_write,
+                input_tokens=input_tok,
+                output_tokens=output_tok,
+                model=model,
+            )
         except Exception as e:
             print(f"\nAPI error: {e}")
             history.pop()
@@ -305,6 +309,8 @@ def _run_chat_sdk(
             "cache_write": cache_write,
             "input_tokens": input_tok,
             "user": user_msg,
+            "user_compressed": compressed,
+            "compression": compression_info,
             "assistant": assistant_msg,
         })
     return 0
@@ -494,16 +500,10 @@ def _run_chat_subprocess(
     turns: list[dict] = []
     while True:
         try:
-            sys.stdout.write(f"chat [{tier}] › ")
-            sys.stdout.flush()
-            raw = sys.stdin.readline()
+            user_msg = input(f"chat [{tier}] › ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
-        if not raw:
-            print()
-            return 0
-        user_msg = raw.rstrip("\n").strip()
         if not user_msg:
             continue
         if user_msg in {"/exit", "/quit", "exit", "quit", "/back", "back"}:
@@ -513,7 +513,12 @@ def _run_chat_subprocess(
             print("(local turns reset; chat.jsonl preserved)")
             continue
 
-        prompt = build_prompt(p, user_msg, turns)
+        compressed, compression_info = _compress_chat_input(
+            p,
+            user_msg,
+            hook_name="pre_worker_prompt",
+        )
+        prompt = build_prompt(p, compressed, turns)
         if dry_run:
             print("--- [dry_run prompt] ---")
             print(prompt)
@@ -532,13 +537,15 @@ def _run_chat_subprocess(
             print(assistant_msg)
             print()
 
-        turns.append({"user": user_msg, "assistant": assistant_msg})
+        turns.append({"user": compressed, "assistant": assistant_msg})
         _append_jsonl(log_path, {
             "ts": datetime.now(timezone.utc).isoformat(),
             "tier": tier,
             "agent": agent_cfg.get("name"),
             "backend": "subprocess",
             "user": user_msg,
+            "user_compressed": compressed,
+            "compression": compression_info,
             "assistant": assistant_msg,
         })
 
@@ -572,6 +579,111 @@ def build_prompt(p: dict[str, Path], user_msg: str, turns: Iterable[dict]) -> st
 
 
 # ---- helpers ------------------------------------------------------------
+
+def _compress_chat_input(
+    p: dict[str, Path],
+    user_msg: str,
+    *,
+    hook_name: str,
+) -> tuple[str, dict]:
+    """Free chat first layer: raw text -> minified/plugin-compressed text."""
+    raw = user_msg or ""
+    compressed = raw
+    plugin_used = False
+    try:
+        from .codec.encoder import minify as _minify
+        compressed = _minify(raw) or raw
+    except Exception:
+        compressed = raw
+
+    try:
+        plugins = plugin_loader_mod.load_plugins(Path.home() / ".burnless")
+        if hook_name == "pre_brain_prompt":
+            result = plugin_loader_mod.call_all_plugins(
+                plugins,
+                hook_name,
+                {
+                    "hook": hook_name,
+                    "user_capsule": compressed,
+                    "raw_user": raw,
+                    "system_blocks": [],
+                },
+            )
+            candidate = result.get("user_capsule") if result else None
+        else:
+            result = plugin_loader_mod.call_all_plugins(
+                plugins,
+                hook_name,
+                {
+                    "hook": hook_name,
+                    "prompt": compressed,
+                    "raw_user": raw,
+                    "system_prompt": "",
+                },
+            )
+            candidate = result.get("prompt") if result else None
+        if isinstance(candidate, str) and candidate.strip():
+            compressed = candidate.strip()
+            plugin_used = True
+    except Exception:
+        pass
+
+    info = _chat_compression_info(raw, compressed, plugin_used=plugin_used)
+    _record_chat_compression(p, info)
+    return compressed, info
+
+
+def _chat_compression_info(raw: str, compressed: str, *, plugin_used: bool) -> dict:
+    raw_chars = len(raw or "")
+    compressed_chars = len(compressed or "")
+    ratio = (raw_chars / compressed_chars) if compressed_chars else 1.0
+    return {
+        "raw_chars": raw_chars,
+        "compressed_chars": compressed_chars,
+        "ratio": round(ratio, 3),
+        "plugin_used": plugin_used,
+    }
+
+
+def _record_chat_compression(p: dict[str, Path], info: dict) -> None:
+    try:
+        raw_chars = int(info.get("raw_chars", 0) or 0)
+        compressed_chars = int(info.get("compressed_chars", 0) or 0)
+        if raw_chars <= 0 or compressed_chars <= 0 or compressed_chars >= raw_chars:
+            return
+        metrics_mod.record_encoder_call(
+            metrics_path=p["metrics"],
+            audit_path=p["audit"],
+            raw_input_chars=raw_chars,
+            capsule_output_tokens=max(1, int(compressed_chars / 4)),
+        )
+        metrics_mod.bump_ratio_observed(p["metrics"], float(info.get("ratio", 1.0) or 1.0))
+    except Exception:
+        return
+
+
+def _record_chat_brain_usage(
+    p: dict[str, Path],
+    *,
+    cache_read_tokens: int,
+    cache_creation_tokens: int,
+    input_tokens: int,
+    output_tokens: int,
+    model: str,
+) -> None:
+    try:
+        metrics_mod.record_brain_call(
+            metrics_path=p["metrics"],
+            audit_path=p["audit"],
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model=model,
+        )
+    except Exception:
+        return
+
 
 def _load_memory(p: dict[str, Path]) -> str:
     blobs: list[str] = []
