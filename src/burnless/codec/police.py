@@ -28,11 +28,11 @@ def maybe_police(
     prompt = "\n\n".join(
         [
             (
-                "Voce e o Police do Burnless. Recebeu uma mensagem bruta e sua "
-                "versao encoded em capsule.\n"
-                "Verifique se a capsule preserva o significado da mensagem original.\n"
-                "Se sim, responda apenas: OK\n"
-                "Se nao, responda apenas com a capsule corrigida (sem explicacao)."
+                "You are the Burnless Police. You received a raw message and its "
+                "encoded capsule version.\n"
+                "Check whether the capsule preserves the meaning of the raw message.\n"
+                "If yes, reply with just: OK\n"
+                "If no, reply with ONLY the corrected capsule (no explanation)."
             ),
             "[GLOSSARY]",
             load_glossary(project_root),

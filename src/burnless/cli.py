@@ -541,11 +541,14 @@ def _build_retry_prompt(original_prompt: str, did: str, status: str, summary: di
     issues = summary.get("issues") or []
     evidence = summary.get("evidence") or []
     return (
-        original_prompt.rstrip()
-        + f"\n\n---\nRetry da delegação {did}. Sua tentativa anterior retornou {status}. "
-        f"Issues: {', '.join(str(i) for i in issues) or 'nenhum especificado'}. "
-        f"Evidence faltando: {', '.join(str(e) for e in evidence) or 'nenhum'}. "
-        "Corrija e reenvie o JSON com os mesmos campos."
+        f"RETRY of delegation {did}. Previous attempt returned {status} and DID NOT complete the work.\n"
+        f"Issues reported: {', '.join(str(i) for i in issues) or 'none specified'}.\n"
+        f"Missing evidence: {', '.join(str(e) for e in evidence) or 'none'}.\n\n"
+        "DO NOT assume any files were created. DO NOT echo a previous JSON.\n"
+        "EXECUTE the spec below from scratch: create files, edit files, run tests.\n"
+        "At the end, report files you ACTUALLY created/edited in the FINAL OUTPUT JSON.\n\n"
+        "---\n"
+        + original_prompt.rstrip()
     )
 
 
@@ -553,10 +556,13 @@ def _build_audit_fix_prompt(original_prompt: str, did: str, audit: dict) -> str:
     issues = audit.get("issues") or []
     feedback = str(audit.get("feedback") or audit.get("summary") or "").strip()
     return (
-        original_prompt.rstrip()
-        + f"\n\n---\nAudit retornou PART. Issues: {', '.join(str(i) for i in issues) or 'nenhum'}. "
-        + (f"{feedback} " if feedback else "")
-        + "Corrija sem mudar o que estava OK."
+        f"AUDIT FIX for delegation {did}. Audit returned PART — some DoD items missing.\n"
+        f"Issues: {', '.join(str(i) for i in issues) or 'none'}.\n"
+        + (f"Feedback: {feedback}\n" if feedback else "")
+        + "Fix ONLY the issues above. Keep what was OK as-is. "
+        "Report final JSON with the same schema.\n\n"
+        "---\n"
+        + original_prompt.rstrip()
     )
 
 
