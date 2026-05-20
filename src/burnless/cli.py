@@ -26,6 +26,7 @@ from . import dashboard
 from . import live_runner
 from .estimator import estimate_tokens
 from .codec.decoder import normalize_worker_envelope
+from .cmd_wrapper import run_and_capsule
 
 _THOUGHT_HINTS = (
     "planeje", "plano", "plan", "design", "desenhe", "arquitetura", "architecture",
@@ -2893,7 +2894,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.set_defaults(func=cmd_do)
 
+    sp = sub.add_parser(
+        "cmd",
+        help="Run shell command; capsule output via Haiku if > threshold (brain-side capsule layer)",
+    )
+    sp.add_argument("shell_cmd", help="Shell command to run (quote it)")
+    sp.add_argument("--threshold", type=int, default=4000,
+                    help="char count above which to capsule (default 4000)")
+    sp.add_argument("--no-mask", action="store_true",
+                    help="disable secret masking")
+    sp.set_defaults(func=cmd_cmd)
+
     return p
+
+
+def cmd_cmd(args: argparse.Namespace) -> int:
+    return run_and_capsule(
+        args.shell_cmd,
+        threshold=args.threshold,
+        secret_mask=not args.no_mask,
+        project_root=Path.cwd(),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
