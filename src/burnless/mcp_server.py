@@ -63,15 +63,16 @@ class StatusInput:
 
 def _resolve_root(project_root: Optional[str]) -> Optional[Path]:
     if project_root:
-        return Path(project_root) / ".burnless"
+        root = Path(project_root) / ".burnless"
+        return root if root.exists() else None
     return paths.find_root()
 
 
 def _get_config(burnless_root: Path) -> dict:
     try:
-        return config_mod.load_config(burnless_root / "config.yaml")
+        return config_mod.load(burnless_root / "config.yaml")
     except Exception:
-        return {"tiers": {}, "brain_adapter": "anthropic"}
+        return {"agents": {}, "routing": {}, "brain_adapter": "anthropic"}
 
 
 async def handle_delegate(text: str, tier: Optional[str] = None, project_root: Optional[str] = None) -> dict:
@@ -97,12 +98,12 @@ async def handle_delegate(text: str, tier: Optional[str] = None, project_root: O
             routed_tier, matched_kw = routing.route(text, rules, default_tier="bronze")
             routed_by = "auto-route"
 
-        tiers_cfg = cfg.get("tiers", {})
-        if routed_tier not in tiers_cfg:
+        agents_cfg = cfg.get("agents", {})
+        if routed_tier not in agents_cfg:
             return {"error": "invalid_tier", "hint": f"tier '{routed_tier}' not configured in .burnless/config.yaml"}
 
-        agent_info = tiers_cfg.get(routed_tier, {})
-        agent_name = agent_info.get("agent", "claude-haiku-4-5")
+        agent_info = agents_cfg.get(routed_tier, {})
+        agent_name = agent_info.get("name", "haiku")
 
         md_content = delegations.render_delegation(
             delegation_id=did,
@@ -145,9 +146,9 @@ async def handle_route(text: str, project_root: Optional[str] = None) -> dict:
         cfg = _get_config(burnless_root)
         rules = cfg.get("routing", {})
         tier, kw = routing.route(text, rules, default_tier="bronze")
-        tiers_cfg = cfg.get("tiers", {})
-        agent_info = tiers_cfg.get(tier, {})
-        agent_name = agent_info.get("agent", "claude-haiku-4-5")
+        agents_cfg = cfg.get("agents", {})
+        agent_info = agents_cfg.get(tier, {})
+        agent_name = agent_info.get("name", "haiku")
 
         return {
             "tier": tier,
