@@ -27,6 +27,7 @@ from . import live_runner
 from .estimator import estimate_tokens
 from .codec.decoder import normalize_worker_envelope
 from .cmd_wrapper import run_and_capsule
+from . import pipeline_state as pipeline_state_mod
 
 _THOUGHT_HINTS = (
     "planeje", "plano", "plan", "design", "desenhe", "arquitetura", "architecture",
@@ -2901,6 +2902,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_do)
 
     sp = sub.add_parser(
+        "pipeline",
+        help="3-layer pipeline toggle (encoder/decoder layer via mcp__burnless__maestro)",
+    )
+    sp.add_argument("action", nargs="?", default="status",
+                    choices=["on", "off", "status"],
+                    help="action (default: status)")
+    sp.add_argument("--compression-mode", default="tight",
+                    choices=["tight", "balanced", "loose"],
+                    dest="compression_mode",
+                    help="compression mode when activating (default: tight)")
+    sp.set_defaults(func=cmd_pipeline)
+
+    sp = sub.add_parser(
         "cmd",
         help="Run shell command; capsule output via Haiku if > threshold (brain-side capsule layer)",
     )
@@ -2912,6 +2926,33 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_cmd)
 
     return p
+
+
+def cmd_pipeline(args: argparse.Namespace) -> int:
+    root = paths_mod.require_root()
+    project = root.parent if root.name == ".burnless" else root
+    action = (getattr(args, "action", None) or "status").lower()
+    if action == "on":
+        mode = getattr(args, "compression_mode", None) or "tight"
+        payload = pipeline_state_mod.activate(project, compression_mode=mode)
+        print(f"✓ Burnless pipeline ON · mode={payload['compression_mode']} · project={project.name}")
+        print(f"  state: {pipeline_state_mod._state_file(project)}")
+        return 0
+    if action == "off":
+        if pipeline_state_mod.deactivate(project):
+            print(f"✓ Burnless pipeline OFF · project={project.name}")
+        else:
+            print(f"(already off) project={project.name}")
+        return 0
+    if action == "status":
+        state = pipeline_state_mod.read_state(project)
+        if not state:
+            print(f"OFF · project={project.name}")
+        else:
+            print(pipeline_state_mod.statusline(project))
+        return 0
+    print(f"unknown action '{action}'. Use: on | off | status", file=sys.stderr)
+    return 2
 
 
 def cmd_cmd(args: argparse.Namespace) -> int:
