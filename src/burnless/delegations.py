@@ -133,10 +133,40 @@ def render_maestro_chat(
     )
 
 
+def _extract_text_from_jsonl_stream(stdout: str) -> str:
+    """If stdout is a claude -p stream-json JSONL, extract the result text field."""
+    import json as _json
+    text_parts: list[str] = []
+    result_text: str | None = None
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+        # top-level result event carries the full assistant response
+        if obj.get("type") == "result" and isinstance(obj.get("result"), str):
+            result_text = obj["result"]
+        # stream_event content_block_delta carries incremental text
+        elif obj.get("type") == "stream_event":
+            ev = obj.get("event") or {}
+            delta = ev.get("delta") or {}
+            if delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
+                text_parts.append(delta["text"])
+    if result_text is not None:
+        return result_text
+    if text_parts:
+        return "".join(text_parts)
+    return stdout
+
+
 def extract_result_json(stdout: str) -> dict | None:
     """Find the last fenced ```json block in stdout and parse it. Best-effort."""
     if not stdout:
         return None
+    stdout = _extract_text_from_jsonl_stream(stdout)
     marker = "```json"
     end_marker = "```"
     last_open = stdout.rfind(marker)
