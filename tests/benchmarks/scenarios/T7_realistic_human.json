@@ -1,0 +1,23 @@
+{
+  "id": "T7_realistic_human",
+  "label": "15 turns with verbose, mid-stream correction, multi-topic, emotional markers — mimics real human messy thinking",
+  "expected_pipeline_advantage": "STRONG — encoder finally has signal to compress (verbose vs intent); baseline pays full verbose tokens; pipeline reads ~80 tok envelope at Maestro layer",
+  "notes": "Same underlying task as T5 (Flask TODO app) but expressed in realistic human prose. Goal: measure encoder/decoder value with non-cirurgical prompts.",
+  "turns": [
+    {"user": "Cara, sabe que tava aqui pensando, preciso começar um projeto pequeno pra testar uma ideia. Não sei se é flask ou fastapi, mas vou de flask porque já mexi. Quero algo super simples, tipo um TODO mas só pra eu validar. Cria pra mim um diretório em {TMP_DIR} e um app.py com Flask servindo 'TODO API v0' na raiz GET /. Sem SQLAlchemy ainda, vou simplificar."},
+    {"user": "Esqueci de pedir antes — também queria uma /health que retornasse um JSON com status ok e version 0.1. É padrão de produção, melhor já incluir. Adiciona no mesmo app.py por favor."},
+    {"user": "Tô pensando agora no models. Não quero usar ORM, vai ser overkill. Mas preciso de uma estrutura clara. Cria {TMP_DIR}/models.py com uma classe Todo... acho que dataclass é o cleanest. Campos: id (int), title (str), done (bool default False), created_at em ISO format string. E um método to_dict pra serialização. Sem herança nem nada elaborado."},
+    {"user": "Ok agora vamos plugar. No app.py importa Todo, cria uma lista global TODOS vazia (sim, sei que não é thread-safe, mas é só teste). E adiciona POST /todos que recebe JSON com title, cria Todo com id auto-incrementado, appenda em TODOS e retorna o todo criado. Mantém simples."},
+    {"user": "Faltou listar. Adiciona GET /todos que retorna um objeto com items (lista de todos serializados) e count. Não esquece o to_dict que criamos."},
+    {"user": "Hmm, e se eu quiser pegar um todo específico? Adiciona GET /todos/<int:id> retornando o todo se existir ou 404 com error 'not_found' no body. Sem mensagem elaborada."},
+    {"user": "Agora atualizar. PATCH /todos/<int:id> aceitando done (bool) e title opcionalmente. Atualiza só os campos enviados. Retorna o todo atualizado ou 404 se não existir."},
+    {"user": "Deletar também. DELETE /todos/<int:id>, retorna 204 sem corpo se OK, 404 se não existir. Padrão REST."},
+    {"user": "Pronto, agora testes. Cria {TMP_DIR}/test_app.py com pytest. Quero: test_health, test_create_todo, test_list_todos, test_get_one_404, test_patch_done, test_delete_404. Usa o test_client do Flask. Não precisa fixture elaborada."},
+    {"user": "Roda os testes e me mostra. Se algo falhar, corrige. Comando: pytest -v {TMP_DIR}/test_app.py"},
+    {"user": "Pô, ia esquecendo — validação. POST /todos sem title (ou com title vazio) tem que retornar 400 com error 'title_required'. Adiciona isso no endpoint e cria um test correspondente. Importante porque vou expor isso pra um amigo testar e ele vai mandar coisa zoada."},
+    {"user": "README rapidinho. {TMP_DIR}/README.md com: título do projeto, descrição em 2 linhas sobre o que faz, install (pip install flask pytest), como rodar (python app.py), como testar (pytest test_app.py). Markdown padrão, sem nada elaborado."},
+    {"user": "Stats. Quero saber quantos todos tem, quantos done, quantos pending, e completion_rate (float entre 0 e 1). Adiciona GET /stats retornando esse objeto. Test correspondente também."},
+    {"user": "gitignore padrão Python: __pycache__, *.pyc, .pytest_cache, .venv, venv/. Coloca em {TMP_DIR}/.gitignore."},
+    {"user": "Beleza, fim. Lista todos os arquivos que ficaram em {TMP_DIR}/ com tamanho em bytes e confirma que os testes passam. Se tudo verde, fala 'pronto' que eu sigo."}
+  ]
+}
