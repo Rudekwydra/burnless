@@ -78,6 +78,9 @@ _design/blindless/
 # Burnless Pro — proprietary Cloud client, license, advanced prompts; never commit
 _pro/
 
+# Benchmark results — ephemeral, re-generated on each run
+tests/benchmarks/results/
+
 # Bench legacy (superseded by bench/run.py)
 bench/v4_maestro.py
 bench/benchmark.py
