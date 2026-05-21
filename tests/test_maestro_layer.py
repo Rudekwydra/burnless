@@ -26,19 +26,26 @@ def test_user_message_includes_envelope_and_rules():
 
 def test_parse_stream_json_extracts_session_and_result():
     lines = [
-        '{"type": "system", "session_id": "abc-123", "subtype": "init"}',
+        '{"type": "system", "session_id": "abc-123", "subtype": "init", "model": "claude-sonnet-4-6"}',
         '{"type": "stream_event", "event": {"type": "message_start"}}',
-        '{"type": "result", "subtype": "success", "result": "{\\"response_envelope\\": \\"done\\"}"}',
+        '{"type": "result", "subtype": "success", "result": "{\\"response_envelope\\": \\"done\\"}", "usage": {"input_tokens": 100, "output_tokens": 50, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 300}, "duration_ms": 1234}',
     ]
-    session, text = _parse_stream_json("\n".join(lines))
+    session, text, usage = _parse_stream_json("\n".join(lines))
     assert session == "abc-123"
     assert "response_envelope" in text
+    assert usage["input_tokens"] == 100
+    assert usage["output_tokens"] == 50
+    assert usage["cache_creation_input_tokens"] == 200
+    assert usage["cache_read_input_tokens"] == 300
+    assert usage["duration_ms"] == 1234
+    assert usage["model"] == "claude-sonnet-4-6"
 
 
 def test_parse_stream_json_handles_empty():
-    session, text = _parse_stream_json("")
+    session, text, usage = _parse_stream_json("")
     assert session is None
     assert text == ""
+    assert usage["input_tokens"] == 0
 
 
 def test_parse_stream_json_ignores_malformed_lines():
@@ -47,7 +54,7 @@ def test_parse_stream_json_ignores_malformed_lines():
         'not json',
         '{"type": "result", "result": "hello"}',
     ]
-    session, text = _parse_stream_json("\n".join(lines))
+    session, text, usage = _parse_stream_json("\n".join(lines))
     assert session == "s-1"
     assert text == "hello"
 

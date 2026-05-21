@@ -1,0 +1,71 @@
+{
+  "scenario_id": "T2_medium",
+  "mode": "baseline",
+  "model": "claude-opus-4-7",
+  "baseline_model": "claude-opus-4-7",
+  "maestro_model": "claude-sonnet-4-6",
+  "turns": [
+    {
+      "turn": 1,
+      "user_msg": "Lista os 5 maiores arquivos .py de src/burnless/ por linhas.",
+      "metrics": {
+        "model": "claude-opus-4-7",
+        "input_tokens": 8,
+        "output_tokens": 486,
+        "cache_creation_input_tokens": 34231,
+        "cache_read_input_tokens": 123047,
+        "duration_ms": 11512,
+        "session_id": "8a100fc1-5116-4d40-bba7-29202976a5a6",
+        "final_text": "Top 5 maiores `.py` em `src/burnless/`:\n\n| # | Arquivo | Linhas |\n|---|---|---:|\n| 1 | `src/burnless/cli.py` | 2979 |\n| 2 | `src/burnless/live_runner.py` | 1106 |\n| 3 | `src/burnless/maestro_proto.py` | 763 |\n| 4 | `src/burnless/shell.py` | 742 |\n| 5 | `src/burnless/chat_mode.py` | 729 |",
+        "wall_s": 14.36044430732727,
+        "exit_code": 0,
+        "layer": "baseline",
+        "usd": 1.2480704999999999
+      }
+    },
+    {
+      "turn": 2,
+      "user_msg": "Do maior deles, identifica as 3 funções públicas mais longas.",
+      "metrics": {
+        "model": "claude-opus-4-7",
+        "input_tokens": 7,
+        "output_tokens": 753,
+        "cache_creation_input_tokens": 1384,
+        "cache_read_input_tokens": 106229,
+        "duration_ms": 12967,
+        "session_id": "8a100fc1-5116-4d40-bba7-29202976a5a6",
+        "final_text": "Top 3 funções públicas mais longas em `src/burnless/cli.py` (excluindo aninhadas):\n\n| # | Função | Linhas | Faixa |\n|---|---|---:|---|\n| 1 | `cmd_brain` | 376 | 1822–2197 |\n| 2 | `build_parser` | 261 | 2668–2928 |\n| 3 | `cmd_delegate` | 105 | 434–538 |\n\n(Notei `run_one` com 154 linhas, mas é aninhada dentro de `cmd_brain`, então não conta como pública top-level.)",
+        "wall_s": 15.164069175720215,
+        "exit_code": 0,
+        "layer": "baseline",
+        "usd": 0.2574435
+      }
+    },
+    {
+      "turn": 3,
+      "user_msg": "Pra cada uma dessas funções, descreve em 1 linha o que ela faz.",
+      "metrics": {
+        "model": "claude-opus-4-7",
+        "input_tokens": 9,
+        "output_tokens": 793,
+        "cache_creation_input_tokens": 4409,
+        "cache_read_input_tokens": 222879,
+        "duration_ms": 17581,
+        "session_id": "8a100fc1-5116-4d40-bba7-29202976a5a6",
+        "final_text": "Descrições em 1 linha:\n\n| # | Função | O que faz |\n|---|---|---|\n| 1 | `cmd_brain` | Inicia o loop interativo do Brain/Maestro — carrega config/state, gerencia modelo Anthropic, define slash commands (`/maestro`, `/workers`) e despacha mensagens pro pipeline encoder→dispatcher→decoder. |\n| 2 | `build_parser` | Monta o `argparse` raiz do CLI `burnless` — registra todos os subcomandos (`init`, `plan`, `delegate`, `run`, `do`, `read`, `metrics`, `brain`, etc.) e suas flags. |\n| 3 | `cmd_delegate` | Cria uma delegation numerada (`dXXX`) — roteia tier via routing/hardcore-filter, aplica override, aloca ID, monta goal/success/chain e persiste a delegation pronta pra `burnless run`. |\n\n(Task tools não aplicáveis aqui — pedido one-shot de leitura.)",
+        "wall_s": 19.613662242889404,
+        "exit_code": 0,
+        "layer": "baseline",
+        "usd": 0.5261985
+      }
+    }
+  ],
+  "totals": {
+    "input_tokens": 24,
+    "output_tokens": 2032,
+    "cache_read": 452155,
+    "cache_write": 40024,
+    "usd": 2.0317125,
+    "wall_s": 49.13817572593689
+  }
+}

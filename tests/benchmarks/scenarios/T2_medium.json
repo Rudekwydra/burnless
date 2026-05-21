@@ -1,0 +1,10 @@
+{
+  "id": "T2_medium",
+  "label": "Medium 3-turn analysis",
+  "expected_pipeline_advantage": "break-even or small win",
+  "turns": [
+    {"user": "Lista os 5 maiores arquivos .py de src/burnless/ por linhas."},
+    {"user": "Do maior deles, identifica as 3 funções públicas mais longas."},
+    {"user": "Pra cada uma dessas funções, descreve em 1 linha o que ela faz."}
+  ]
+}

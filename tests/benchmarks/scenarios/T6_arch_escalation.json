@@ -1,0 +1,12 @@
+{
+  "id": "T6_arch_escalation",
+  "label": "Architectural plan with tier escalation (gold/silver/bronze mix)",
+  "expected_pipeline_advantage": "structural — only pipeline routes to gold for hard parts; single-model either gold-for-all (expensive) or sonnet-for-all (shallow)",
+  "turns": [
+    {"user": "Planeja a arquitetura de um TODO app simples com: (1) auth básico, (2) sync offline-first multi-device, (3) UI minimal. Quero: decisões arquiteturais críticas justificadas (especialmente conflict resolution de sync), schema DB, stack escolhido, lista de tarefas pra implementar. Não escrevas código ainda — só o plano. Se alguma decisão exigir raciocínio mais profundo, delega pra worker gold."}
+  ],
+  "metrics_extra": [
+    "delegations_by_tier",
+    "architectural_decisions_with_justification_count"
+  ]
+}

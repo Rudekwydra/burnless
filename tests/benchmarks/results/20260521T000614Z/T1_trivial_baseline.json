@@ -1,0 +1,33 @@
+{
+  "scenario_id": "T1_trivial",
+  "mode": "baseline",
+  "model": "claude-sonnet-4-6",
+  "turns": [
+    {
+      "turn": 1,
+      "user_msg": "Quantos arquivos .py existem no top-level de src/burnless/? Responda só o número.",
+      "metrics": {
+        "model": "claude-sonnet-4-6",
+        "input_tokens": 4,
+        "output_tokens": 94,
+        "cache_creation_input_tokens": 24612,
+        "cache_read_input_tokens": 50714,
+        "duration_ms": 5200,
+        "session_id": "6e77d923-ef05-44ad-8790-99e9677084f5",
+        "final_text": "42",
+        "wall_s": 7.994553089141846,
+        "exit_code": 0,
+        "layer": "baseline",
+        "usd": -0.06166980000000001
+      }
+    }
+  ],
+  "totals": {
+    "input_tokens": 4,
+    "output_tokens": 94,
+    "cache_read": 50714,
+    "cache_write": 24612,
+    "usd": -0.06166980000000001,
+    "wall_s": 7.994553089141846
+  }
+}

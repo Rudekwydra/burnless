@@ -1,0 +1,67 @@
+{
+  "scenario_id": "T1_trivial",
+  "mode": "pipeline",
+  "model": "3-layer",
+  "turns": [
+    {
+      "turn": 1,
+      "user_msg": "Quantos arquivos .py existem no top-level de src/burnless/? Responda só o número.",
+      "metrics": {
+        "encoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 599,
+          "cache_creation_input_tokens": 19462,
+          "cache_read_input_tokens": 85106,
+          "duration_ms": 7460,
+          "session_id": "9707901e-1624-434a-8767-3866fdde09ea",
+          "final_text": "```json\n{\n  \"intent\": \"Count .py files in src/burnless/ top-level and return only the number\",\n  \"key_entities\": [\"src/burnless/\", \".py files\", \"top-level\"],\n  \"markers\": [],\n  \"literal_quotes\": [\"Responda só o número\"]\n}\n```",
+          "wall_s": 10.21600604057312,
+          "exit_code": 0,
+          "layer": "encoder",
+          "usd": -0.04330272000000001
+        },
+        "maestro": {
+          "layer": "maestro",
+          "model": "claude-sonnet-4-6",
+          "input_tokens": 556,
+          "output_tokens": 133,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "duration_ms": 57236,
+          "wall_s": 57.236568212509155,
+          "exit_code": 0,
+          "session_id": "527d00df-6f4a-4946-9512-20f2fce9a091",
+          "final_text": "{\"response_envelope\": \"count=42\", \"key_facts\": [\"src/burnless/ top-level .py files = 42\"], \"delegations_made\": [\"d280\"], \"next\": \"\"}",
+          "estimated_only": true,
+          "usd": 0.0036629999999999996
+        },
+        "decoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 355,
+          "cache_creation_input_tokens": 19446,
+          "cache_read_input_tokens": 85106,
+          "duration_ms": 5011,
+          "session_id": "373884f0-9737-45f1-b399-d0b3407616d9",
+          "final_text": "42 .py files in src/burnless/. Delegation d280 dispatched.",
+          "wall_s": 7.793500185012817,
+          "exit_code": 0,
+          "layer": "decoder",
+          "usd": -0.044291519999999994
+        },
+        "total_usd": -0.08393124,
+        "total_input_tokens": 576,
+        "total_output_tokens": 1087,
+        "final_text": "42 .py files in src/burnless/. Delegation d280 dispatched.",
+        "wall_s_total": 75.24607443809509
+      }
+    }
+  ],
+  "totals": {
+    "input_tokens": 576,
+    "output_tokens": 1087,
+    "usd": -0.08393124,
+    "wall_s": 75.24607443809509
+  }
+}
