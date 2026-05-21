@@ -1,0 +1,23 @@
+{
+  "id": "T5_app_build",
+  "label": "Long sequential app build (15+ interdependent turns)",
+  "expected_pipeline_advantage": "STRONG — baseline context grows linearly with raw history; pipeline keeps only envelopes (~200 tok/turn), cache hits stay efficient even at turn 15+",
+  "notes": "All turns must run in single session (resumed). Each turn references prior turns' work. Decision point for paper.",
+  "turns": [
+    {"user": "Crie um diretório {TMP_DIR} e dentro dele um arquivo app.py com um Flask app mínimo que tenha uma rota GET '/' retornando 'TODO API v0'. Não use SQLAlchemy ainda. Apenas Flask puro."},
+    {"user": "Adicione no app.py uma rota GET /health que retorna JSON {'status': 'ok', 'version': '0.1'}."},
+    {"user": "Crie {TMP_DIR}/models.py com uma classe Todo (dataclass) com fields: id (int), title (str), done (bool, default False), created_at (str ISO format). Adicione um método to_dict()."},
+    {"user": "No app.py, importe Todo de models e crie uma lista global TODOS = []. Adicione rota POST /todos que recebe JSON {title} e cria novo Todo (id auto-incrementado), append em TODOS, retorna o todo criado."},
+    {"user": "Adicione rota GET /todos que retorna {'items': [t.to_dict() for t in TODOS], 'count': len(TODOS)}."},
+    {"user": "Adicione rota GET /todos/<int:id> que retorna o todo se existir, ou 404 com {'error': 'not_found'}."},
+    {"user": "Adicione rota PATCH /todos/<int:id> que aceita {done: bool, title: str?} e atualiza os campos. Retorna o todo atualizado ou 404."},
+    {"user": "Adicione rota DELETE /todos/<int:id> que remove o todo da lista. Retorna 204 sem corpo, ou 404."},
+    {"user": "Crie {TMP_DIR}/test_app.py com pytest. Adicione test_health, test_create_todo, test_list_todos, test_get_one_404, test_patch_done, test_delete_404."},
+    {"user": "Rode os testes (pytest -v {TMP_DIR}/test_app.py) e mostre o resultado. Se tiver falha, corrija."},
+    {"user": "Adicione validação no POST /todos: se title vazio ou ausente, retorna 400 {'error': 'title_required'}. Adicione test correspondente."},
+    {"user": "Crie {TMP_DIR}/README.md com: título, descrição em 2 linhas, install (pip install flask pytest), run (python app.py), test (pytest test_app.py). Use markdown."},
+    {"user": "Adicione no app.py rota GET /stats que retorna {'total': N, 'done': N, 'pending': N, 'completion_rate': float}. Adicione test correspondente."},
+    {"user": "Crie {TMP_DIR}/.gitignore com entries padrão Python (__pycache__, *.pyc, .pytest_cache, .venv, venv/)."},
+    {"user": "Liste todos os arquivos criados em {TMP_DIR}/ com tamanho em bytes. Confirme que os testes passam ao final."}
+  ]
+}

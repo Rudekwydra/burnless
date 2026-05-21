@@ -258,8 +258,9 @@ def run_scenario(scenario_path: Path, mode: str, ts_dir: Path,
                "baseline_model": baseline_model, "maestro_model": maestro_model, "turns": []}
     session_id = None
     pipeline_session = {"maestro_session_id": None}
+    tmp_dir = os.environ.get("BENCHMARK_TMP_DIR", f"/tmp/burnless_bench_{mode}_{int(time.time())}")
     for i, turn in enumerate(scenario["turns"]):
-        user_msg = turn["user"]
+        user_msg = turn["user"].replace("{TMP_DIR}", tmp_dir)
         print(f"  turn {i+1}/{len(scenario['turns'])}: {user_msg[:60]}...", file=sys.stderr)
         if mode == "baseline":
             m = call_baseline(user_msg, baseline_model, session_id, cwd)
