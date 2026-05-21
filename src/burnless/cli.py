@@ -1403,6 +1403,19 @@ def _audit_summary_evidence(
     if status not in {"OK", "PART"} or not evidence:
         return summary
 
+    if cfg.get("audit", {}).get("enabled", True) is False:
+        summary["audit"] = {
+            "status": "SKIPPED",
+            "summary": "Audit disabled in config (audit.enabled: false).",
+            "evidence_checked": [],
+            "issues": [],
+            "auditor_tier": None,
+            "auditor_name": None,
+            "attempted_tiers": [],
+            "attempted_auditors": [],
+        }
+        return summary
+
     audit_path = p["temp"] / f"{did}.audit.json"
 
     # H8: pre_audit_call — plugin may override audit or replace the ladder
