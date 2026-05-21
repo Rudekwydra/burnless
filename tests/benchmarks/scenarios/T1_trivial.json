@@ -1,0 +1,8 @@
+{
+  "id": "T1_trivial",
+  "label": "Trivial 1-turn Q&A",
+  "expected_pipeline_advantage": "negative — overhead dominates trivial input",
+  "turns": [
+    {"user": "Quantos arquivos .py existem no top-level de src/burnless/? Responda só o número."}
+  ]
+}

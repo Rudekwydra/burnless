@@ -55,10 +55,18 @@ def _build_user_message(envelope: str, compression_mode: str) -> str:
     )
 
 
-def _parse_stream_json(stdout: str) -> tuple[str | None, str]:
-    """Extract (session_id, final_text) from claude stream-json output."""
+def _parse_stream_json(stdout: str) -> tuple[str | None, str, dict]:
+    """Extract (session_id, final_text, usage_metrics) from claude stream-json output."""
     session_id: str | None = None
     final_text = ""
+    usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "duration_ms": 0,
+        "model": None,
+    }
     for line in stdout.splitlines():
         line = line.strip()
         if not line:
@@ -70,9 +78,16 @@ def _parse_stream_json(stdout: str) -> tuple[str | None, str]:
         t = obj.get("type")
         if t == "system" and "session_id" in obj and not session_id:
             session_id = obj["session_id"]
+            usage["model"] = obj.get("model") or usage["model"]
         elif t == "result":
             final_text = obj.get("result", "") or final_text
-    return session_id, final_text
+            u = obj.get("usage") or {}
+            usage["input_tokens"] += int(u.get("input_tokens", 0))
+            usage["output_tokens"] += int(u.get("output_tokens", 0))
+            usage["cache_creation_input_tokens"] += int(u.get("cache_creation_input_tokens", 0))
+            usage["cache_read_input_tokens"] += int(u.get("cache_read_input_tokens", 0))
+            usage["duration_ms"] = int(obj.get("duration_ms", 0)) or usage["duration_ms"]
+    return session_id, final_text, usage
 
 
 def _try_extract_envelope_json(text: str) -> dict | None:
@@ -134,7 +149,7 @@ def process_envelope(
             "decoder_hint": "Tell the user the Maestro timed out. Suggest retry or smaller request.",
         }
 
-    new_session_id, final_text = _parse_stream_json(proc.stdout)
+    new_session_id, final_text, usage = _parse_stream_json(proc.stdout)
 
     if new_session_id and not session_id:
         with _lock:
@@ -156,4 +171,5 @@ def process_envelope(
         "compression_mode": compression_mode,
         "maestro_session_id": new_session_id or session_id,
         "maestro_exit_code": proc.returncode,
+        "usage": usage,
     }

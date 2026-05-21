@@ -1,0 +1,66 @@
+{
+  "scenario_id": "T1_trivial",
+  "mode": "pipeline",
+  "model": "3-layer",
+  "turns": [
+    {
+      "turn": 1,
+      "user_msg": "Quantos arquivos .py existem no top-level de src/burnless/? Responda só o número.",
+      "metrics": {
+        "encoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 434,
+          "cache_creation_input_tokens": 19488,
+          "cache_read_input_tokens": 85106,
+          "duration_ms": 5272,
+          "session_id": "128cea42-f887-4a91-a34b-47f6ea9420a9",
+          "final_text": "```json\n{\n  \"intent\": \"Count .py files at top-level of src/burnless/\",\n  \"key_entities\": [\"src/burnless/\", \".py\", \"top-level\"],\n  \"markers\": [],\n  \"literal_quotes\": [\"Responda só o número\"]\n}\n```",
+          "wall_s": 8.106136083602905,
+          "exit_code": 0,
+          "layer": "encoder",
+          "usd": 0.03973328
+        },
+        "maestro": {
+          "layer": "maestro",
+          "model": "claude-sonnet-4-6",
+          "input_tokens": 6,
+          "output_tokens": 703,
+          "cache_creation_input_tokens": 34256,
+          "cache_read_input_tokens": 128417,
+          "duration_ms": 69057,
+          "wall_s": 71.47247505187988,
+          "exit_code": 0,
+          "session_id": "13fddd44-8db8-4068-9859-226703403f77",
+          "final_text": "{\"response_envelope\": \"count=42\", \"key_facts\": [\"src/burnless/*.py top-level \\u2192 42 files\", \"evidence: ls src/burnless/*.py | wc -l \\u2192 42 (d282/bronze)\", \"auditor: missing_final_json (known bug, worker OK confirmed via log)\"], \"delegations_made\": [\"d282\"], \"next\": \"\"}",
+          "usd": 0.25462409999999996
+        },
+        "decoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 160,
+          "cache_creation_input_tokens": 19766,
+          "cache_read_input_tokens": 85106,
+          "duration_ms": 3523,
+          "session_id": "ef768a00-d6a0-4175-b115-274b79584884",
+          "final_text": "42",
+          "wall_s": 6.203662157058716,
+          "exit_code": 0,
+          "layer": "decoder",
+          "usd": 0.039082080000000005
+        },
+        "total_usd": 0.33343945999999997,
+        "total_input_tokens": 26,
+        "total_output_tokens": 1297,
+        "final_text": "42",
+        "wall_s_total": 85.7822732925415
+      }
+    }
+  ],
+  "totals": {
+    "input_tokens": 26,
+    "output_tokens": 1297,
+    "usd": 0.33343945999999997,
+    "wall_s": 85.7822732925415
+  }
+}

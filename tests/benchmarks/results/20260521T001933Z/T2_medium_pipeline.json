@@ -1,0 +1,172 @@
+{
+  "scenario_id": "T2_medium",
+  "mode": "pipeline",
+  "model": "3-layer",
+  "turns": [
+    {
+      "turn": 1,
+      "user_msg": "Lista os 5 maiores arquivos .py de src/burnless/ por linhas.",
+      "metrics": {
+        "encoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 346,
+          "cache_creation_input_tokens": 19476,
+          "cache_read_input_tokens": 85106,
+          "duration_ms": 3966,
+          "session_id": "61ad9abc-a2f8-461c-b4f3-ba2a46947d9d",
+          "final_text": "```json\n{\n  \"intent\": \"List the 5 largest .py files in src/burnless/ by line count.\",\n  \"key_entities\": [\"src/burnless/\", \".py\", \"5 maiores\", \"linhas\"],\n  \"markers\": [],\n  \"literal_quotes\": [\"5 maiores arquivos .py de src/burnless/ por linhas\"]\n}\n```",
+          "wall_s": 6.752741813659668,
+          "exit_code": 0,
+          "layer": "encoder",
+          "usd": 0.03936208
+        },
+        "maestro": {
+          "layer": "maestro",
+          "model": "claude-sonnet-4-6",
+          "input_tokens": 6,
+          "output_tokens": 1101,
+          "cache_creation_input_tokens": 32882,
+          "cache_read_input_tokens": 128317,
+          "duration_ms": 99959,
+          "wall_s": 102.38005018234253,
+          "exit_code": 0,
+          "session_id": "8a1d319b-7133-4c4c-b24a-d8ce6e7c8801",
+          "final_text": "{\"response_envelope\": \"top-5 .py src/burnless/ by line count \\u2014 retrieved via bronze d283\", \"key_facts\": [\"cli.py \\u2192 2979 lines\", \"live_runner.py \\u2192 1106 lines\", \"maestro_proto.py \\u2192 763 lines\", \"shell.py \\u2192 742 lines\", \"chat_mode.py \\u2192 729 lines\"], \"delegations_made\": [\"d283\"], \"next\": \"\"}",
+          "usd": 0.2523201
+        },
+        "decoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 276,
+          "cache_creation_input_tokens": 102770,
+          "cache_read_input_tokens": 0,
+          "duration_ms": 6178,
+          "session_id": "5a232ac8-8f2f-4399-8d84-21e9aa6a3a60",
+          "final_text": "1. cli.py — 2979 linhas\n2. live_runner.py — 1106 linhas\n3. maestro_proto.py — 763 linhas\n4. shell.py — 742 linhas\n5. chat_mode.py — 729 linhas",
+          "wall_s": 9.088888883590698,
+          "exit_code": 0,
+          "layer": "decoder",
+          "usd": 0.165544
+        },
+        "total_usd": 0.45722618000000004,
+        "total_input_tokens": 26,
+        "total_output_tokens": 1723,
+        "final_text": "1. cli.py — 2979 linhas\n2. live_runner.py — 1106 linhas\n3. maestro_proto.py — 763 linhas\n4. shell.py — 742 linhas\n5. chat_mode.py — 729 linhas",
+        "wall_s_total": 118.2216808795929
+      }
+    },
+    {
+      "turn": 2,
+      "user_msg": "Do maior deles, identifica as 3 funções públicas mais longas.",
+      "metrics": {
+        "encoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 795,
+          "cache_creation_input_tokens": 19457,
+          "cache_read_input_tokens": 49380,
+          "duration_ms": 8265,
+          "session_id": "eea8d2a8-1710-41e5-8f4c-d95ccb1fd1de",
+          "final_text": "```json\n{\n  \"intent\": \"Identify the 3 longest public functions from the largest file or module.\",\n  \"key_entities\": [\"3 funções públicas\", \"maior\", \"mais longas\", \"functions\"],\n  \"markers\": [\"DECISION\"],\n  \"literal_quotes\": [\"3 funções públicas mais longas\"]\n}\n```",
+          "wall_s": 11.16615605354309,
+          "exit_code": 0,
+          "layer": "encoder",
+          "usd": 0.0382696
+        },
+        "maestro": {
+          "layer": "maestro",
+          "model": "claude-sonnet-4-6",
+          "input_tokens": 6,
+          "output_tokens": 707,
+          "cache_creation_input_tokens": 11225,
+          "cache_read_input_tokens": 198751,
+          "duration_ms": 87448,
+          "wall_s": 89.66602206230164,
+          "exit_code": 0,
+          "session_id": "8a1d319b-7133-4c4c-b24a-d8ce6e7c8801",
+          "final_text": "{\"response_envelope\": \"top-3 longest public functions in src/burnless/cli.py \\u2014 AST-verified\", \"key_facts\": [\"cmd_brain: lines 1822\\u20132197 \\u2192 376 lines\", \"build_parser: lines 2668\\u20132928 \\u2192 261 lines\", \"cmd_delegate: lines 434\\u2013538 \\u2192 105 lines\"], \"delegations_made\": [\"d284\"], \"next\": \"\"}",
+          "usd": 0.13759829999999998
+        },
+        "decoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 409,
+          "cache_creation_input_tokens": 99276,
+          "cache_read_input_tokens": 0,
+          "duration_ms": 6698,
+          "session_id": "a2731656-6bac-466f-9520-f2181eae4bd0",
+          "final_text": "**src/burnless/cli.py**\n\n1. `cmd_brain` — 376 linhas (linhas 1822–2197)\n2. `build_parser` — 261 linhas (linhas 2668–2928)\n3. `cmd_delegate` — 105 linhas (linhas 434–538)",
+          "wall_s": 9.62240719795227,
+          "exit_code": 0,
+          "layer": "decoder",
+          "usd": 0.1604856
+        },
+        "total_usd": 0.33635349999999997,
+        "total_input_tokens": 26,
+        "total_output_tokens": 1911,
+        "final_text": "**src/burnless/cli.py**\n\n1. `cmd_brain` — 376 linhas (linhas 1822–2197)\n2. `build_parser` — 261 linhas (linhas 2668–2928)\n3. `cmd_delegate` — 105 linhas (linhas 434–538)",
+        "wall_s_total": 110.454585313797
+      }
+    },
+    {
+      "turn": 3,
+      "user_msg": "Pra cada uma dessas funções, descreve em 1 linha o que ela faz.",
+      "metrics": {
+        "encoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 479,
+          "cache_creation_input_tokens": 19450,
+          "cache_read_input_tokens": 85106,
+          "duration_ms": 6259,
+          "session_id": "53ace75f-50dd-486f-be7b-d8109c328fd0",
+          "final_text": "```json\n{\n  \"intent\": \"Describe what each function does in exactly 1 line.\",\n  \"key_entities\": [],\n  \"markers\": [\"META_COMMENT\"],\n  \"literal_quotes\": [\"descreve em 1 linha o que ela faz\"]\n}\n```\n\n**Note:** No functions were referenced in your message. If you meant to paste code or list functions, please share them and I'll describe each in one line.",
+          "wall_s": 8.96505618095398,
+          "exit_code": 0,
+          "layer": "encoder",
+          "usd": 0.039852479999999996
+        },
+        "maestro": {
+          "layer": "maestro",
+          "model": "claude-sonnet-4-6",
+          "input_tokens": 9,
+          "output_tokens": 1516,
+          "cache_creation_input_tokens": 4485,
+          "cache_read_input_tokens": 417426,
+          "duration_ms": 220932,
+          "wall_s": 222.78420186042786,
+          "exit_code": 0,
+          "session_id": "8a1d319b-7133-4c4c-b24a-d8ce6e7c8801",
+          "final_text": "{\"response_envelope\": \"1-line descriptions for 3 longest public functions in cli.py\", \"key_facts\": [\"cmd_delegate (105 lines): Creates a numbered delegation \\u2014 parses task text, applies tier routing + hardcore filter, writes delegation metadata file.\", \"cmd_brain (376 lines): Starts interactive Maestro chat \\u2014 encodes messages into capsules, calls brain model via SDK, auto-delegates when brain emits delegation lines.\", \"build_parser (261 lines): Constructs the burnless CLI argument parser \\u2014 registers 20+ subcommands (delegate, run, brain, metrics, etc.) with full argument specs.\"], \"delegations_made\": [\"d285\", \"d286\"], \"next\": \"\"}",
+          "usd": 0.1749048
+        },
+        "decoder": {
+          "model": "claude-haiku-4-5-20251001",
+          "input_tokens": 10,
+          "output_tokens": 754,
+          "cache_creation_input_tokens": 19805,
+          "cache_read_input_tokens": 85106,
+          "duration_ms": 8247,
+          "session_id": "97159dc0-8a1f-4879-a662-d319df9bfb65",
+          "final_text": "`cmd_delegate`: Cria delegação numerada com roteamento de tier e escreve metadata.\n\n`cmd_brain`: Chat interativo que codifica mensagens em cápsulas e auto-delega via brain model.\n\n`build_parser`: Constrói parser CLI com 20+ subcomandos.",
+          "wall_s": 10.98527193069458,
+          "exit_code": 0,
+          "layer": "decoder",
+          "usd": 0.04152048
+        },
+        "total_usd": 0.25627776,
+        "total_input_tokens": 29,
+        "total_output_tokens": 2749,
+        "final_text": "`cmd_delegate`: Cria delegação numerada com roteamento de tier e escreve metadata.\n\n`cmd_brain`: Chat interativo que codifica mensagens em cápsulas e auto-delega via brain model.\n\n`build_parser`: Constrói parser CLI com 20+ subcomandos.",
+        "wall_s_total": 242.73452997207642
+      }
+    }
+  ],
+  "totals": {
+    "input_tokens": 81,
+    "output_tokens": 6383,
+    "usd": 1.04985744,
+    "wall_s": 471.4107961654663
+  }
+}
