@@ -524,8 +524,30 @@ def is_available(agent_cfg: dict) -> bool:
     return shutil.which(parts[0]) is not None
 
 
+def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
+    """If a warm session is active for this project, inject --resume <uuid>
+    --fork-session before --append-system-prompt so the worker inherits the
+    warm prefix cache. Returns the original parts unchanged if no warm exists."""
+    if cwd is None:
+        return parts
+    burnless_root = Path(cwd) / ".burnless"
+    if not burnless_root.is_dir():
+        return parts
+    try:
+        from . import warm_session as _ws
+        extra = _ws.fork_args(burnless_root)
+    except Exception:
+        return parts
+    if not extra:
+        return parts
+    # Worker subprocess is `claude -p ...`; insert fork args right after the
+    # binary path. claude CLI accepts flags in any order.
+    return [parts[0]] + extra + parts[1:]
+
+
 def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None) -> dict:
     parts = resolve_command(agent_cfg)
+    parts = _inject_warm_fork_args(parts, cwd)
     if shutil.which(parts[0]) is None:
         raise AgentError(
             f"agent binary not found in PATH: {parts[0]} (configured for {agent_cfg.get('name')})"
@@ -563,6 +585,12 @@ def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | N
             "timed_out": True,
         }
     ended = datetime.now(timezone.utc)
+    if cwd is not None:
+        try:
+            from . import warm_session as _ws
+            _ws.touch(Path(cwd) / ".burnless")
+        except Exception:
+            pass
     return {
         "agent": agent_cfg.get("name"),
         "provider": _provider_id_from_cfg(agent_cfg),
