@@ -22,13 +22,6 @@ DELEGATION_TEMPLATE = """\
 
 {task}
 
-## Constraints
-
-- Be concise. No preamble.
-- Output a final JSON block matching the success schema below; nothing else after it.
-- Do not include logs in the JSON. Logs go to stdout, JSON last.
-- Include `evidence`: short, verifiable items citing commands, files, logs, or checks observed. Evidence must not be opinion.
-
 ## Success criteria
 
 {success}
@@ -36,30 +29,6 @@ DELEGATION_TEMPLATE = """\
 ## Report kind
 
 {kind_hint}
-
-## Required final output (last lines of stdout)
-
-After executing the task with Edit/Write/Bash, emit a single JSON object on
-the LAST lines of stdout with these keys:
-
-- `id`: the string `{id}`
-- `status`: one of `OK`, `PART`, `ERR`, `BLK`
-- `kind`: `execution` or `thought`
-- `summary`: one short sentence describing what YOU did in this run
-- `files_touched`: list of paths YOU created or edited in this run (`[]` if none)
-- `validated`: list of checks YOU ran in this run (tests, tsc, grep, lint, etc.)
-- `evidence`: list of commands/files/logs YOU observed during execution
-- `density`: object `{{"efficiency": N, "creativity": N, "out_of_box": N}}` with N in 0..1
-- `salience`: number in 0..1
-- `issues`: list (empty if none)
-- `next`: short hint or empty string
-
-IMPORTANT — burnless contract:
-- DO NOT echo a previous JSON. DO NOT assume any files were already created.
-- The JSON must reflect ONLY the work YOU just executed in this session.
-- If you only read files (Read/grep/ls) without modifying anything, status is
-  `PART` or `ERR`, never `OK`.
-- EXECUTE first using Edit/Write/Bash, THEN emit the envelope.
 """
 
 

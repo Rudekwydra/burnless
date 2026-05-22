@@ -337,12 +337,9 @@ def audit_summary_evidence(
         }
         summary["audit"] = audit
         return summary
-    if status == "OK" and not evidence:
-        summary["status"] = "PART"
-        append_issue(summary, "missing_evidence")
-        add_evidence_feedback(summary)
-        status = "PART"
-    if status not in {"OK", "PART"} or not evidence:
+    # v0.8: no envelope/evidence is acceptable. Status stays OK; audit (when
+    # enabled below) derives from git diff via filesystem_first / fast_path.
+    if status not in {"OK", "PART"}:
         return summary
 
     if cfg.get("audit", {}).get("enabled", True) is False:
