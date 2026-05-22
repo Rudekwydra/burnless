@@ -863,9 +863,12 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             _summary = "Worker stopped by user."
             _issue = "user_interrupted"
         else:
-            _status = "ERR" if result["returncode"] != 0 else "PART"
-            _summary = "(agent did not emit final JSON block)"
-            _issue = "missing_final_json" if result["returncode"] == 0 else f"returncode={result['returncode']}"
+            # v0.8: no envelope is fine. Status from exit code; body = last line of stdout.
+            _status = "OK" if result["returncode"] == 0 else "ERR"
+            _stdout_lines = (result.get("stdout") or "").strip().splitlines()
+            _stdout_tail = _stdout_lines[-1] if _stdout_lines else ""
+            _summary = (_stdout_tail[:200] or "Worker finished.").strip()
+            _issue = "" if result["returncode"] == 0 else f"returncode={result['returncode']}"
         summary = normalize_worker_envelope({
             "id": did,
             "status": _status,
@@ -873,7 +876,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             "summary": _summary,
             "files_touched": [],
             "validated": [],
-            "issues": [_issue],
+            "issues": [_issue] if _issue else [],
             "next": "",
         })
 
@@ -1045,15 +1048,24 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 )
             else:
                 _r_rc = _retry_res.get("returncode", 1)
-                _r_issue = "stale_worker" if _r_stale else ("missing_final_json" if _r_rc == 0 else f"returncode={_r_rc}")
+                if _r_stale:
+                    _r_issue = "stale_worker"
+                    _r_status = "PART"
+                    _r_summary = "(retry: stale worker)"
+                else:
+                    # v0.8: no envelope is fine. Status from exit code.
+                    _r_status = "OK" if _r_rc == 0 else "ERR"
+                    _r_lines = (_retry_res.get("stdout") or "").strip().splitlines()
+                    _r_summary = ((_r_lines[-1] if _r_lines else "")[:200] or "Worker finished (retry).").strip()
+                    _r_issue = "" if _r_rc == 0 else f"returncode={_r_rc}"
                 _r_sum = normalize_worker_envelope({
                     "id": did,
-                    "status": "ERR" if _r_rc != 0 else "PART",
+                    "status": _r_status,
                     "kind": _infer_kind_hint(prompt),
-                    "summary": "(retry: agent did not emit final JSON block)",
+                    "summary": _r_summary,
                     "files_touched": [],
                     "validated": [],
-                    "issues": [_r_issue],
+                    "issues": [_r_issue] if _r_issue else [],
                     "next": "",
                 })
 

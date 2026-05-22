@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from burnless import cli, paths
 from burnless import delegations as deleg_mod
 
@@ -12,6 +14,7 @@ def _paths(tmp_path: Path) -> dict[str, Path]:
     return p
 
 
+@pytest.mark.skip(reason="v0.8: envelope killed; OK without evidence stays OK. Audit (when enabled) derives from git diff.")
 def test_ok_without_evidence_is_downgraded_to_part(tmp_path: Path):
     p = _paths(tmp_path)
     log_path = p["logs"] / "d001.log"
