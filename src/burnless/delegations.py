@@ -39,25 +39,27 @@ DELEGATION_TEMPLATE = """\
 
 ## Required final output (last lines of stdout)
 
-Após executar a task com Edit/Write/Bash, emita na ÚLTIMA linha do stdout
-um único objeto JSON com estas chaves:
+After executing the task with Edit/Write/Bash, emit a single JSON object on
+the LAST lines of stdout with these keys:
 
-- `id`: a string `{id}`
-- `status`: uma das strings `OK`, `PART`, `ERR`, `BLK`
-- `kind`: `execution` ou `thought`
-- `summary`: uma frase curta do que VOCÊ fez nesta execução
-- `files_touched`: lista de paths que VOCÊ criou ou editou (`[]` se nenhum)
-- `validated`: lista de checks que VOCÊ rodou nesta sessão (testes, tsc, grep, etc.)
-- `evidence`: lista de citações de comandos/arquivos/logs que VOCÊ observou
-- `density`: objeto `{{"efficiency": N, "creativity": N, "out_of_box": N}}` com N entre 0 e 1
-- `salience`: número entre 0 e 1
-- `issues`: lista (vazia se sem problemas)
-- `next`: hint curto ou string vazia
+- `id`: the string `{id}`
+- `status`: one of `OK`, `PART`, `ERR`, `BLK`
+- `kind`: `execution` or `thought`
+- `summary`: one short sentence describing what YOU did in this run
+- `files_touched`: list of paths YOU created or edited in this run (`[]` if none)
+- `validated`: list of checks YOU ran in this run (tests, tsc, grep, lint, etc.)
+- `evidence`: list of commands/files/logs YOU observed during execution
+- `density`: object `{{"efficiency": N, "creativity": N, "out_of_box": N}}` with N in 0..1
+- `salience`: number in 0..1
+- `issues`: list (empty if none)
+- `next`: short hint or empty string
 
-IMPORTANTE: o JSON deve refletir APENAS o trabalho que VOCÊ executou nesta sessão.
-Não copie de exemplos ou de outputs anteriores. Não emita o envelope sem antes ter
-chamado Edit/Write/Bash para realmente fazer a task. Se você apenas leu arquivos
-(Read/grep/ls) sem modificar nada, o status correto é `PART` ou `ERR`, não `OK`.
+IMPORTANT — burnless contract:
+- DO NOT echo a previous JSON. DO NOT assume any files were already created.
+- The JSON must reflect ONLY the work YOU just executed in this session.
+- If you only read files (Read/grep/ls) without modifying anything, status is
+  `PART` or `ERR`, never `OK`.
+- EXECUTE first using Edit/Write/Bash, THEN emit the envelope.
 """
 
 
@@ -149,6 +151,8 @@ def _extract_text_from_jsonl_stream(stdout: str) -> str:
         try:
             obj = _json.loads(line)
         except _json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
             continue
         # top-level result event carries the full assistant response
         if obj.get("type") == "result" and isinstance(obj.get("result"), str):
