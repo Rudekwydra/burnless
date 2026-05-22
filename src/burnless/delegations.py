@@ -39,21 +39,25 @@ DELEGATION_TEMPLATE = """\
 
 ## Required final output (last lines of stdout)
 
-```json
-{{
-  "id": "{id}",
-  "status": "OK | PART | ERR | BLK",
-  "kind": "execution | thought",
-  "summary": "<one short sentence>",
-  "files_touched": [],
-  "validated": [],
-  "evidence": ["<command/file/log/check observed>"],
-  "density": {{"efficiency": 0.5, "creativity": 0.5, "out_of_box": 0.5}},
-  "salience": 0.5,
-  "issues": [],
-  "next": "<short hint or empty string>"
-}}
-```
+Após executar a task com Edit/Write/Bash, emita na ÚLTIMA linha do stdout
+um único objeto JSON com estas chaves:
+
+- `id`: a string `{id}`
+- `status`: uma das strings `OK`, `PART`, `ERR`, `BLK`
+- `kind`: `execution` ou `thought`
+- `summary`: uma frase curta do que VOCÊ fez nesta execução
+- `files_touched`: lista de paths que VOCÊ criou ou editou (`[]` se nenhum)
+- `validated`: lista de checks que VOCÊ rodou nesta sessão (testes, tsc, grep, etc.)
+- `evidence`: lista de citações de comandos/arquivos/logs que VOCÊ observou
+- `density`: objeto `{{"efficiency": N, "creativity": N, "out_of_box": N}}` com N entre 0 e 1
+- `salience`: número entre 0 e 1
+- `issues`: lista (vazia se sem problemas)
+- `next`: hint curto ou string vazia
+
+IMPORTANTE: o JSON deve refletir APENAS o trabalho que VOCÊ executou nesta sessão.
+Não copie de exemplos ou de outputs anteriores. Não emita o envelope sem antes ter
+chamado Edit/Write/Bash para realmente fazer a task. Se você apenas leu arquivos
+(Read/grep/ls) sem modificar nada, o status correto é `PART` ou `ERR`, não `OK`.
 """
 
 
