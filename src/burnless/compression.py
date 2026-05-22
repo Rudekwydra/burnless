@@ -97,9 +97,16 @@ def compress(
     mode: str = DEFAULT_MODE,
 ) -> Capsule:
     """Build a capsule from goal + summary + raw_log under the given mode."""
+    from .codec.decoder import _coerce_to_list
+
     mode = normalize_mode(mode)
     if mode not in MODES:
         raise ValueError(f"unknown compression mode: {mode!r}; pick one of {MODES}")
+
+    summary = dict(summary or {})
+    for field in ("validated", "evidence", "files_touched", "issues"):
+        if field in summary:
+            summary[field] = _coerce_to_list(summary[field])
 
     limits = _FIELD_LIMITS[mode]
     per_field = limits["per_field"]
