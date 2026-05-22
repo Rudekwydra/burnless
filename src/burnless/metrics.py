@@ -64,8 +64,13 @@ _CHARS_PER_TOKEN_EN = 4.0
 def load(path: Path) -> dict:
     if not path.exists():
         return _fresh()
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        # Concurrent writers can leave the file mid-rewrite. Treat as empty;
+        # next save() will heal it.
+        return _fresh()
     # heal missing keys after upgrades
     base = _fresh()
     for k, v in base.items():
@@ -77,9 +82,12 @@ def load(path: Path) -> dict:
 
 
 def save(path: Path, metrics: dict) -> None:
+    import os
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    with tmp.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
 
 
 
