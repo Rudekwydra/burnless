@@ -311,14 +311,29 @@ def run_with_live_panel(
     events: queue.Queue[tuple[str, str | None]] = queue.Queue()
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Per-tier session resume — replays the previous worker session on this
-    # tier when one exists and is under cache TTL. Claude Code's prompt cache
-    # keeps the prior turns hot, so this turn pays input tokens only for the
-    # new delta. burnless_root is the project's `.burnless/` directory.
+    # Worker session strategy (gold standard validated 2026-05-22):
+    #   1. If a warm session exists for this project → fork off it
+    #      (--resume <warm> --fork-session). The warm carries the project
+    #      brief (paths, write rules) as cached prefix.
+    #   2. Otherwise fall back to per-tier resume legacy behavior, but
+    #      always pair with --fork-session to prevent cross-task
+    #      contamination from the prior delegation.
     burnless_root = log_path.parent.parent if log_path.parent.name == "logs" else log_path.parent
-    resumed_session = _load_tier_session(burnless_root, tier)
-    if resumed_session and "--resume" not in command:
-        command = list(command) + ["--resume", resumed_session]
+    fork_uuid: str | None = None
+    if "--resume" not in command:
+        try:
+            from . import warm_session as _ws
+            warm_args = _ws.fork_args(burnless_root)
+            if warm_args:
+                command = list(command) + warm_args
+                fork_uuid = warm_args[1] if len(warm_args) > 1 else None
+        except Exception:
+            warm_args = []
+        if not warm_args:
+            resumed_session = _load_tier_session(burnless_root, tier)
+            if resumed_session:
+                command = list(command) + ["--resume", resumed_session, "--fork-session"]
+                fork_uuid = resumed_session
 
     # Inject --permission-mode bypassPermissions for `claude` workers so
     # tool calls never trigger an interactive approval prompt (stdin is
@@ -556,7 +571,17 @@ def run_with_live_panel(
     # Persist session_id for the next delegation on this tier — but only on
     # clean completion (no SIGTERM/timeout/stale). A bad session is worse
     # than no session: replaying it would carry over the failure context.
-    if not interrupted and not stale_worker and returncode == 0 and session_holder:
+    # SKIP when warm-session pool is active: each fork's session_id is a
+    # transient leaf branched off the warm trunk. Saving it would point the
+    # next worker at this worker's per-task history (cross-task contamination,
+    # bug observed 2026-05-22). The warm trunk is the only durable source.
+    warm_active = False
+    try:
+        from . import warm_session as _ws
+        warm_active = bool(_ws.fork_args(burnless_root))
+    except Exception:
+        pass
+    if not warm_active and not interrupted and not stale_worker and returncode == 0 and session_holder:
         _save_tier_session(burnless_root, tier, session_holder[0])
     return RunResult(
         agent=agent_cfg.get("name"),
