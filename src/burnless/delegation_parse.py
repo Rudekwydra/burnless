@@ -57,19 +57,7 @@ def parse_goal_from_delegation(md: str) -> str | None:
     return text or None
 
 
-def _coerce_to_list(value) -> list:
-    """Tolerate workers that emit bool/str/dict where a list was expected."""
-    if value is None or value is False:
-        return []
-    if value is True:
-        return ["true"]
-    if isinstance(value, list):
-        return value
-    if isinstance(value, (str, int, float)):
-        return [value]
-    if isinstance(value, dict):
-        return [f"{k}={v}" for k, v in value.items()]
-    return [str(value)]
+from .codec.decoder import _coerce_to_list
 
 
 def extract_test_status(summary: dict) -> str:

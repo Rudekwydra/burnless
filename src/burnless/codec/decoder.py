@@ -211,6 +211,26 @@ def _response_text(response: Any) -> str:
     return "\n".join(parts).strip()
 
 
+_LIST_FIELDS = ("validated", "evidence", "files_touched", "issues")
+
+
+def _coerce_to_list(value: Any) -> list:
+    """Tolerate workers that emit bool/str/dict where a list was expected.
+    Workers occasionally return `validated: true` or `files_touched: "a.py"`
+    instead of lists; this keeps downstream call sites crash-free."""
+    if value is None or value is False:
+        return []
+    if value is True:
+        return ["true"]
+    if isinstance(value, list):
+        return value
+    if isinstance(value, (str, int, float)):
+        return [value]
+    if isinstance(value, dict):
+        return [f"{k}={v}" for k, v in value.items()]
+    return [str(value)]
+
+
 def normalize_worker_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     """Backwards-compatible normalization for worker JSON envelopes."""
     normalized = dict(payload or {})
@@ -221,6 +241,9 @@ def normalize_worker_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         for key, default in DEFAULT_DENSITY.items()
     }
     normalized["salience"] = _clip_unit_float(normalized.get("salience"), default=0.5)
+    for field in _LIST_FIELDS:
+        if field in normalized:
+            normalized[field] = _coerce_to_list(normalized[field])
     return normalized
 
 
