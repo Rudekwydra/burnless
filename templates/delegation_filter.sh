@@ -93,9 +93,10 @@ Liberados (read-only) sem precisar delegar:
   - sudo cat/ls/nginx -t/systemctl status
   - nginx -t, curl, ping standalone
 
-Delegue via Agent tool se for mutação real:
-  - model: "haiku"  → Bronze (mecânico, spec fechada)
-  - model: "sonnet" → Prata/Ouro (raciocínio + execução)
+Delegue via burnless do (NÃO Agent tool — Agent tool inunda contexto):
+  burnless do --tier bronze "spec fechada"   → Haiku (mecânico, leitura, ops)
+  burnless do --tier silver "spec + DoD"     → Sonnet (deploy, build, SSH mutativo)
+  burnless do --tier gold   "decisão/arq"    → Opus (arquitetura, irreversível)
 
 Override Opus (raro): primeira linha do comando = "# OURO_OK <razão>"
 Logs em ~/.claude/logs/delegation_filter.log
