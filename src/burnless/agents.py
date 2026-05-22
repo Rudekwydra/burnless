@@ -536,6 +536,10 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
     When warm is active, strip the worker's append-system-prompt so the
     fork inherits the warm brief verbatim (which already carries the
     BURNLESS_WORKER_MODE_v1 token + operational rules).
+
+    Auto-init: if no warm exists or it has expired (>1h since last use),
+    initialize a fresh one before forking. The system is the interceptor;
+    callers never have to remember to `burnless warm init`.
     """
     if cwd is None:
         return parts
@@ -545,6 +549,13 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
     try:
         from . import warm_session as _ws
         extra = _ws.fork_args(burnless_root)
+        if not extra:
+            # No warm or it's expired — auto-init and try again.
+            try:
+                _ws.init(burnless_root)
+                extra = _ws.fork_args(burnless_root)
+            except Exception:
+                extra = []
     except Exception:
         return parts
     if not extra:
