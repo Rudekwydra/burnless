@@ -72,6 +72,7 @@ def build_project_brief(project_root: Path) -> str:
     branch = _safe_git_branch(root)
     langs = _detect_languages(root)
     return (
+        "BURNLESS_WORKER_MODE_v1\n\n"
         f"You are a Burnless worker for project '{name}' rooted at {root}.\n\n"
         "Hard rules — apply to every task you receive in this warm session:\n"
         f"  1. All file writes MUST be inside {root}. Never write to "

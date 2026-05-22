@@ -527,7 +527,16 @@ def is_available(agent_cfg: dict) -> bool:
 def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
     """If a warm session is active for this project, inject --resume <uuid>
     --fork-session before --append-system-prompt so the worker inherits the
-    warm prefix cache. Returns the original parts unchanged if no warm exists."""
+    warm prefix cache. Returns the original parts unchanged if no warm exists.
+
+    CRITICAL: Anthropic prompt cache requires byte-identical prefix between
+    the warm init request and the fork request. The worker's own
+    `--append-system-prompt <text>` would diverge from the warm brief and
+    invalidate the cache (cache_miss_reason: previous_message_not_found).
+    When warm is active, strip the worker's append-system-prompt so the
+    fork inherits the warm brief verbatim (which already carries the
+    BURNLESS_WORKER_MODE_v1 token + operational rules).
+    """
     if cwd is None:
         return parts
     burnless_root = Path(cwd) / ".burnless"
@@ -540,9 +549,21 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
         return parts
     if not extra:
         return parts
+    # Strip --append-system-prompt <text> pair to keep prefix byte-stable
+    # with the warm session.
+    stripped: list[str] = []
+    skip_next = False
+    for tok in parts[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok == "--append-system-prompt":
+            skip_next = True
+            continue
+        stripped.append(tok)
     # Worker subprocess is `claude -p ...`; insert fork args right after the
     # binary path. claude CLI accepts flags in any order.
-    return [parts[0]] + extra + parts[1:]
+    return [parts[0]] + extra + stripped
 
 
 def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None) -> dict:
