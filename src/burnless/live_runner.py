@@ -335,6 +335,24 @@ def run_with_live_panel(
                 command = list(command) + ["--resume", resumed_session, "--fork-session"]
                 fork_uuid = resumed_session
 
+    # Bare-equivalent flags for OAuth/subscription workers — drops slash
+    # commands, MCP servers, per-worker session persistence, the user-level
+    # settings.json (so hooks like forgetless auto-rank don't inject contaminating
+    # context into the worker via UserPromptSubmit), and dynamic per-machine
+    # sections (cwd/env/git/memory) that drift between warm-init and fork and
+    # cause cache_miss_reason: system_changed. Idempotent. Keeps prefix
+    # byte-stable (CLI flags don't enter the cached system prompt).
+    for _flag in (
+        "--no-session-persistence",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--exclude-dynamic-system-prompt-sections",
+    ):
+        if _flag not in command:
+            command = list(command) + [_flag]
+    if "--setting-sources" not in command:
+        command = list(command) + ["--setting-sources", "project,local"]
+
     # Inject --permission-mode bypassPermissions for `claude` workers so
     # tool calls never trigger an interactive approval prompt (stdin is
     # already closed after writing the task — any prompt would freeze the
@@ -365,6 +383,20 @@ def run_with_live_panel(
         # Code OAuth/subscription instead of falling through to API billing. The
         # in-process SDK paths still read the key directly from ANTHROPIC_ENV_PATHS.
         worker_env.pop("ANTHROPIC_API_KEY", None)
+        # Run the worker in an isolated CWD outside any project tree so claude
+        # code's CLAUDE.md auto-discovery walk-up finds nothing project-specific.
+        # The warm session's jsonl was saved under the same iso-cwd path, so
+        # --resume keeps working. Worker addresses project files via absolute
+        # paths (spec convention).
+        worker_cwd = str(cwd) if cwd else None
+        if fork_uuid:
+            try:
+                from . import warm_session as _ws
+                iso = _ws.worker_cwd(burnless_root)
+                if iso:
+                    worker_cwd = iso
+            except Exception:
+                pass
         proc = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -372,7 +404,7 @@ def run_with_live_panel(
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            cwd=str(cwd) if cwd else None,
+            cwd=worker_cwd,
             env=worker_env,
         )
         assert proc.stdin is not None

@@ -572,9 +572,17 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
             skip_next = True
             continue
         stripped.append(tok)
+    # Bare-equivalent flags for OAuth/subscription users: drops slash commands,
+    # MCP servers, and per-worker session persistence. Keeps prefix byte-stable
+    # (these are CLI flags, not part of the cached system prompt). Idempotent —
+    # skip flags already present in the config-derived command.
+    bare_equiv = [
+        f for f in ("--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands")
+        if f not in stripped
+    ]
     # Worker subprocess is `claude -p ...`; insert fork args right after the
     # binary path. claude CLI accepts flags in any order.
-    return [parts[0]] + extra + stripped
+    return [parts[0]] + extra + bare_equiv + stripped
 
 
 def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None) -> dict:

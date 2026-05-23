@@ -344,18 +344,7 @@ def tool_delegate(args: dict, client, log: Path) -> dict:
     spec = args.get("spec", "")
     model = WORKER_BRONZE if tier == "bronze" else WORKER_SILVER
     log_event(log, {"event": "delegate", "tier": tier, "spec_len": len(spec)})
-    worker_system = (
-        f"You are a {tier} worker. Execute the spec mechanically.\n"
-        f"You cannot call tools.\n"
-        f"Return ONLY a single JSON object (no markdown) with keys:\n"
-        f'- status: "OK" | "PART" | "ERR" | "BLK"\n'
-        f"- summary: short sentence\n"
-        f"- steps: array of concrete steps (strings)\n"
-        f"- commands: array of exact shell commands to run (strings)\n"
-        f"- files_read: array of file paths you expect to read\n"
-        f"- files_write: array of file paths you expect to write\n"
-        f"- notes: optional string\n"
-    )
+    worker_system = f"You are a {tier} worker. Execute the spec the user gives you.\n"
     try:
         r = client.messages.create(
             model=model,
@@ -364,12 +353,11 @@ def tool_delegate(args: dict, client, log: Path) -> dict:
             messages=[{"role": "user", "content": spec}],
         )
         text = "\n".join(b.text for b in r.content if hasattr(b, "text"))
-        parsed = _coerce_worker_json(text)
         return {
             "ok": True,
             "tier": tier,
             "model": model,
-            "output": parsed,
+            "output": text,
             "input_tokens": r.usage.input_tokens,
             "output_tokens": r.usage.output_tokens,
         }
