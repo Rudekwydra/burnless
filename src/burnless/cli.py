@@ -775,6 +775,8 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 burnless_tokens=bt_before,
                 timeout=args.timeout,
                 stale_timeout=stale_timeout_s,
+                tool_suspect_interval_s=int((cfg.get("display") or {}).get("tool_suspect_interval_s", 60)),
+                tool_hard_max_s=int((cfg.get("display") or {}).get("tool_hard_max_s", 1800)),
                 cwd=root.parent,
                 tier_agents=cfg.get("agents", {}),
             )
@@ -811,6 +813,8 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 burnless_tokens=bt_before,
                 timeout=args.timeout,
                 stale_timeout=stale_timeout_s,
+                tool_suspect_interval_s=int((cfg.get("display") or {}).get("tool_suspect_interval_s", 60)),
+                tool_hard_max_s=int((cfg.get("display") or {}).get("tool_hard_max_s", 1800)),
                 cwd=root.parent,
                 append_log=True,
             ).to_dict()

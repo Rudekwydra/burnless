@@ -242,6 +242,32 @@ class _MinimalSpinner:
         sys.stdout.flush()
 
 
+def _emit_suspect(
+    burnless_root: Path | None,
+    delegation_id: str | None,
+    tool_elapsed_s: int,
+    tool_cmd_preview: str,
+) -> None:
+    """Emit a suspect alert: stderr for real-time visibility, JSONL inbox for forensic / future Maestro daemon."""
+    did = delegation_id or "d???"
+    cmd_short = tool_cmd_preview[:80] + ("…" if len(tool_cmd_preview) > 80 else "")
+    msg = f"[suspect] {did}: tool running {tool_elapsed_s}s, cmd: {cmd_short}"
+    print(msg, file=sys.stderr, flush=True)
+    if burnless_root:
+        inbox = Path(burnless_root) / "suspect.jsonl"
+        try:
+            inbox.parent.mkdir(parents=True, exist_ok=True)
+            with inbox.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "did": did,
+                    "tool_elapsed_s": tool_elapsed_s,
+                    "tool_cmd_preview": cmd_short,
+                }, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+
 @dataclass
 class RunResult:
     agent: str | None
@@ -281,6 +307,8 @@ def run_with_live_panel(
     burnless_tokens: int = 0,
     timeout: int = 600,
     stale_timeout: int = 0,
+    tool_suspect_interval_s: int = 60,
+    tool_hard_max_s: int = 1800,
     cwd: Path | None = None,
     tail_lines: int = 20,
     refresh_rate: float = 0.5,
@@ -420,6 +448,10 @@ def run_with_live_panel(
         stale_worker = False
         last_useful_mono = start_mono
         last_render = start_mono
+        in_tool_execution = False
+        tool_start_mono = 0.0
+        tool_cmd_preview = ""
+        last_suspect_alert_mono = 0.0
         _last_sink_phase = "thinking"
         renderer = _WatchRenderer(
             enabled=mode in {"watch", "brief"},
@@ -467,6 +499,17 @@ def run_with_live_panel(
                     display_line = translated if translated is not None else clean
                     if display_line:
                         last_useful_mono = now
+                        if display_line.startswith("[tool] "):
+                            in_tool_execution = True
+                            tool_start_mono = now
+                            tool_cmd_preview = display_line[7:107]
+                            last_suspect_alert_mono = now
+                        elif in_tool_execution and (
+                            display_line.startswith("[tool_result]")
+                            or display_line.startswith("[done]")
+                            or display_line.startswith("[text]")
+                        ):
+                            in_tool_execution = False
                         panel_event = event_filter.feed(display_line)
                         if panel_event:
                             recent.append(panel_event)
@@ -497,7 +540,27 @@ def run_with_live_panel(
                     _stop_process(proc)
                     recent.append(f"Timed out after {timeout}s.")
                     break
-                if stale_timeout > 0 and time.monotonic() - last_useful_mono > stale_timeout:
+                now_mono = time.monotonic()
+                if in_tool_execution:
+                    tool_elapsed = now_mono - tool_start_mono
+                    if (tool_elapsed > tool_suspect_interval_s
+                            and now_mono - last_suspect_alert_mono >= tool_suspect_interval_s):
+                        last_suspect_alert_mono = now_mono
+                        _emit_suspect(
+                            burnless_root=burnless_root,
+                            delegation_id=delegation_id,
+                            tool_elapsed_s=int(tool_elapsed),
+                            tool_cmd_preview=tool_cmd_preview,
+                        )
+                    if tool_elapsed > tool_hard_max_s:
+                        stale_worker = True
+                        interrupted = True
+                        _stop_process(proc)
+                        recent.append(
+                            f"Tool hard-max exceeded: {int(tool_elapsed)}s > {tool_hard_max_s}s, process killed."
+                        )
+                        break
+                elif stale_timeout > 0 and now_mono - last_useful_mono > stale_timeout:
                     stale_worker = True
                     interrupted = True
                     _stop_process(proc)
@@ -727,6 +790,8 @@ def run_with_overflow_retries(
     burnless_tokens: int = 0,
     timeout: int = 600,
     stale_timeout: int = 0,
+    tool_suspect_interval_s: int = 60,
+    tool_hard_max_s: int = 1800,
     cwd: Path | None = None,
     tail_lines: int = 20,
     refresh_rate: float = 0.5,
@@ -756,6 +821,8 @@ def run_with_overflow_retries(
             burnless_tokens=burnless_tokens,
             timeout=timeout,
             stale_timeout=stale_timeout,
+            tool_suspect_interval_s=tool_suspect_interval_s,
+            tool_hard_max_s=tool_hard_max_s,
             cwd=cwd,
             tail_lines=tail_lines,
             refresh_rate=refresh_rate,
