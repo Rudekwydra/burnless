@@ -34,10 +34,13 @@ def load(path: Path) -> dict:
 
 
 def save(path: Path, state: dict) -> None:
+    import os
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
 
 
 def next_delegation_id(state: dict) -> str:
@@ -84,6 +87,18 @@ def alloc_delegation_id(state_path: Path) -> str:
         did = next_delegation_id(st)
         save(state_path, st)
     return did
+
+
+def update_locked(state_path: Path, mutator) -> dict:
+    """Race-safe read-modify-write: load state under lock, apply mutator(state),
+    save, return the new state. Pairs with the atomic save() above so parallel
+    workers never observe a torn file and never lose each other's writes."""
+    lock_path = state_path.with_name("state.lock")
+    with _exclusive_lock(lock_path):
+        st = load(state_path)
+        mutator(st)
+        save(state_path, st)
+    return st
 
 
 def touch_activity(state: dict, idle_threshold_s: int = 3000, now: datetime | None = None) -> None:

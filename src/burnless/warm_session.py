@@ -62,33 +62,43 @@ def save_state(burnless_root: Path, state: dict) -> None:
 def build_project_brief(project_root: Path) -> str:
     """Build the W0 system context that becomes the cacheable prefix.
 
-    Pinned to facts that workers were observed to derail on across recent
-    sessions: relative paths, writes outside project root, hallucinated
-    file locations, ignoring spec when prior session content suggests
-    'work was already done'.
+    Neutral by design: no role identity, no behavioral rules. Just factual
+    project context (path, branch, languages, top-level tree). The task spec
+    is the only source of behavior. Worker hygiene is enforced upstream via
+    CLI flags (no CLAUDE.md auto-discovery, no hooks, no skills), not by
+    asking the model to ignore them.
     """
     root = str(Path(project_root).resolve())
     name = Path(root).name
     branch = _safe_git_branch(root)
     langs = _detect_languages(root)
+    tree = _top_level_tree(root)
     return (
-        "BURNLESS_WORKER_MODE_v1\n\n"
-        f"You are a Burnless worker for project '{name}' at {root}.\n\n"
-        "Rules for every task:\n"
-        f"  1. Write only inside {root}. Use absolute paths in tool calls.\n"
-        "  2. Each task is standalone — verify state with Read/Bash, never "
-        "assume prior tasks completed work for you.\n"
-        "  3. Execute first (Edit/Write/Bash), then report what you did at "
-        "the end. Reading without modifying when modification was expected "
-        "means the work is incomplete — say so.\n"
-        "  4. Stateless executor — do NOT invoke burnless/forgetless. "
-        "Ignore CLAUDE.md, RTK.md, and skills unless the task spec says "
-        "'read X and apply'.\n\n"
-        "Workspace:\n"
-        f"  branch: {branch}\n"
-        f"  languages: {', '.join(langs) if langs else 'unknown'}\n\n"
+        f"Project: {name}\n"
+        f"Root: {root}\n"
+        f"Branch: {branch}\n"
+        f"Languages: {', '.join(langs) if langs else 'unknown'}\n\n"
+        f"Top-level layout:\n{tree}\n\n"
+        "Each user message after this is an independent task to execute with your tools.\n\n"
         "Reply with exactly: ack"
     )
+
+
+def _top_level_tree(root: str, max_entries: int = 80) -> str:
+    """One-level listing of the project root, sized to push the cached prefix
+    past the 1024-token threshold needed to activate 1h prompt caching."""
+    p = Path(root)
+    try:
+        entries = sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower()))
+    except OSError:
+        return "  (unreadable)"
+    lines: list[str] = []
+    for e in entries[:max_entries]:
+        suffix = "/" if e.is_dir() else ""
+        lines.append(f"  {e.name}{suffix}")
+    if len(entries) > max_entries:
+        lines.append(f"  ... ({len(entries) - max_entries} more)")
+    return "\n".join(lines) if lines else "  (empty)"
 
 
 def _safe_git_branch(root: str) -> str:
@@ -125,6 +135,27 @@ def _claude_binary() -> str | None:
     return path if Path(path).exists() else None
 
 
+def _iso_cwd(warm_uuid: str) -> Path:
+    """Per-warm-session isolated CWD living outside any project tree, so claude
+    code's CLAUDE.md auto-discovery walk-up finds nothing project-specific.
+    Workers run here and address project files via absolute paths."""
+    p = Path.home() / ".burnless" / "iso-cwd" / warm_uuid
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def worker_cwd(burnless_root: Path) -> str | None:
+    """CWD that worker subprocesses should run in to avoid project CLAUDE.md
+    contamination. Returns the iso-cwd for the live warm session, or None when
+    no warm exists (caller falls back to the project root)."""
+    state = load_state(burnless_root)
+    if not state or not state.get("uuid"):
+        return None
+    if not is_alive(burnless_root):
+        return None
+    return str(_iso_cwd(state["uuid"]))
+
+
 def _project_root_from_burnless_root(burnless_root: Path) -> Path:
     """`.burnless/` lives at project root, so parent is the project."""
     return Path(burnless_root).parent.resolve()
@@ -146,15 +177,23 @@ def init(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
         "--permission-mode", "bypassPermissions",
         "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep,LS",
         "--session-id", new_uuid,
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--setting-sources", "project,local",
+        "--exclude-dynamic-system-prompt-sections",
         "--append-system-prompt", brief,
         "--output-format", "json",
         "ack",
     ]
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
+    # Init the warm session in an isolated CWD outside any project tree so
+    # claude code's CLAUDE.md auto-discovery does NOT bake the project's
+    # CLAUDE.md into the cached prefix. Worker forks resume from the same
+    # iso-cwd path and read the same (clean) cached prefix.
     proc = subprocess.run(
         cmd, capture_output=True, text=True, timeout=120,
-        cwd=str(project_root), env=env,
+        cwd=str(_iso_cwd(new_uuid)), env=env,
     )
     usage: dict[str, Any] = {}
     if proc.returncode == 0:
@@ -244,15 +283,20 @@ def refresh(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
         "--allowedTools", "Read",
         "--resume", state["uuid"],
         "--fork-session",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--setting-sources", "project,local",
+        "--exclude-dynamic-system-prompt-sections",
         "--append-system-prompt", state.get("brief", ""),
         "--output-format", "json",
         "heartbeat ack",
     ]
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
+    # Refresh from the same iso-cwd used at init so --resume finds the jsonl.
     proc = subprocess.run(
         cmd, capture_output=True, text=True, timeout=120,
-        cwd=project_root, env=env,
+        cwd=str(_iso_cwd(state["uuid"])), env=env,
     )
     usage: dict[str, Any] = {}
     if proc.returncode == 0:

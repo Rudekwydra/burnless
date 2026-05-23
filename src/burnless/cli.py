@@ -490,6 +490,9 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     chain = [x.strip() for x in args.chain.split(",") if x.strip()] if args.chain else []
 
     did = state_mod.alloc_delegation_id(p["state"])
+    # Expose the freshly-allocated id back to the caller (e.g. cmd_do) without
+    # relying on state.last_delegation, which is racy under parallel dispatch.
+    setattr(args, "_allocated_did", did)
     goal = args.goal or text
     # Downgrade H2 headers in spec text so they don't collide with the
     # delegation template's own ## Goal / ## Task / ## Constraints sections.
@@ -528,9 +531,9 @@ def cmd_delegate(args: argparse.Namespace) -> int:
         runs_dir = p["root"] / "runs"
         runs_dir.mkdir(parents=True, exist_ok=True)
         (runs_dir / f"{did}.chat").write_text("", encoding="utf-8")
-    state = state_mod.load(p["state"])
-    state["last_delegation"] = did
-    state_mod.save(p["state"], state)
+    def _set_last(st):
+        st["last_delegation"] = did
+    state_mod.update_locked(p["state"], _set_last)
 
     # Routing a code task to bronze instead of opus avoids expensive context.
     # Count this only when we *de-escalated* from default gold to a cheaper tier,
@@ -2146,9 +2149,9 @@ def cmd_do(args: argparse.Namespace) -> int:
     if rc != 0:
         return rc
 
-    # Retrieve the ID that cmd_delegate just saved into state
-    state = state_mod.load(p["state"])
-    did = state.get("last_delegation")
+    # Read the id directly from the args object cmd_delegate just populated —
+    # state.last_delegation is shared and gets overwritten by parallel cmd_do.
+    did = getattr(delegate_args, "_allocated_did", None)
     if not did:
         print("burnless: delegate did not produce a delegation ID", file=sys.stderr)
         return 1
