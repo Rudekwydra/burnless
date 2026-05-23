@@ -2,24 +2,36 @@
 
 Strategy:
   1. Prefer a user-installed rtk in PATH (brew, cargo, package manager).
-  2. Otherwise download a pinned version from github.com/rtk-ai/rtk/releases
-     into ~/.burnless/bin/v<VERSION>/. Cached after first download.
-  3. If neither works (unsupported platform, no network), raise with
-     install instructions.
+  2. Otherwise download the latest release from github.com/rtk-ai/rtk
+     into ~/.burnless/bin/v<VERSION>/. Latest tag is cached for 24h so
+     we don't hit GitHub on every invocation; the binary itself is
+     permanent-cached per version.
+  3. If neither works (unsupported platform, offline + no cache), raise
+     with install instructions.
+
+Set RTK_VERSION to a concrete tag (e.g. "0.41.0") instead of "latest" to
+pin — useful for reproducible CI or when a release introduces a regression.
 
 RTK is Apache-2.0 licensed and ships pre-built binaries per platform —
 no toolchain required on the user side.
 """
 from __future__ import annotations
 
+import json
 import platform
 import shutil
 import tarfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
 
-RTK_VERSION = "0.41.0"
+# "latest" → fetch newest tag from GitHub (24h cache). Pin to a string like
+# "0.41.0" to freeze. Last known working version if the API is unreachable:
+RTK_VERSION = "latest"
+RTK_FALLBACK_VERSION = "0.41.0"
+LATEST_CACHE_TTL_SECONDS = 24 * 3600
+LATEST_API_URL = "https://api.github.com/repos/rtk-ai/rtk/releases/latest"
 
 # (system, machine) → (release asset filename, archive type)
 RTK_ASSETS: dict[tuple[str, str], tuple[str, str]] = {
@@ -30,9 +42,6 @@ RTK_ASSETS: dict[tuple[str, str], tuple[str, str]] = {
     ("Windows", "AMD64"):   ("rtk-x86_64-pc-windows-msvc.zip",       "zip"),
 }
 
-RTK_RELEASE_BASE = f"https://github.com/rtk-ai/rtk/releases/download/v{RTK_VERSION}"
-
-
 class RTKNotAvailable(RuntimeError):
     pass
 
@@ -42,31 +51,57 @@ def resolve_rtk() -> str:
     in_path = shutil.which("rtk")
     if in_path:
         return in_path
-    cached = _cached_binary_path()
+    version = resolve_version()
+    cached = _cached_binary_path(version)
     if cached.exists():
         return str(cached)
-    return _download_and_cache(cached)
+    return _download_and_cache(cached, version)
 
 
-def _cached_binary_path() -> Path:
+def resolve_version() -> str:
+    """Return the concrete version tag to use. Honors a pinned RTK_VERSION;
+    when 'latest', queries the GitHub releases API at most once per 24h."""
+    if RTK_VERSION != "latest":
+        return RTK_VERSION
+    cache = Path.home() / ".burnless" / "bin" / ".latest-version.json"
+    if cache.exists() and (time.time() - cache.stat().st_mtime) < LATEST_CACHE_TTL_SECONDS:
+        try:
+            return json.loads(cache.read_text())["version"]
+        except (json.JSONDecodeError, KeyError):
+            pass
+    try:
+        with urllib.request.urlopen(LATEST_API_URL, timeout=10) as r:
+            data = json.loads(r.read().decode())
+        version = data["tag_name"].lstrip("v")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({"version": version, "checked_at": time.time()}))
+        return version
+    except Exception:
+        # Offline or rate-limited — fall back to a known-good pin.
+        return RTK_FALLBACK_VERSION
+
+
+def _cached_binary_path(version: str) -> Path:
     name = "rtk.exe" if platform.system() == "Windows" else "rtk"
-    return Path.home() / ".burnless" / "bin" / f"v{RTK_VERSION}" / name
+    return Path.home() / ".burnless" / "bin" / f"v{version}" / name
 
 
-def _download_and_cache(target: Path) -> str:
+def _download_and_cache(target: Path, version: str) -> str:
     key = (platform.system(), platform.machine())
     asset = RTK_ASSETS.get(key)
     if not asset:
+        release_base = f"https://github.com/rtk-ai/rtk/releases/download/v{version}"
         raise RTKNotAvailable(
             f"No rtk pre-built binary for {key}. "
             f"Install manually: `brew install rtk`, `cargo install rtk`, "
-            f"or download from {RTK_RELEASE_BASE}."
+            f"or download from {release_base}."
         )
     asset_name, archive_type = asset
-    url = f"{RTK_RELEASE_BASE}/{asset_name}"
+    release_base = f"https://github.com/rtk-ai/rtk/releases/download/v{version}"
+    url = f"{release_base}/{asset_name}"
     target.parent.mkdir(parents=True, exist_ok=True)
     archive = target.parent / asset_name
-    print(f"burnless: fetching rtk v{RTK_VERSION} for {key[0]}/{key[1]}...")
+    print(f"burnless: fetching rtk v{version} for {key[0]}/{key[1]}...")
     urllib.request.urlretrieve(url, archive)
     bin_name = "rtk.exe" if platform.system() == "Windows" else "rtk"
     extracted = _extract_binary(archive, archive_type, target.parent, bin_name)
