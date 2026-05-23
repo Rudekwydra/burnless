@@ -54,21 +54,17 @@ burnless read d104
 
 The user can pass `--tier` to override. With `BURNLESS_HARDCORE=1`, the maestro **cannot self-upgrade** beyond what the keyword router resolved — so routing rules are guarantees, not hints.
 
-## Audit contract — filesystem-first (v0.8)
+## Worker result (v0.8)
 
-Workers are not required to emit a JSON envelope. Burnless derives status
-from observable reality: the subprocess `exit_code`, the `git diff`
-produced, and the files declared in the spec's DoD.
+A delegation finishes one of two ways: the subprocess ran (exit 0) or
+it didn't. Burnless surfaces the exit code and the worker's stdout — no
+status taxonomy, no JSON envelope, no audit verdict. You inspect what
+the worker actually did via `git diff` and the run log; that's the
+contract.
 
-**Status:**
-- `OK` — exit 0 and the expected diff / artifacts appeared
-- `PART` — exit 0 but the produced diff / artifacts don't cover the DoD
-- `ERR` — non-zero exit or subprocess crashed
-- `BLK` — worker refused before doing anything (path outside root, permission, etc.)
-
-Workers can (and should) reply with a short natural-language note about
-what they did — useful in the log — but the audit never trusts that
-narrative over what's on disk.
+(Optional structured auditing is available as a Pro plugin for teams
+that want declarative DoD checks; it does not ship in the default
+Burnless install.)
 
 ## Optional: compression filter (saves tokens before they reach the expensive LLM)
 
