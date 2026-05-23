@@ -54,17 +54,10 @@ burnless read d104
 
 The user can pass `--tier` to override. With `BURNLESS_HARDCORE=1`, the maestro **cannot self-upgrade** beyond what the keyword router resolved — so routing rules are guarantees, not hints.
 
-## Worker result (v0.8)
+## Worker result
 
-A delegation finishes one of two ways: the subprocess ran (exit 0) or
-it didn't. Burnless surfaces the exit code and the worker's stdout — no
-status taxonomy, no JSON envelope, no audit verdict. You inspect what
-the worker actually did via `git diff` and the run log; that's the
-contract.
-
-(Optional structured auditing is available as a Pro plugin for teams
-that want declarative DoD checks; it does not ship in the default
-Burnless install.)
+Burnless surfaces the subprocess exit code and stdout. Inspect what the
+worker did via `git diff` and the run log.
 
 ## Optional: compression filter (saves tokens before they reach the expensive LLM)
 
