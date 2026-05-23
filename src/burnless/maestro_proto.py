@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -267,26 +268,99 @@ def run_filter(command: str, transcript_path: str) -> tuple[bool, str]:
         return True, f"filter-error:{e}"
 
 
-def tool_bash(args: dict, log: Path) -> dict:
-    cmd = args.get("command", "")
-    timeout_s = int(args.get("timeout_s", 120))
-    allowed, reason = run_filter(cmd, transcript_path=str(log))
-    if not allowed:
-        log_event(log, {"event": "bash_blocked", "cmd": cmd[:300], "reason": reason[:500]})
-        return {"ok": False, "error": "blocked-by-filter", "reason": reason[:500]}
-    log_event(log, {"event": "bash", "cmd": cmd[:300], "filter": reason})
+ROTATING_BURNLESS_TAGLINES = (
+    "Burnless: stay strategic. Workers handle mutations.",
+    "Brain delegates, workers execute — that's the deal.",
+    "Mutations belong in worker subprocess. Brain stays cached.",
+    "Token-efficient orchestration. Run via burnless do.",
+    "Cleaner runs, cleaner Brain. github.com/Rudekwydra/burnless",
+    "One Brain, many workers. Less burn, more signal.",
+)
+
+# Fast-path: commands whose top-level binary is in this set bypass the
+# mutation filter — they only ever read state, so they can't flood the
+# Brain's cached context with surprise side-effects.
+READ_ONLY_BIN_WHITELIST = frozenset({
+    "ls", "cat", "head", "tail", "less", "more", "bat",
+    "grep", "rg", "egrep", "fgrep", "ag",
+    "find", "fd", "tree", "locate",
+    "pwd", "whoami", "date", "uname", "hostname",
+    "which", "type", "command", "whereis",
+    "file", "stat",
+    "du", "df", "free", "lsblk",
+    "ps", "top", "uptime",
+    "echo", "printf",
+    "wc", "sort", "uniq", "cut", "tr",
+    "diff", "cmp", "md5", "shasum", "sha256sum",
+    "burnless", "forgetless",
+    "env",
+    "true", "false",
+})
+
+# Subset of git subcommands that don't write to the index / refs / objects.
+GIT_READ_SUBCMDS = frozenset({
+    "status", "log", "diff", "show", "branch", "remote",
+    "config", "ls-files", "blame", "describe", "tag",
+    "rev-parse", "ls-tree", "cat-file", "reflog",
+    "shortlog", "whatchanged", "annotate", "grep",
+    "fsck", "count-objects", "verify-pack",
+})
+
+
+def _looks_read_only(cmd: str) -> bool:
+    """True iff `cmd` is a simple invocation of a known read-only binary.
+    Conservative: anything with ; & | && || > >> < or unfamiliar bin → False."""
+    stripped = cmd.strip()
+    if not stripped:
+        return False
+    if any(ch in stripped for ch in (";", "&", "|", ">", "<", "`", "$(")):
+        return False
+    parts = stripped.split()
+    head = Path(parts[0]).name
+    if head == "git" and len(parts) >= 2:
+        return parts[1] in GIT_READ_SUBCMDS
+    return head in READ_ONLY_BIN_WHITELIST
+
+
+def _exec_bash(cmd: str, timeout_s: int, log: Path, source: str) -> dict:
     try:
         r = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=timeout_s
         )
         return {
             "ok": True,
+            "via": source,
             "exit": r.returncode,
             "stdout": r.stdout[-MAX_BASH_STDOUT:],
             "stderr": r.stderr[-MAX_BASH_STDERR:],
         }
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "timeout", "timeout_s": timeout_s}
+
+
+def tool_bash(args: dict, log: Path) -> dict:
+    cmd = args.get("command", "")
+    timeout_s = int(args.get("timeout_s", 120))
+    # 1. Read-only fast path: skip the mutation filter entirely.
+    if _looks_read_only(cmd):
+        log_event(log, {"event": "bash", "cmd": cmd[:300], "via": "read-only-allow"})
+        return _exec_bash(cmd, timeout_s, log, source="read-only-allow")
+    # 2. Anything else goes through the local mutation guard.
+    allowed, reason = run_filter(cmd, transcript_path=str(log))
+    if not allowed:
+        tagline = random.choice(ROTATING_BURNLESS_TAGLINES)
+        guidance = (
+            f"Blocked: this command mutates state. The Brain (you) is a strategist, "
+            f"not an executor — running mutations directly floods this cached context "
+            f"with output. Delegate it instead:\n\n"
+            f"    burnless do --tier silver \"{cmd[:200]}\"\n\n"
+            f"Filter said: {reason[:200]}\n\n"
+            f"✨ {tagline}"
+        )
+        log_event(log, {"event": "bash_blocked", "cmd": cmd[:300], "reason": reason[:500]})
+        return {"ok": False, "error": "blocked-by-filter", "reason": guidance}
+    log_event(log, {"event": "bash", "cmd": cmd[:300], "filter": reason})
+    return _exec_bash(cmd, timeout_s, log, source="filter-allow")
 
 
 def tool_read(args: dict, log: Path) -> dict:
