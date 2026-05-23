@@ -54,28 +54,21 @@ burnless read d104
 
 The user can pass `--tier` to override. With `BURNLESS_HARDCORE=1`, the maestro **cannot self-upgrade** beyond what the keyword router resolved — so routing rules are guarantees, not hints.
 
-## Audit contract — every worker returns this JSON
+## Audit contract — filesystem-first (v0.8)
 
-```json
-{
-  "id": "d104",
-  "status": "OK | PART | ERR | BLK",
-  "summary": "short sentence about what was done",
-  "files_touched": [],
-  "validated": [],
-  "evidence": ["command or file or log observed"],
-  "issues": [],
-  "next": "next step or empty string"
-}
-```
+Workers are not required to emit a JSON envelope. Burnless derives status
+from observable reality: the subprocess `exit_code`, the `git diff`
+produced, and the files declared in the spec's DoD.
 
 **Status:**
-- `OK` — task complete with verifiable evidence
-- `PART` — worker executed but evidence insufficient — **do NOT treat as OK**
-- `ERR` — worker tried and failed; check `issues`
-- `BLK` — worker couldn't even start (permission, file missing)
+- `OK` — exit 0 and the expected diff / artifacts appeared
+- `PART` — exit 0 but the produced diff / artifacts don't cover the DoD
+- `ERR` — non-zero exit or subprocess crashed
+- `BLK` — worker refused before doing anything (path outside root, permission, etc.)
 
-**Don't invent evidence.** If the worker didn't produce it, the result is `PART`, not `OK`.
+Workers can (and should) reply with a short natural-language note about
+what they did — useful in the log — but the audit never trusts that
+narrative over what's on disk.
 
 ## Optional: compression filter (saves tokens before they reach the expensive LLM)
 
