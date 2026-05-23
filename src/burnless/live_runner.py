@@ -535,7 +535,7 @@ def run_with_live_panel(
 
                 if proc.poll() is not None and events.empty():
                     break
-                if time.monotonic() - start_mono > timeout:
+                if not in_tool_execution and time.monotonic() - start_mono > timeout:
                     interrupted = True
                     _stop_process(proc)
                     recent.append(f"Timed out after {timeout}s.")
