@@ -8,7 +8,6 @@ from pathlib import Path
 DEFAULT_STATE: dict = {
     "project": "Project",
     "last_delegation": None,
-    "last_status": None,
     "next": None,
     "delegation_counter": 0,
     "active_tier": None,  # None = auto routing; "gold"|"silver"|"bronze" = sticky

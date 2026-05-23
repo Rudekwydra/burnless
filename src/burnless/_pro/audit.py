@@ -26,8 +26,8 @@ import re
 import subprocess
 from pathlib import Path
 
-from . import agents as agents_mod
-from . import delegations as deleg_mod
+from .. import agents as agents_mod
+from .. import delegations as deleg_mod
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
