@@ -19,7 +19,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-RTK_VERSION = "0.40.0"
+RTK_VERSION = "0.41.0"
 
 # (system, machine) → (release asset filename, archive type)
 RTK_ASSETS: dict[tuple[str, str], tuple[str, str]] = {
