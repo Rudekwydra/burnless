@@ -516,7 +516,33 @@ def resolve_command(agent_cfg: dict) -> list[str]:
         raise AgentError(f"agent missing 'command': {agent_cfg}")
     parts = shlex.split(cmd)
     parts = _apply_codex_overrides(parts, agent_cfg)
+    parts = _resolve_rtk_in_parts(parts)
     return parts
+
+
+def _resolve_rtk_in_parts(parts: list[str]) -> list[str]:
+    """Replace any rtk reference in the command with the resolved binary path.
+    Matches bare `rtk` and any absolute path whose basename is `rtk`/`rtk.exe`,
+    so configs hardcoding /opt/homebrew/bin/rtk keep working on other machines
+    (or when rtk isn't installed yet — first call downloads it)."""
+    if not parts:
+        return parts
+    resolved: str | None = None
+    out: list[str] = []
+    for tok in parts:
+        base = Path(tok).name
+        if tok == "rtk" or base in ("rtk", "rtk.exe"):
+            if resolved is None:
+                try:
+                    from . import rtk_loader
+                    resolved = rtk_loader.resolve_rtk()
+                except Exception:
+                    out.append(tok)
+                    continue
+            out.append(resolved)
+        else:
+            out.append(tok)
+    return out
 
 
 def is_available(agent_cfg: dict) -> bool:
