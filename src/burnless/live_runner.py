@@ -164,7 +164,6 @@ _PHASE_WORDS: dict[str, set[str]] = {
     "lendo":       {"reading", "read", "lendo"},
     "editando":    {"writing", "write", "written", "updated", "edited", "applying", "applied", "editando"},
     "testando":    {"running", "tests", "test", "passed", "failed", "testando"},
-    "auditando":   {"audit", "auditando"},
     "compactando": {"compress", "capsule", "compactando", "final json"},
 }
 
@@ -174,7 +173,6 @@ _EN_LABELS: dict[str, str] = {
     "lendo":       "reading",
     "editando":    "writing",
     "testando":    "testing",
-    "auditando":   "auditing",
     "compactando": "compressing",
 }
 

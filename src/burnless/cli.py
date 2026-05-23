@@ -29,24 +29,11 @@ from .estimator import estimate_tokens
 from .codec.decoder import normalize_worker_envelope
 from .cmd_wrapper import run_and_capsule
 from . import pipeline_state as pipeline_state_mod
-
-# ── Audit subsystem re-exports (extracted into burnless.audit). ──────────────
-# Each name is aliased with its legacy leading-underscore form so existing
-# tests and call sites in this file keep working. The local def's later in
-# this file currently shadow these imports; when the swap is applied (delete
-# the legacy bodies), these become the active implementations.
-from .audit import (
-    audit_execution_filesystem as _audit_execution_filesystem,
-    audit_summary_evidence as _audit_summary_evidence,
-    fast_path_check as _fast_path_check,
-    summary_evidence as _summary_evidence,
-    append_issue as _append_issue,
-    add_evidence_feedback as _add_evidence_feedback,
-    write_audit_result as _write_audit_result,
-    render_audit_prompt as _render_audit_prompt,
+from ._pro.audit import (
     infer_kind_hint as _infer_kind_hint,
     normalize_report_kind as _normalize_report_kind,
 )
+
 from .delegation_parse import (
     parse_chain_from_delegation as _parse_chain_from_delegation,
     parse_tier_from_delegation as _parse_tier_from_delegation,
@@ -640,34 +627,6 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_retry_prompt(original_prompt: str, did: str, status: str, summary: dict) -> str:
-    issues = summary.get("issues") or []
-    evidence = summary.get("evidence") or []
-    return (
-        f"RETRY of delegation {did}. Previous attempt returned {status} and DID NOT complete the work.\n"
-        f"Issues reported: {', '.join(str(i) for i in issues) or 'none specified'}.\n"
-        f"Missing evidence: {', '.join(str(e) for e in evidence) or 'none'}.\n\n"
-        "DO NOT assume any files were created. DO NOT echo a previous JSON.\n"
-        "EXECUTE the spec below from scratch: create files, edit files, run tests.\n"
-        "At the end, report files you ACTUALLY created/edited in the FINAL OUTPUT JSON.\n\n"
-        "---\n"
-        + original_prompt.rstrip()
-    )
-
-
-def _build_audit_fix_prompt(original_prompt: str, did: str, audit: dict) -> str:
-    issues = audit.get("issues") or []
-    feedback = str(audit.get("feedback") or audit.get("summary") or "").strip()
-    return (
-        f"AUDIT FIX for delegation {did}. Audit returned PART — some DoD items missing.\n"
-        f"Issues: {', '.join(str(i) for i in issues) or 'none'}.\n"
-        + (f"Feedback: {feedback}\n" if feedback else "")
-        + "Fix ONLY the issues above. Keep what was OK as-is. "
-        "Report final JSON with the same schema.\n\n"
-        "---\n"
-        + original_prompt.rstrip()
-    )
-
 
 def cmd_run(args: argparse.Namespace) -> int:
     """QTP-C wrapper: applies parallel-launch jitter + in-flight lock around _cmd_run_body."""
@@ -907,22 +866,6 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 summary.setdefault("files_touched", [])
                 summary.setdefault("evidence", [])
                 summary.setdefault("issues", [])
-            else:
-                print("EVIDENCE_MISSING", file=sys.stderr)
-                _retry_msg = (
-                    "\n\n---\nSua resposta não incluiu o campo evidence. "
-                    "evidence é obrigatório para trabalho de execução. Inclua: comando exato executado, "
-                    "path verificado, saída observada. Campo vazio = tarefa incompleta."
-                )
-                _retry_result = agents_mod.run(
-                    selected_agent_cfg, prompt + _retry_msg, timeout=args.timeout, cwd=root.parent, tier=tier
-                )
-                with log_path.open("a", encoding="utf-8") as _lf:
-                    _lf.write("\n\n--- EVIDENCE_RETRY ---\n" + _retry_result.get("stdout", "") + "\n")
-                _retry_json = deleg_mod.extract_result_json(_retry_result.get("stdout", ""))
-                if _retry_json is not None:
-                    summary = normalize_worker_envelope(_retry_json)
-                    summary["kind"] = _normalize_report_kind(summary.get("kind") or summary.get("report_kind") or _infer_kind_hint(prompt))
     elif backend_used == "maestro" and result["returncode"] == 0 and not interrupted:
         # Maestro mode: assistant text without explicit JSON still counts as OK.
         snippet = (result.get("stdout") or "").strip().splitlines()
@@ -1083,7 +1026,6 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     retry_cfg = cfg.get("retry", {})
     _max_attempts = int(retry_cfg.get("max_attempts", 1))
     _stale_retry_enabled = bool(retry_cfg.get("stale_worker_retry", True))
-    _audit_retry_enabled = bool(retry_cfg.get("audit_retry", True))
     _retry_count = 0
     _retry_status: list[str] = []
 
@@ -1103,11 +1045,10 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             _attempts_left -= 1
             _retry_status.append(_cur_status)
 
+            _retry_prompt_text = prompt
             if _is_stale:
-                _retry_prompt_text = prompt
                 _retry_timeout = min(stale_timeout_s * 2, int(args.timeout or stale_timeout_s * 2))
             else:
-                _retry_prompt_text = _build_retry_prompt(prompt, did, _cur_status, summary)
                 _retry_timeout = int(args.timeout or 600)
 
             print(f"[retry] {did}: prev={_cur_status}, attempt {_retry_count + 1}", file=sys.stderr)
@@ -1176,67 +1117,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
 
     _worker_status = str(summary.get("status") or "?").upper()
 
-    # ── Audit pass ───────────────────────────────────────────────────────────
-    summary = _audit_summary_evidence(
-        p,
-        cfg=cfg,
-        did=did,
-        prompt=prompt,
-        summary=summary,
-        log_path=log_path,
-        timeout=min(int(getattr(args, "timeout", 600) or 600), 180),
-        cwd=root.parent,
-    )
-
-    # ── Audit PART retry (re-run worker with fix_prompt, re-audit) ────────────
-    if _audit_retry_enabled:
-        _audit_obj = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
-        _audit_st = str(_audit_obj.get("status") or "").upper()
-        _post_status = str(summary.get("status") or "").upper()
-        _worker_did_real_work = _worker_status == "OK" or "rescued_from_stale" in (summary.get("issues") or [])
-        if (
-            _audit_st not in {"OK", "PASS", "SKIPPED", "UNAVAILABLE"}
-            and _post_status in ("PART", "ERR")
-            and not _worker_did_real_work
-        ):
-            _fix_prompt = _build_audit_fix_prompt(prompt, did, _audit_obj)
-            print(f"[retry/audit] {did}: audit={_audit_st}, re-running worker", file=sys.stderr)
-            try:
-                _ar = agents_mod.run(
-                    agent_cfg, _fix_prompt, timeout=int(args.timeout or 600), cwd=root.parent
-                )
-                with log_path.open("a", encoding="utf-8") as _lf:
-                    _lf.write("\n\n--- AUDIT_RETRY ---\n" + _ar.get("stdout", "") + "\n")
-                _ar_json = deleg_mod.extract_result_json(_ar.get("stdout", ""))
-                if _ar_json is not None:
-                    _ar_sum = normalize_worker_envelope(_ar_json)
-                    _ar_sum["kind"] = _normalize_report_kind(
-                        _ar_sum.get("kind") or _ar_sum.get("report_kind") or _infer_kind_hint(prompt)
-                    )
-                    _ar_sum["retry_count"] = summary.get("retry_count", 0) + 1
-                    _ar_sum["retry_status"] = list(summary.get("retry_status") or []) + [_post_status]
-                    summary = _audit_summary_evidence(
-                        p,
-                        cfg=cfg,
-                        did=did,
-                        prompt=prompt,
-                        summary=_ar_sum,
-                        log_path=log_path,
-                        timeout=min(int(getattr(args, "timeout", 600) or 600), 180),
-                        cwd=root.parent,
-                    )
-            except Exception as _ae:
-                print(f"[retry/audit] worker retry failed: {_ae}", file=sys.stderr)
-
     summary["worker_status"] = _worker_status
-    _audit_obj = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
-    _raw_audit_st = str(_audit_obj.get("status") or "").upper()
-    if not _raw_audit_st or _raw_audit_st in {"SKIPPED", "UNAVAILABLE"}:
-        summary["audit_status"] = "SKIP"
-    elif _raw_audit_st in {"OK", "PASS"}:
-        summary["audit_status"] = "OK"
-    else:
-        summary["audit_status"] = _raw_audit_st
     summary["test_status"] = _extract_test_status(summary)
     agents_mod.remember_silver_decision(
         tier=tier,
@@ -1292,7 +1173,6 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     # State carries only the capsule pointer + the next step from the capsule.
     # Raw logs and the agent's verbose stdout never reach state.json.
     state["last_delegation"] = did
-    state["last_status"] = f"{summary.get('status', '?')}:{did}"
     state["last_capsule"] = did
     state["last_capsule_mode"] = mode
     state["next"] = capsule.next or None
@@ -1308,8 +1188,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
         if summary_text:
             head = f"{head}\n{summary_text}"
         if status_str != "OK":
-            audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
-            feedback = str(audit.get("feedback") or summary.get("next") or "").strip()
+            feedback = str(summary.get("next") or "").strip()
             if feedback:
                 head = f"{head}\nReason: {feedback[:180]}"
         print(head)

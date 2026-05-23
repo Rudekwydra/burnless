@@ -558,8 +558,7 @@ def _friendly_run_result(p: dict[str, Path], did: str, rc: int) -> str:
         head = f"{'THOUGHT' if kind == 'thought' and status == 'OK' else status}:{did}"
         if text:
             head = f"{head}\n{text}"
-        audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
-        feedback = str(audit.get("feedback") or summary.get("next") or "").strip()
+        feedback = str(summary.get("next") or "").strip()
         if status != "OK" and feedback:
             head = f"{head}\nReason: {feedback[:180]}"
         return head
