@@ -28,7 +28,7 @@ from pathlib import Path
 
 WARM_FILE_NAME = "warm_session_codex.json"
 TTL_S = 300                      # conservative: base >=600s, we use 300s
-HEARTBEAT_INTERVAL_S = 70        # ping before partial drop at ~126s
+HEARTBEAT_INTERVAL_S = 300       # ~5min — base layer survives >=600s; trade off the ~1k-token secondary layer for 6x fewer pings
 ISO_CWD_ROOT_NAME = "iso-cwd-codex"  # ~/.burnless/iso-cwd-codex/<uuid>/
 DEFAULT_MODEL = "gpt-5.2"
 
