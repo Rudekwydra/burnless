@@ -78,6 +78,18 @@ _design/blindless/
 # Burnless Pro — proprietary Cloud client, license, advanced prompts; never commit
 _pro/
 
+# Book project — "Burnless: Lições de Persistência", autoescrito por Opus, projeto pessoal não-free
+book/
+
+# Refactor staging — scripts one-off de refactors antigos já concluídos
+_refactor_staging/
+
+# Local plugin experiments — não-free, ficam local
+plugins/
+
+# Backup files from in-place edits (e.g. cli.py.bak.YYYYMMDD-HHMMSS) — keep local
+*.bak.*
+
 # Benchmark results — ephemeral, re-generated on each run
 tests/benchmarks/results/
 
