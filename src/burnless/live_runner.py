@@ -718,21 +718,6 @@ def run_with_live_panel(
         "\n".join(consolidated_text) if saw_stream_json and consolidated_text
         else "".join(stdout_parts)
     )
-    # Persist session_id for the next delegation on this tier — but only on
-    # clean completion (no SIGTERM/timeout/stale). A bad session is worse
-    # than no session: replaying it would carry over the failure context.
-    # SKIP when warm-session pool is active: each fork's session_id is a
-    # transient leaf branched off the warm trunk. Saving it would point the
-    # next worker at this worker's per-task history (cross-task contamination,
-    # bug observed 2026-05-22). The warm trunk is the only durable source.
-    warm_active = False
-    try:
-        from . import warm_session as _ws
-        warm_active = bool(_ws.fork_args(burnless_root))
-    except Exception:
-        pass
-    if not warm_active and not interrupted and not stale_worker and returncode == 0 and session_holder:
-        _save_tier_session(burnless_root, tier, session_holder[0])
     return RunResult(
         agent=agent_cfg.get("name"),
         command=command,
