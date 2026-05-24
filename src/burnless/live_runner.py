@@ -292,6 +292,14 @@ def _emit_suspect(
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
         except OSError:
             pass
+    try:
+        from . import liveness as _live
+        _live.emit(burnless_root, delegation_id, "suspect",
+                   tool_elapsed_s=tool_elapsed_s,
+                   tool_cmd_preview=tool_cmd_preview,
+                   io_idle_s=io_idle_s)
+    except Exception:
+        pass
 
 
 @dataclass
@@ -374,6 +382,16 @@ def run_with_live_panel(
     #      always pair with --fork-session to prevent cross-task
     #      contamination from the prior delegation.
     burnless_root = log_path.parent.parent if log_path.parent.name == "logs" else log_path.parent
+    try:
+        from . import liveness as _live
+        _live.init_run_dir(burnless_root, delegation_id)
+        _live.emit(burnless_root, delegation_id, "start",
+                   agent=str(agent_cfg.get("name", "")),
+                   tier=tier,
+                   cwd=str(cwd) if cwd else "",
+                   command_head=command[0] if command else "")
+    except Exception:
+        pass
     fork_uuid: str | None = None
     if "--resume" not in command:
         try:
@@ -545,6 +563,12 @@ def run_with_live_panel(
                             tool_start_mono = now
                             tool_cmd_preview = display_line[7:107]
                             last_suspect_alert_mono = now
+                            try:
+                                from . import liveness as _live
+                                _live.emit(burnless_root, delegation_id, "tool_start",
+                                           preview=tool_cmd_preview)
+                            except Exception:
+                                pass
                             if liveness_mode == "psutil":
                                 io_baseline = liveness_mod.capture_io_baseline(proc.pid)
                                 last_io_change_mono = now
@@ -554,6 +578,11 @@ def run_with_live_panel(
                             or display_line.startswith("[text]")
                         ):
                             in_tool_execution = False
+                            try:
+                                from . import liveness as _live
+                                _live.emit(burnless_root, delegation_id, "tool_done")
+                            except Exception:
+                                pass
                         panel_event = event_filter.feed(display_line)
                         if panel_event:
                             recent.append(panel_event)
@@ -713,6 +742,15 @@ def run_with_live_panel(
         "\n".join(consolidated_text) if saw_stream_json and consolidated_text
         else "".join(stdout_parts)
     )
+    try:
+        from . import liveness as _live
+        _exit_code = proc.returncode if proc.returncode is not None else -1
+        _live.emit(burnless_root, delegation_id, "finish",
+                   exit_code=_exit_code,
+                   interrupted=bool(interrupted),
+                   stale_worker=bool(stale_worker))
+    except Exception:
+        pass
     return RunResult(
         agent=agent_cfg.get("name"),
         command=command,
