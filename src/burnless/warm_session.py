@@ -1,24 +1,29 @@
-"""Warm session pool for Burnless workers (gold standard discovered 2026-05-22).
+"""Warm session pool for Burnless workers — GLOBAL, cross-project.
 
 Workers invoked via `claude -p --resume <warm_uuid> --fork-session` inherit a
-cached prefix from a project-scoped warm session, eliminating ~40x of
-cache_write per task compared to one-shot stateless invocation, while keeping
-forks isolated (no cross-worker contamination).
+cached prefix from a SINGLE warm session shared across every project and every
+window. Boot warmer pays the cold once per user (~$0.03), every subsequent
+task in any project forks the warm prefix and pays only the new payload
+(~$0.003-0.006 per task instead of $0.030).
 
-State lives at .burnless/warm_session.json:
+State lives at ~/.burnless/warm_session.json (GLOBAL, not per-project):
     {
       "uuid": "<uuid4>",
       "created_at": "<iso8601>",
       "last_used": "<iso8601>",
-      "project_root": "<abs path>",
-      "brief": "<W0 prompt sent at init>"
+      "model": "<claude-sonnet-4-6>",
+      "brief": "<W0 neutral brief>"
     }
 
 The session jsonl itself lives where Claude Code stores it (path-derived under
-~/.claude/projects/<cwd-dashes>/<uuid>.jsonl) — we only keep the UUID.
+~/.claude/projects/<iso-cwd-dashes>/<uuid>.jsonl) — we only keep the UUID. The
+iso-cwd at ~/.burnless/iso-cwd/<warm_uuid>/ is the worker's clean working
+directory (no CLAUDE.md from any project leaks in).
 
 Heartbeat policy: refresh when last_used > 50 minutes ago (TTL is 1h on
 ephemeral_1h prompt cache; we leave 10 min headroom).
+
+Enforces [[rule-worker-never-fresh-2026-05-24]]: no worker ever spawns cold.
 """
 from __future__ import annotations
 
@@ -39,7 +44,14 @@ CACHE_TTL_MIN = 60
 
 
 def warm_file_path(burnless_root: Path) -> Path:
-    return Path(burnless_root) / WARM_FILE_NAME
+    """Global pool: lives at ~/.burnless/warm_session.json regardless of project.
+
+    The `burnless_root` argument is kept for signature compatibility with
+    callers but IGNORED — there is exactly one warm pool per (user, model)
+    that is forked by every worker in every project. Boot warmer pays the
+    cold once per user install, every subsequent task forks the warm prefix.
+    """
+    return Path.home() / ".burnless" / WARM_FILE_NAME
 
 
 def load_state(burnless_root: Path) -> dict | None:
@@ -63,25 +75,21 @@ def save_state(burnless_root: Path, state: dict) -> None:
 def build_project_brief(project_root: Path) -> str:
     """Build the W0 system context that becomes the cacheable prefix.
 
-    Neutral by design: no role identity, no behavioral rules. Just factual
-    project context (path, branch, languages, top-level tree). The task spec
-    is the only source of behavior. Worker hygiene is enforced upstream via
-    CLI flags (no CLAUDE.md auto-discovery, no hooks, no skills), not by
-    asking the model to ignore them.
+    GLOBAL warm pool — brief is project-agnostic so the same warm session
+    can serve any worker in any project. project_root is accepted only for
+    signature compatibility; it is NOT used.
+
+    The brief contains only generic worker-hygiene context that applies
+    universally: role neutrality, output discipline, no CLAUDE.md, no
+    hooks, no skills (enforced upstream via CLI flags anyway).
     """
-    root = str(Path(project_root).resolve())
-    name = Path(root).name
-    branch = _safe_git_branch(root)
-    langs = _detect_languages(root)
-    tree = _top_level_tree(root)
     return (
-        f"Project: {name}\n"
-        f"Root: {root}\n"
-        f"Branch: {branch}\n"
-        f"Languages: {', '.join(langs) if langs else 'unknown'}\n\n"
-        f"Top-level layout:\n{tree}\n\n"
-        "Each user message after this is an independent task to execute with your tools.\n\n"
-        "Reply with exactly: ack"
+        "You are a Burnless worker invoked via `claude -p --resume <warm_uuid> "
+        "--fork-session`. Your role and behavior are determined entirely by the "
+        "task spec you receive. Do not assume a persona, do not narrate, do not "
+        "summarize at the end. Execute the spec exactly as written and emit the "
+        "result envelope when done. Hooks, skills, and CLAUDE.md auto-discovery "
+        "are disabled via CLI flags upstream — do not attempt to invoke them.\n"
     )
 
 

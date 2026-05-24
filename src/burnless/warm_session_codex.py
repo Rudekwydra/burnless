@@ -34,7 +34,10 @@ DEFAULT_MODEL = "gpt-5.2"
 
 
 def warm_file_path(burnless_root: Path) -> Path:
-    return Path(burnless_root) / WARM_FILE_NAME
+    """Global pool: ~/.burnless/warm_session_codex.json regardless of project.
+    See warm_session.py:warm_file_path for rationale.
+    """
+    return Path.home() / ".burnless" / WARM_FILE_NAME
 
 
 def load_state(burnless_root: Path) -> dict | None:
