@@ -16,6 +16,7 @@ State lives at .burnless/warm_session_codex.json.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -202,6 +203,7 @@ def init(burnless_root: Path, *, model: str = DEFAULT_MODEL) -> dict:
         "brief": brief,
         "iso_cwd": str(iso_cwd),
         "model": model,
+        "brief_hash": hashlib.sha256(brief.encode("utf-8")).hexdigest(),
         "init_usage": {
             "input": usage.get("input_tokens", 0),
             "cached": usage.get("cached_input_tokens", 0),
@@ -286,27 +288,56 @@ def needs_refresh(burnless_root: Path, heartbeat_interval_s: int = HEARTBEAT_INT
     return age >= timedelta(seconds=heartbeat_interval_s)
 
 
-def prune_stale(burnless_root: Path) -> bool:
-    """Remove state file if TTL expired. Returns True if pruned."""
+def cache_validity(burnless_root: Path, expected_model: str, expected_brief: str) -> tuple[bool, str]:
+    """Return (valid, reason). reason is empty if valid, else describes drift."""
     state = load_state(burnless_root)
     if not state:
-        return False
+        return (False, "no warm state")
+    if state.get("model") != expected_model:
+        return (False, f"model drift: state={state.get('model')!r} expected={expected_model!r}")
+    expected_hash = hashlib.sha256(expected_brief.encode("utf-8")).hexdigest()
+    if state.get("brief_hash") != expected_hash:
+        return (False, "brief drift (project layout / branch changed)")
+    return (True, "")
+
+
+def prune_stale(burnless_root: Path, expected_model: str | None = None, expected_brief: str | None = None) -> tuple[bool, str]:
+    """Prune state if TTL expired OR model/brief drift.
+
+    Returns (pruned, reason). Backward-compat: callers passing only burnless_root
+    get the original TTL-only check.
+    """
+    state = load_state(burnless_root)
+    if not state:
+        return (False, "")
     last = state.get("last_used")
     if not last:
-        return False
+        return (False, "")
     try:
         last_ts = datetime.fromisoformat(last)
     except ValueError:
-        return False
+        return (False, "")
     age = datetime.now(timezone.utc) - last_ts
-    if age < timedelta(seconds=TTL_S):
-        return False
+    reason = ""
+    if age >= timedelta(seconds=TTL_S):
+        reason = f"TTL expired (age {int(age.total_seconds())}s)"
+    elif expected_model is not None or expected_brief is not None:
+        valid, drift_reason = cache_validity(
+            burnless_root,
+            expected_model or state.get("model", ""),
+            expected_brief or state.get("brief", ""),
+        )
+        if valid:
+            return (False, "")
+        reason = drift_reason
+    else:
+        return (False, "")
     path = warm_file_path(burnless_root)
     try:
         path.unlink()
-        return True
+        return (True, reason)
     except OSError:
-        return False
+        return (False, "")
 
 
 def worker_cwd(burnless_root: Path) -> str | None:

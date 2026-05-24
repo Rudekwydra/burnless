@@ -22,6 +22,7 @@ ephemeral_1h prompt cache; we leave 10 min headroom).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -210,6 +211,8 @@ def init(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
         "last_used": now,
         "project_root": str(project_root),
         "brief": brief,
+        "model": model,
+        "brief_hash": hashlib.sha256(brief.encode("utf-8")).hexdigest(),
         "init_usage": {
             "cache_read": usage.get("cache_read_input_tokens", 0),
             "cache_write": usage.get("cache_creation_input_tokens", 0),
@@ -258,23 +261,47 @@ def is_alive(burnless_root: Path) -> bool:
     return session_exists_on_disk(burnless_root)
 
 
-def prune_ghost(burnless_root: Path) -> bool:
-    """If warm state references a session that no longer exists on disk,
-    remove the state file. Returns True if pruned, False otherwise.
-    Idempotent + safe to call before any dispatch.
+def cache_validity(burnless_root: Path, expected_model: str, expected_brief: str) -> tuple[bool, str]:
+    """Return (valid, reason). reason is empty if valid, else describes drift."""
+    state = load_state(burnless_root)
+    if not state:
+        return (False, "no warm state")
+    if state.get("model") != expected_model:
+        return (False, f"model drift: state={state.get('model')!r} expected={expected_model!r}")
+    expected_hash = hashlib.sha256(expected_brief.encode("utf-8")).hexdigest()
+    if state.get("brief_hash") != expected_hash:
+        return (False, "brief drift (project layout / branch changed)")
+    return (True, "")
+
+
+def prune_ghost(burnless_root: Path, expected_model: str | None = None, expected_brief: str | None = None) -> tuple[bool, str]:
+    """Prune state if session jsonl missing from disk, or model/brief drift.
+
+    Returns (pruned, reason). Backward-compat: callers passing only burnless_root
+    get the original ghost-only check.
     """
     state = load_state(burnless_root)
     if not state or not state.get("uuid"):
-        return False
-    if session_exists_on_disk(burnless_root):
-        return False
-    # Ghost — prune state file
+        return (False, "")
+    if not session_exists_on_disk(burnless_root):
+        reason = "session jsonl missing from disk"
+    elif expected_model is not None or expected_brief is not None:
+        valid, drift_reason = cache_validity(
+            burnless_root,
+            expected_model or state.get("model", ""),
+            expected_brief or state.get("brief", ""),
+        )
+        if valid:
+            return (False, "")
+        reason = drift_reason
+    else:
+        return (False, "")
     path = warm_file_path(burnless_root)
     try:
         path.unlink()
-        return True
+        return (True, reason)
     except OSError:
-        return False
+        return (False, "")
 
 
 def needs_refresh(burnless_root: Path) -> bool:
