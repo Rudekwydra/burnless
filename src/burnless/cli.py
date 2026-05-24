@@ -1992,6 +1992,25 @@ def cmd_capsule(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watch(args: argparse.Namespace) -> int:
+    from . import liveness as _live
+    bl_root = _resolve_burnless_root()
+    if bl_root is None:
+        print("burnless: no .burnless/ directory found. Run `burnless init` first.",
+              file=sys.stderr)
+        return 2
+    follow = not args.no_follow
+    try:
+        for ev in _live.tail_events(bl_root, args.did, since_n=args.since, follow=follow):
+            print(json.dumps(ev, ensure_ascii=False), flush=True)
+    except KeyboardInterrupt:
+        return 0
+    except FileNotFoundError:
+        print(f"burnless: no liveness file for {args.did}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_compress(args: argparse.Namespace) -> int:
     if args.file:
         text = Path(args.file).read_text(encoding="utf-8")
@@ -2625,6 +2644,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="regenerate capsule under this mode (light|balanced|extreme)",
     )
     sp.set_defaults(func=cmd_capsule)
+
+    sp = sub.add_parser("watch", help="Stream liveness events from a delegation (.burnless/runs/<did>/liveness.jsonl)")
+    sp.add_argument("did", help="delegation ID to watch (e.g. d378)")
+    sp.add_argument("--since", type=int, default=0,
+                    help="skip first N existing events before streaming")
+    sp.add_argument("--no-follow", action="store_true",
+                    help="print existing events and exit (do not tail)")
+    sp.set_defaults(func=cmd_watch)
 
     sp = sub.add_parser("compress", help="compress a transcript into a capsule")
     sp.add_argument("--file", "-f", default=None)
