@@ -252,6 +252,19 @@ _TELEGRAPHIC_OUTPUT_HINT = (
 )
 
 
+def _extract_model(cmd_str: str, provider: str) -> str:
+    """Extract model name from agent command string."""
+    if provider == "anthropic":
+        m = re.search(r"--model\s+(\S+)", cmd_str)
+    elif provider == "codex":
+        m = re.search(r"-m\s+(\S+)", cmd_str)
+        if not m:
+            return "gpt-5.2"
+    else:
+        return ""
+    return m.group(1) if m else ""
+
+
 def _build_cacheable_runtime_prefix(project_root: Path, burnless_root: Path) -> str:
     """QTP-F: stable prefix that doesn't change between sibling delegations.
 
@@ -677,17 +690,41 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     # cheap parse: look at "agent:" line in the markdown
     tier = _parse_tier_from_delegation(prompt) or "bronze"
     prompt = agents_mod.maybe_prepend_prior_decision(prompt, tier=tier)
-    # Auto-prune ghost warm sessions before deciding warm args.
+    # Auto-prune ghost/stale warm sessions with drift detection before deciding warm args.
     from . import warm_session as _ws
-    if _ws.prune_ghost(root):
-        print(f"burnless: pruned ghost warm session (jsonl not found on disk)", file=sys.stderr)
     from . import warm_session_codex as _wsc
-    if _wsc.prune_stale(root):
-        print(f"burnless: pruned stale codex warm session", file=sys.stderr)
+
+    current_claude_brief = _ws.build_project_brief(root.parent)
+    current_codex_brief = _wsc.build_project_brief(root.parent)
+
     agent_cfg = cfg["agents"][tier]
     selected_agent_cfg, ranked_providers = _select_provider_cfg(agent_cfg, tier=tier)
     selected_provider = selected_agent_cfg.get("provider") or selected_agent_cfg.get("name")
     provider_name = selected_agent_cfg.get("provider") or ""
+
+    agent_cmd_str = " ".join(agents_mod.resolve_command(selected_agent_cfg))
+    expected_claude_model = _extract_model(agent_cmd_str, "anthropic")
+    pruned, reason = _ws.prune_ghost(root, expected_model=expected_claude_model or None, expected_brief=current_claude_brief)
+    if pruned:
+        print(f"burnless: pruned claude warm — {reason}", file=sys.stderr)
+        if (cfg.get("warm") or {}).get("auto_reinit", False) and expected_claude_model:
+            try:
+                new_state = _ws.init(root, model=expected_claude_model)
+                print(f"burnless: re-initialized claude warm (auto_reinit) — uuid={new_state['uuid'][:8]}…", file=sys.stderr)
+            except Exception as e:
+                print(f"burnless: claude warm auto-reinit failed: {e}", file=sys.stderr)
+
+    expected_codex_model = _extract_model(agent_cmd_str, "codex")
+    pruned, reason = _wsc.prune_stale(root, expected_model=expected_codex_model or None, expected_brief=current_codex_brief)
+    if pruned:
+        print(f"burnless: pruned codex warm — {reason}", file=sys.stderr)
+        if (cfg.get("warm") or {}).get("auto_reinit", False) and provider_name == "codex" and expected_codex_model:
+            try:
+                new_state = _wsc.init(root, model=expected_codex_model)
+                print(f"burnless: re-initialized codex warm (auto_reinit) — uuid={new_state['uuid'][:8]}…", file=sys.stderr)
+            except Exception as e:
+                print(f"burnless: codex warm auto-reinit failed: {e}", file=sys.stderr)
+
     warm_codex_brief = ""
     warm_codex_flags: list[str] = []
     if provider_name == "codex" and _wsc.is_alive(root):
