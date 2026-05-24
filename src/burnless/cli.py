@@ -794,12 +794,14 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
         )
         if result is not None:
             backend_used = "maestro"
-            print(f"Running {did} with maestro/{tier} ({result['command'][1]})...")
+            if sys.stdout.isatty() or getattr(args, "verbose", False):
+                print(f"Running {did} with maestro/{tier} ({result['command'][1]})...")
 
     if result is None and use_cached_worker:
         from . import cached_worker as _cw
         model = MAESTRO_TIER_MODEL.get(tier, MAESTRO_TIER_MODEL["silver"])
-        print(f"Running {did} with cached_worker/{tier} ({model})...", flush=True)
+        if sys.stdout.isatty() or getattr(args, "verbose", False):
+            print(f"Running {did} with cached_worker/{tier} ({model})...", flush=True)
         try:
             result = _cw.run_cached_worker(
                 prompt=prompt,
@@ -839,7 +841,8 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             result = result_obj.to_dict()
         except Exception as e:
             print(f"Runner failed; falling back to plain runner. ({e})", file=sys.stderr)
-            print(f"Running {did} with {tier}/{selected_agent_cfg['name']}...")
+            if sys.stdout.isatty() or getattr(args, "verbose", False):
+                print(f"Running {did} with {tier}/{selected_agent_cfg['name']}...")
             result = agents_mod.run(selected_agent_cfg, prompt, timeout=args.timeout, cwd=root.parent)
             deleg_mod.write_log(log_path, result)
 
@@ -1235,18 +1238,26 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     state_mod.save(p["state"], state)
 
     # Short output — details via `burnless read/log/capsule/metrics`
+    # Default = single-line machine-parseable status (avoids polluting maestro
+    # session history). Verbose (3-line summary+reason) opt-in via --verbose
+    # or auto-on for TTY humans.
     status_str = summary.get("status", "?")
+    verbose = bool(getattr(args, "verbose", False)) or sys.stdout.isatty()
     if interrupted and not stale:
-        print("Worker stopped by user.")
+        if verbose:
+            print("Worker stopped by user.")
+        else:
+            print(f"INT:{did}")
     else:
         head = f"{status_str}:{did}"
-        summary_text = (summary.get("summary") or "").strip()
-        if summary_text:
-            head = f"{head}\n{summary_text}"
-        if status_str != "OK":
-            feedback = str(summary.get("next") or "").strip()
-            if feedback:
-                head = f"{head}\nReason: {feedback[:180]}"
+        if verbose:
+            summary_text = (summary.get("summary") or "").strip()
+            if summary_text:
+                head = f"{head}\n{summary_text}"
+            if status_str != "OK":
+                feedback = str(summary.get("next") or "").strip()
+                if feedback:
+                    head = f"{head}\nReason: {feedback[:180]}"
         print(head)
     return 0 if status_str == "OK" else 1
 
@@ -2563,6 +2574,11 @@ def build_parser() -> argparse.ArgumentParser:
     modes.add_argument("--watch", action="store_const", const="watch", dest="mode", help="show a live worker panel")
     modes.add_argument("--quiet", action="store_const", const="quiet", dest="mode", help="show one-line running status")
     modes.add_argument("--full", action="store_const", const="full", dest="mode", help="stream raw output in real time")
+    sp.add_argument(
+        "--verbose",
+        action="store_true",
+        help="emit 3-line summary (status, body, reason) instead of single status line. Auto-on for TTY.",
+    )
     sp.set_defaults(mode="plain")
     sp.add_argument(
         "--progress",
