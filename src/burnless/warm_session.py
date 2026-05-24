@@ -34,7 +34,7 @@ from typing import Any
 
 
 WARM_FILE_NAME = "warm_session.json"
-HEARTBEAT_INTERVAL_MIN = 50  # refresh before 1h TTL expires
+HEARTBEAT_INTERVAL_MIN = 59  # sliding TTL resets on each read, 1min margin with poll_interval=30s
 CACHE_TTL_MIN = 60
 
 

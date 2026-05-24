@@ -384,11 +384,6 @@ def run_with_live_panel(
                 fork_uuid = warm_args[1] if len(warm_args) > 1 else None
         except Exception:
             warm_args = []
-        if not warm_args:
-            resumed_session = _load_tier_session(burnless_root, tier)
-            if resumed_session:
-                command = list(command) + ["--resume", resumed_session, "--fork-session"]
-                fork_uuid = resumed_session
 
     # Bare-equivalent flags for OAuth/subscription workers — drops slash
     # commands, MCP servers, per-worker session persistence, the user-level
