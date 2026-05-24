@@ -220,8 +220,27 @@ def init(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
     return state
 
 
+def session_exists_on_disk(burnless_root: Path) -> bool:
+    """Check whether the warm session's jsonl file actually exists in
+    ~/.claude/projects/. Claude code stores resumable sessions at
+    ~/.claude/projects/<dashed-cwd>/<session-uuid>.jsonl. We glob across
+    project dirs rather than trying to reconstruct the exact dashed-path
+    encoding, which has edge cases (dots, hidden dirs).
+    """
+    state = load_state(burnless_root)
+    if not state or not state.get("uuid"):
+        return False
+    uuid = state["uuid"]
+    projects_root = Path.home() / ".claude" / "projects"
+    if not projects_root.exists():
+        return False
+    # Glob: any project dir containing <uuid>.jsonl
+    matches = list(projects_root.glob(f"*/{uuid}.jsonl"))
+    return len(matches) > 0
+
+
 def is_alive(burnless_root: Path) -> bool:
-    """True if a warm session exists and was used within HEARTBEAT_INTERVAL_MIN."""
+    """True if warm session exists, within TTL, AND session jsonl is on disk."""
     state = load_state(burnless_root)
     if not state or not state.get("uuid"):
         return False
@@ -233,7 +252,29 @@ def is_alive(burnless_root: Path) -> bool:
     except ValueError:
         return False
     age = datetime.now(timezone.utc) - last_ts
-    return age < timedelta(minutes=CACHE_TTL_MIN)
+    if age >= timedelta(minutes=CACHE_TTL_MIN):
+        return False
+    # NEW: verify jsonl actually exists
+    return session_exists_on_disk(burnless_root)
+
+
+def prune_ghost(burnless_root: Path) -> bool:
+    """If warm state references a session that no longer exists on disk,
+    remove the state file. Returns True if pruned, False otherwise.
+    Idempotent + safe to call before any dispatch.
+    """
+    state = load_state(burnless_root)
+    if not state or not state.get("uuid"):
+        return False
+    if session_exists_on_disk(burnless_root):
+        return False
+    # Ghost — prune state file
+    path = warm_file_path(burnless_root)
+    try:
+        path.unlink()
+        return True
+    except OSError:
+        return False
 
 
 def needs_refresh(burnless_root: Path) -> bool:
