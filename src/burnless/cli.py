@@ -2236,6 +2236,62 @@ def cmd_warm_daemon(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_trace(args: argparse.Namespace) -> int:
+    from . import debugless as dbg
+
+    bl_root = _resolve_burnless_root()
+    if bl_root is None:
+        print("burnless: no .burnless/ found", file=sys.stderr)
+        return 2
+
+    result = dbg.trace(bl_root, args.did, model=args.model, timeout=args.timeout)
+    if not result["ok"]:
+        print(f"debugless error: {result['error']}", file=sys.stderr)
+        return 1
+
+    did = result["did"]
+    vestigials = result["vestigials"]
+    loops = result["loops"]
+    dead = result["dead_branches"]
+    ghost = result["ghost_refs"]
+    print(f"debugless: {did} — {len(vestigials)}V {len(loops)}L {len(dead)}D {len(ghost)}G")
+
+    if not getattr(args, "no_capsule", False):
+        cap_path = dbg.write_capsule(result, bl_root)
+        print(f"capsule: {cap_path}")
+
+    import json as _json
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_debugless_sweep(args: argparse.Namespace) -> int:
+    from . import debugless as dbg
+
+    bl_root = _resolve_burnless_root()
+    if bl_root is None:
+        print("burnless: no .burnless/ found", file=sys.stderr)
+        return 2
+
+    results = dbg.sweep(
+        bl_root,
+        since_hours=args.since_hours,
+        limit=args.limit,
+        model=args.model,
+    )
+    for r in results:
+        did = r["did"]
+        vestigials = r["vestigials"]
+        loops = r["loops"]
+        dead = r["dead_branches"]
+        ghost = r["ghost_refs"]
+        cap_path = dbg.write_capsule(r, bl_root)
+        print(f"debugless: {did} — {len(vestigials)}V {len(loops)}L {len(dead)}D {len(ghost)}G → {cap_path}")
+
+    print(f"total: {len(results)}")
+    return 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     from . import setup_wizard
     return setup_wizard.run(
@@ -2691,6 +2747,25 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-mask", action="store_true",
                     help="disable secret masking")
     sp.set_defaults(func=cmd_cmd)
+
+    sp = sub.add_parser("trace", help="GoPro-trace a delegation via local ollama (Debugless)",
+                        description="GoPro-trace a delegation via local ollama (Debugless)")
+    sp.add_argument("did", help="delegation ID to trace (e.g. d378)")
+    sp.add_argument("--model", default="qwen2.5-coder:7b", help="ollama model to use")
+    sp.add_argument("--timeout", type=int, default=90, help="ollama timeout in seconds")
+    sp.add_argument("--no-capsule", action="store_true", dest="no_capsule",
+                    help="skip writing capsule, just print to stdout")
+    sp.set_defaults(func=cmd_trace)
+
+    sp = sub.add_parser("debugless", help="Debugless DEV tools")
+    sp.set_defaults(func=lambda args, parser=sp: parser.print_help() or 0)
+    dbg_sub = sp.add_subparsers(dest="debugless_cmd")
+    dsp = dbg_sub.add_parser("sweep", help="trace all recent delegations (sequential)")
+    dsp.add_argument("--since-hours", type=int, default=24, dest="since_hours",
+                     help="look back N hours (default 24)")
+    dsp.add_argument("--limit", type=int, default=10, help="max delegations to trace (default 10)")
+    dsp.add_argument("--model", default="qwen2.5-coder:7b", help="ollama model to use")
+    dsp.set_defaults(func=cmd_debugless_sweep)
 
     return p
 
