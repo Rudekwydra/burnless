@@ -73,6 +73,63 @@ def parse_stream_json(stdout: str) -> dict:
     return metrics
 
 
+def collect_worker_usage(burnless_root: Path, since_ts: float) -> dict:
+    """Scan .burnless/logs/d*.log for files modified since `since_ts` (epoch
+    seconds), parse each as stream-JSON, accumulate usage. Returns dict with:
+      worker_count, total_input_tokens, total_output_tokens,
+      total_cache_creation_input_tokens, total_cache_read_input_tokens,
+      total_usd, per_worker (list of {did, model, ...metrics}).
+    """
+    log_dir = burnless_root / "logs"
+    out = {
+        "worker_count": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "total_cache_creation_input_tokens": 0,
+        "total_cache_read_input_tokens": 0,
+        "total_usd": 0.0,
+        "per_worker": [],
+    }
+    if not log_dir.is_dir():
+        return out
+    for log_path in sorted(log_dir.glob("d*.log")):
+        try:
+            mtime = log_path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime < since_ts:
+            continue
+        try:
+            text = log_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        m = parse_stream_json(text)
+        if m["input_tokens"] == 0 and m["output_tokens"] == 0:
+            continue
+        model = m["model"] or "claude-haiku-4-5-20251001"
+        worker_usd = usd_for(
+            model,
+            m["input_tokens"], m["output_tokens"],
+            m["cache_creation_input_tokens"], m["cache_read_input_tokens"],
+        )
+        out["worker_count"] += 1
+        out["total_input_tokens"] += m["input_tokens"]
+        out["total_output_tokens"] += m["output_tokens"]
+        out["total_cache_creation_input_tokens"] += m["cache_creation_input_tokens"]
+        out["total_cache_read_input_tokens"] += m["cache_read_input_tokens"]
+        out["total_usd"] += worker_usd
+        out["per_worker"].append({
+            "did": log_path.stem,
+            "model": model,
+            "input_tokens": m["input_tokens"],
+            "output_tokens": m["output_tokens"],
+            "cache_creation_input_tokens": m["cache_creation_input_tokens"],
+            "cache_read_input_tokens": m["cache_read_input_tokens"],
+            "usd": worker_usd,
+        })
+    return out
+
+
 def call_baseline(prompt: str, model: str, session_id: str | None, cwd: Path, cold_cache: bool = False) -> dict:
     """Single Sonnet/Opus call, no pipeline.
     cold_cache=True → drop session resume to force cold cache (fair comparison vs pipeline encoder)."""
@@ -112,11 +169,13 @@ def call_light(prompt: str, session_state: dict, cwd: Path, maestro_model: str =
     from burnless.maestro_layer import process_envelope
 
     t = time.time()
+    workers_since = t
     mae_result = process_envelope(prompt, cwd, compression_mode="tight", model=maestro_model, timeout=300)
     wall = time.time() - t
     response_envelope = mae_result.get("response_envelope", {})
     response_text = json.dumps(response_envelope) if isinstance(response_envelope, dict) else str(response_envelope)
     mae_usage = mae_result.get("usage", {}) or {}
+    worker_usage = collect_worker_usage(cwd / ".burnless", workers_since)
     mae_metrics = {
         "layer": "maestro_light",
         "model": mae_usage.get("model") or "claude-sonnet-4-6",
@@ -138,9 +197,10 @@ def call_light(prompt: str, session_state: dict, cwd: Path, maestro_model: str =
     session_state["maestro_session_id"] = mae_metrics["session_id"]
     return {
         "maestro": mae_metrics,
-        "total_usd": mae_metrics["usd"],
-        "total_input_tokens": mae_metrics["input_tokens"],
-        "total_output_tokens": mae_metrics["output_tokens"],
+        "workers": worker_usage,
+        "total_usd": mae_metrics["usd"] + worker_usage["total_usd"],
+        "total_input_tokens": mae_metrics["input_tokens"] + worker_usage["total_input_tokens"],
+        "total_output_tokens": mae_metrics["output_tokens"] + worker_usage["total_output_tokens"],
         "final_text": mae_metrics["final_text"],
         "wall_s_total": mae_metrics["wall_s"],
     }
@@ -186,11 +246,13 @@ def call_pipeline(prompt: str, session_state: dict, cwd: Path, maestro_model: st
 
     # MAESTRO (Sonnet/Opus, session resumed via maestro_layer) — real usage now
     t1 = time.time()
+    workers_since = t1
     mae_result = process_envelope(envelope, cwd, compression_mode="tight", model=maestro_model, timeout=300)
     mae_wall = time.time() - t1
     response_envelope = mae_result.get("response_envelope", {})
     response_text = json.dumps(response_envelope) if isinstance(response_envelope, dict) else str(response_envelope)
     mae_usage = mae_result.get("usage", {}) or {}
+    worker_usage = collect_worker_usage(cwd / ".burnless", workers_since)
     mae_metrics = {
         "layer": "maestro",
         "model": mae_usage.get("model") or "claude-sonnet-4-6",
@@ -240,9 +302,10 @@ def call_pipeline(prompt: str, session_state: dict, cwd: Path, maestro_model: st
         "encoder": enc_metrics,
         "maestro": mae_metrics,
         "decoder": dec_metrics,
-        "total_usd": enc_metrics["usd"] + mae_metrics["usd"] + dec_metrics["usd"],
-        "total_input_tokens": enc_metrics["input_tokens"] + mae_metrics["input_tokens"] + dec_metrics["input_tokens"],
-        "total_output_tokens": enc_metrics["output_tokens"] + mae_metrics["output_tokens"] + dec_metrics["output_tokens"],
+        "workers": worker_usage,
+        "total_usd": enc_metrics["usd"] + mae_metrics["usd"] + dec_metrics["usd"] + worker_usage["total_usd"],
+        "total_input_tokens": enc_metrics["input_tokens"] + mae_metrics["input_tokens"] + dec_metrics["input_tokens"] + worker_usage["total_input_tokens"],
+        "total_output_tokens": enc_metrics["output_tokens"] + mae_metrics["output_tokens"] + dec_metrics["output_tokens"] + worker_usage["total_output_tokens"],
         "final_text": dec_metrics["final_text"],
         "wall_s_total": enc_metrics["wall_s"] + mae_metrics["wall_s"] + dec_metrics["wall_s"],
     }
