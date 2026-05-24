@@ -681,9 +681,18 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     from . import warm_session as _ws
     if _ws.prune_ghost(root):
         print(f"burnless: pruned ghost warm session (jsonl not found on disk)", file=sys.stderr)
+    from . import warm_session_codex as _wsc
+    if _wsc.prune_stale(root):
+        print(f"burnless: pruned stale codex warm session", file=sys.stderr)
     agent_cfg = cfg["agents"][tier]
     selected_agent_cfg, ranked_providers = _select_provider_cfg(agent_cfg, tier=tier)
     selected_provider = selected_agent_cfg.get("provider") or selected_agent_cfg.get("name")
+    provider_name = selected_agent_cfg.get("provider") or ""
+    warm_codex_brief = ""
+    warm_codex_flags: list[str] = []
+    if provider_name == "codex" and _wsc.is_alive(root):
+        warm_codex_brief = _wsc.warm_brief(root)
+        warm_codex_flags = _wsc.warm_flags(root)
 
     if args.dry_run:
         print(f"[dry-run] would run: {' '.join(agents_mod.resolve_command(selected_agent_cfg))}")
@@ -784,6 +793,8 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 cwd=root.parent,
                 tier_agents=cfg.get("agents", {}),
                 liveness_mode=str((cfg.get("display") or {}).get("liveness_mode", "time")),
+                warm_codex_brief=warm_codex_brief,
+                warm_codex_flags=warm_codex_flags,
             )
             result = result_obj.to_dict()
         except Exception as e:
@@ -823,6 +834,8 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 cwd=root.parent,
                 append_log=True,
                 liveness_mode=str((cfg.get("display") or {}).get("liveness_mode", "time")),
+                warm_codex_brief=warm_codex_brief,
+                warm_codex_flags=warm_codex_flags,
             ).to_dict()
         else:
             fallback_result = agents_mod.run(fallback_cfg, prompt, timeout=args.timeout, cwd=root.parent, tier=tier)
@@ -2025,63 +2038,104 @@ def _resolve_burnless_root() -> Path | None:
 
 
 def cmd_warm_init(args: argparse.Namespace) -> int:
-    from . import warm_session as ws
     bl_root = _resolve_burnless_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found. Run `burnless init` first.", file=sys.stderr)
         return 2
-    model = getattr(args, "model", None) or "claude-sonnet-4-6"
-    print(f"burnless warm init: seeding warm session for {bl_root.parent} (model={model})...")
-    try:
-        state = ws.init(bl_root, model=model)
-    except Exception as e:
-        print(f"burnless warm init: failed — {e}", file=sys.stderr)
-        return 2
-    iu = state.get("init_usage") or {}
-    print(f"  uuid:        {state['uuid']}")
-    print(f"  cache_read:  {iu.get('cache_read', 0):,}")
-    print(f"  cache_write: {iu.get('cache_write', 0):,}  (ephemeral_1h: {iu.get('ephemeral_1h', 0):,})")
-    print(f"  brief_chars: {len(state.get('brief',''))}")
-    print(f"  saved to:    {ws.warm_file_path(bl_root)}")
-    return 0
+    provider = getattr(args, "provider", "both")
+    results = {}
+    if provider in ("claude", "both"):
+        from . import warm_session as ws_claude
+        model = getattr(args, "model", None) or "claude-sonnet-4-6"
+        print(f"burnless warm init [claude]: seeding warm session for {bl_root.parent} (model={model})...")
+        try:
+            state = ws_claude.init(bl_root, model=model)
+            results["claude"] = state
+            print(f"  claude warm initialized: uuid={state['uuid'][:8]}…")
+            iu = state.get("init_usage") or {}
+            print(f"  cache_read:  {iu.get('cache_read', 0):,}")
+            print(f"  cache_write: {iu.get('cache_write', 0):,}")
+        except Exception as e:
+            print(f"  claude warm init FAILED: {e}", file=sys.stderr)
+    if provider in ("codex", "both"):
+        from . import warm_session_codex as ws_codex
+        print(f"burnless warm init [codex]: seeding warm session for {bl_root.parent}...")
+        try:
+            state = ws_codex.init(bl_root)
+            results["codex"] = state
+            cached = state.get("init_usage", {}).get("cached", 0)
+            print(f"  codex warm initialized: uuid={state['uuid'][:8]}…  cached_input={cached}")
+        except Exception as e:
+            print(f"  codex warm init FAILED: {e}", file=sys.stderr)
+    return 0 if results else 1
 
 
 def cmd_warm_status(args: argparse.Namespace) -> int:
-    from . import warm_session as ws
     bl_root = _resolve_burnless_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found.", file=sys.stderr)
         return 2
-    s = ws.status(bl_root)
-    if not s.get("exists"):
-        print("warm session: NOT INITIALIZED. Run `burnless warm init`.")
-        return 0
-    print(f"warm session for {s.get('project_root')}:")
-    print(f"  uuid:           {s.get('uuid')}")
-    print(f"  alive:          {s.get('alive')}")
-    print(f"  needs_refresh:  {s.get('needs_refresh')}")
-    print(f"  age_minutes:    {s.get('age_minutes')}")
-    print(f"  created_at:     {s.get('created_at')}")
-    print(f"  last_used:      {s.get('last_used')}")
+    provider = getattr(args, "provider", "both")
+    if provider in ("claude", "both"):
+        from . import warm_session as ws
+        s = ws.status(bl_root)
+        if not s.get("exists"):
+            print("warm session [claude]: NOT INITIALIZED. Run `burnless warm init`.")
+        else:
+            print(f"warm session [claude] for {s.get('project_root')}:")
+            print(f"  uuid:           {s.get('uuid')}")
+            print(f"  alive:          {s.get('alive')}")
+            print(f"  needs_refresh:  {s.get('needs_refresh')}")
+            print(f"  age_minutes:    {s.get('age_minutes')}")
+            print(f"  created_at:     {s.get('created_at')}")
+            print(f"  last_used:      {s.get('last_used')}")
+    if provider in ("codex", "both"):
+        from . import warm_session_codex as ws_codex
+        sc = ws_codex.status(bl_root)
+        if not sc.get("exists"):
+            print("warm session [codex]: NOT INITIALIZED. Run `burnless warm init --provider codex`.")
+        else:
+            print(f"warm session [codex] for {sc.get('project_root')}:")
+            print(f"  uuid:             {sc.get('uuid')}")
+            print(f"  alive:            {sc.get('alive')}")
+            print(f"  needs_refresh:    {sc.get('needs_refresh')}")
+            print(f"  age_s:            {sc.get('age_s')}")
+            print(f"  last_cache_ratio: {sc.get('last_cache_ratio')}")
     return 0
 
 
 def cmd_warm_refresh(args: argparse.Namespace) -> int:
-    from . import warm_session as ws
     bl_root = _resolve_burnless_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found.", file=sys.stderr)
         return 2
-    model = getattr(args, "model", None) or "claude-sonnet-4-6"
-    try:
-        state = ws.refresh(bl_root, model=model)
-    except Exception as e:
-        print(f"burnless warm refresh: failed — {e}", file=sys.stderr)
-        return 2
-    ru = state.get("last_refresh_usage") or {}
-    print(f"warm refreshed at {state.get('last_used')}")
-    print(f"  cache_read:  {ru.get('cache_read', 0):,}")
-    print(f"  cache_write: {ru.get('cache_write', 0):,}")
+    provider = getattr(args, "provider", "both")
+    if provider in ("claude", "both"):
+        from . import warm_session as ws
+        model = getattr(args, "model", None) or "claude-sonnet-4-6"
+        if ws.needs_refresh(bl_root):
+            try:
+                state = ws.refresh(bl_root, model=model)
+                ru = state.get("last_refresh_usage") or {}
+                print(f"warm [claude] refreshed at {state.get('last_used')}")
+                print(f"  cache_read:  {ru.get('cache_read', 0):,}")
+                print(f"  cache_write: {ru.get('cache_write', 0):,}")
+            except Exception as e:
+                print(f"burnless warm refresh [claude]: failed — {e}", file=sys.stderr)
+        else:
+            print("warm [claude]: no refresh needed (fresh enough or not initialized)")
+    if provider in ("codex", "both"):
+        from . import warm_session_codex as ws_codex
+        if ws_codex.needs_refresh(bl_root):
+            try:
+                state = ws_codex.refresh(bl_root)
+                ru = state.get("last_refresh_usage") or {}
+                print(f"warm [codex] refreshed at {state.get('last_used')}")
+                print(f"  cached: {ru.get('cached', 0):,}")
+            except Exception as e:
+                print(f"burnless warm refresh [codex]: failed — {e}", file=sys.stderr)
+        else:
+            print("warm [codex]: no refresh needed (fresh enough or not initialized)")
     return 0
 
 
@@ -2445,11 +2499,17 @@ def build_parser() -> argparse.ArgumentParser:
     warm_sub = sp.add_subparsers(dest="warm_cmd")
     wsp = warm_sub.add_parser("init", help="create a warm session for this project and seed W0")
     wsp.add_argument("--model", default=None, help="model for warm session (default: claude-sonnet-4-6)")
+    wsp.add_argument("--provider", choices=["claude", "codex", "both"], default="both",
+                     help="Which warm pool to operate on (default: both)")
     wsp.set_defaults(func=cmd_warm_init)
     wsp = warm_sub.add_parser("status", help="show warm session age and aliveness")
+    wsp.add_argument("--provider", choices=["claude", "codex", "both"], default="both",
+                     help="Which warm pool to operate on (default: both)")
     wsp.set_defaults(func=cmd_warm_status)
     wsp = warm_sub.add_parser("refresh", help="send a fork heartbeat to refresh prompt-cache TTL")
     wsp.add_argument("--model", default=None, help="model for refresh call")
+    wsp.add_argument("--provider", choices=["claude", "codex", "both"], default="both",
+                     help="Which warm pool to operate on (default: both)")
     wsp.set_defaults(func=cmd_warm_refresh)
 
     sp = sub.add_parser("shell", help="alias for `burnless pty` (legacy REPL removed in v0.7.4)")

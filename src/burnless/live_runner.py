@@ -324,6 +324,8 @@ def run_with_live_panel(
     append_log: bool = False,
     append_label: str | None = None,
     liveness_mode: str = "time",
+    warm_codex_brief: str = "",
+    warm_codex_flags: list[str] | None = None,
 ) -> RunResult:
     """Run an agent while saving output and showing mode-specific progress."""
     command = resolve_command(agent_cfg)
@@ -394,6 +396,21 @@ def run_with_live_panel(
     # worker indefinitely).
     if command and command[0] in ("claude", "claude-cli") and "--permission-mode" not in command:
         command = list(command) + ["--permission-mode", "bypassPermissions"]
+
+    if warm_codex_brief:
+        prompt = warm_codex_brief + prompt
+
+    if warm_codex_flags:
+        new_cmd: list[str] = []
+        inserted = False
+        for _arg in command:
+            new_cmd.append(_arg)
+            if _arg == "exec" and not inserted:
+                new_cmd.extend(warm_codex_flags)
+                inserted = True
+        if not inserted:
+            new_cmd.extend(warm_codex_flags)
+        command = new_cmd
 
     with log_path.open("a" if append_log else "w", encoding="utf-8") as log:
         if append_log:
@@ -822,6 +839,8 @@ def run_with_overflow_retries(
     overflow_history_turns: int = _OVERFLOW_HISTORY_TURNS,
     max_attempts: int = _OVERFLOW_MAX_ATTEMPTS,
     liveness_mode: str = "time",
+    warm_codex_brief: str = "",
+    warm_codex_flags: list[str] | None = None,
 ) -> RunResult:
     current_tier = tier
     current_cfg = agent_cfg
@@ -853,6 +872,8 @@ def run_with_overflow_retries(
             append_log=attempt_idx > 0,
             append_label=log_label,
             liveness_mode=liveness_mode,
+            warm_codex_brief=warm_codex_brief,
+            warm_codex_flags=warm_codex_flags,
         )
         last_result = result
         first_started_at = first_started_at or result.started_at

@@ -286,6 +286,29 @@ def needs_refresh(burnless_root: Path, heartbeat_interval_s: int = HEARTBEAT_INT
     return age >= timedelta(seconds=heartbeat_interval_s)
 
 
+def prune_stale(burnless_root: Path) -> bool:
+    """Remove state file if TTL expired. Returns True if pruned."""
+    state = load_state(burnless_root)
+    if not state:
+        return False
+    last = state.get("last_used")
+    if not last:
+        return False
+    try:
+        last_ts = datetime.fromisoformat(last)
+    except ValueError:
+        return False
+    age = datetime.now(timezone.utc) - last_ts
+    if age < timedelta(seconds=TTL_S):
+        return False
+    path = warm_file_path(burnless_root)
+    try:
+        path.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def worker_cwd(burnless_root: Path) -> str | None:
     """Isolated CWD path for worker subprocesses, or None if warm is dead."""
     state = load_state(burnless_root)
