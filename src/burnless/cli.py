@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -2176,6 +2177,65 @@ def cmd_warm_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_warm_daemon(args: argparse.Namespace) -> int:
+    import signal as _signal
+    import subprocess
+    from . import warm_daemon as wd
+
+    bl_root = _resolve_burnless_root()
+    if bl_root is None:
+        print("burnless: no .burnless/ directory found. Run `burnless init` first.", file=sys.stderr)
+        return 2
+
+    action = args.daemon_action
+    if action == "start":
+        alive, pid = wd.is_running(bl_root)
+        if alive:
+            print(f"burnless: daemon already running (pid={pid})", file=sys.stderr)
+            return 1
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "burnless", "warm", "daemon", "run-fg"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            cwd=str(bl_root.parent),
+        )
+        time.sleep(0.5)
+        alive2, pid2 = wd.is_running(bl_root)
+        if alive2:
+            print(f"burnless: warm daemon started (pid={pid2})")
+            return 0
+        print("burnless: daemon spawn likely failed (no PID file)", file=sys.stderr)
+        return 1
+    elif action == "stop":
+        alive, pid = wd.is_running(bl_root)
+        if not alive:
+            print("burnless: no daemon running")
+            return 0
+        try:
+            os.kill(pid, _signal.SIGTERM)
+            print(f"burnless: SIGTERM sent to pid={pid}")
+            return 0
+        except OSError as e:
+            print(f"burnless: kill failed: {e}", file=sys.stderr)
+            return 1
+    elif action == "status":
+        alive, pid = wd.is_running(bl_root)
+        log_path = wd.log_file_path(bl_root)
+        print(f"daemon: {'RUNNING' if alive else 'stopped'} (pid={pid if alive else '-'})")
+        print(f"log:    {log_path}")
+        if log_path.exists():
+            print("--- last 10 log lines ---")
+            lines = log_path.read_text(encoding="utf-8").splitlines()[-10:]
+            for ln in lines:
+                print(f"  {ln}")
+        return 0
+    elif action == "run-fg":
+        return wd.run_loop(bl_root)
+    return 2
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     from . import setup_wizard
     return setup_wizard.run(
@@ -2548,6 +2608,15 @@ def build_parser() -> argparse.ArgumentParser:
     wsp.add_argument("--provider", choices=["claude", "codex", "both"], default="both",
                      help="Which warm pool to operate on (default: both)")
     wsp.set_defaults(func=cmd_warm_refresh)
+
+    wdp = warm_sub.add_parser("daemon", help="background daemon to keep warm pools hot")
+    wdp.set_defaults(func=lambda args, parser=wdp: parser.print_help() or 0)
+    daemon_sub = wdp.add_subparsers(dest="daemon_action", required=True)
+    daemon_sub.add_parser("start",  help="spawn daemon in background (detached)")
+    daemon_sub.add_parser("stop",   help="send SIGTERM to running daemon")
+    daemon_sub.add_parser("status", help="show daemon PID + last log lines")
+    daemon_sub.add_parser("run-fg", help="run daemon in foreground (debug)")
+    wdp.set_defaults(func=cmd_warm_daemon)
 
     sp = sub.add_parser("shell", help="alias for `burnless pty` (legacy REPL removed in v0.7.4)")
     sp.add_argument("args", nargs=argparse.REMAINDER, help="extra args passed to pty")
