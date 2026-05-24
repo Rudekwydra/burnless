@@ -677,6 +677,10 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     # cheap parse: look at "agent:" line in the markdown
     tier = _parse_tier_from_delegation(prompt) or "bronze"
     prompt = agents_mod.maybe_prepend_prior_decision(prompt, tier=tier)
+    # Auto-prune ghost warm sessions before deciding warm args.
+    from . import warm_session as _ws
+    if _ws.prune_ghost(root):
+        print(f"burnless: pruned ghost warm session (jsonl not found on disk)", file=sys.stderr)
     agent_cfg = cfg["agents"][tier]
     selected_agent_cfg, ranked_providers = _select_provider_cfg(agent_cfg, tier=tier)
     selected_provider = selected_agent_cfg.get("provider") or selected_agent_cfg.get("name")
