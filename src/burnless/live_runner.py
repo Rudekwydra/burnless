@@ -159,7 +159,6 @@ class _MinimalSpinner:
 
     def start(self) -> bool:
         if not self._enabled:
-            print(f"Running {self._did} ({self._tier})...", flush=True)
             return False
         self._render(idle_s=0.0)
         return True
