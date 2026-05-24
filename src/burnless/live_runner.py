@@ -330,6 +330,12 @@ def run_with_live_panel(
         try:
             from . import warm_session as _ws
             warm_args = _ws.fork_args(burnless_root)
+            if not warm_args:
+                try:
+                    _ws.init(burnless_root)
+                    warm_args = _ws.fork_args(burnless_root)
+                except Exception:
+                    warm_args = []
             if warm_args:
                 command = list(command) + warm_args
                 fork_uuid = warm_args[1] if len(warm_args) > 1 else None
