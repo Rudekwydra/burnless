@@ -456,7 +456,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     state_mod.save(p["state"], initial_state)
     metrics_mod.save(p["metrics"], metrics_mod._fresh())
     lifetime_mod.bump(project_root=cwd)
-    if not getattr(args, "no_claude_md", False):
+    if getattr(args, "with_claude_md", False) and not getattr(args, "no_claude_md", False):
         try:
             from . import __version__ as _v
         except ImportError:
@@ -466,6 +466,8 @@ def cmd_init(args: argparse.Namespace) -> int:
             claude_md, version=_v, project_name=initial_state["project"]
         )
         print(f"CLAUDE.md: {action} burnless block at {claude_md}")
+    else:
+        print("CLAUDE.md: skipped (default — use --with-claude-md to opt in)")
     p["maestro"].write_text(
         f"# Maestro — {initial_state['project']}\n\n_No plan yet. Run `burnless plan \"...\"`._\n",
         encoding="utf-8",
@@ -2489,8 +2491,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("init", help="initialize .burnless/ in current directory")
     sp.add_argument("--project", help="project name (default: current dir name)")
     sp.add_argument("--force", action="store_true")
+    sp.add_argument("--with-claude-md", action="store_true", dest="with_claude_md",
+                    help="write a burnless block to CLAUDE.md in this directory (opt-in; default skips to avoid worker contamination)")
     sp.add_argument("--no-claude-md", action="store_true", dest="no_claude_md",
-                    help="skip writing the burnless block to CLAUDE.md")
+                    help="(deprecated, default now) explicitly skip CLAUDE.md creation")
     sp.set_defaults(func=cmd_init)
 
     sp = sub.add_parser("rtk", help="toggle the RTK wrapper (token-saving CLI proxy) for tier commands")
