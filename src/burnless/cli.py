@@ -30,7 +30,7 @@ from .estimator import estimate_tokens
 from .codec.decoder import normalize_worker_envelope
 from .cmd_wrapper import run_and_capsule
 from . import pipeline_state as pipeline_state_mod
-from ._pro.audit import (
+from .report_kind import (
     infer_kind_hint as _infer_kind_hint,
     normalize_report_kind as _normalize_report_kind,
 )
