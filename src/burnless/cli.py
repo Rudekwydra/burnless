@@ -779,6 +779,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 tool_hard_max_s=int((cfg.get("display") or {}).get("tool_hard_max_s", 1800)),
                 cwd=root.parent,
                 tier_agents=cfg.get("agents", {}),
+                liveness_mode=str((cfg.get("display") or {}).get("liveness_mode", "time")),
             )
             result = result_obj.to_dict()
         except Exception as e:
@@ -817,6 +818,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 tool_hard_max_s=int((cfg.get("display") or {}).get("tool_hard_max_s", 1800)),
                 cwd=root.parent,
                 append_log=True,
+                liveness_mode=str((cfg.get("display") or {}).get("liveness_mode", "time")),
             ).to_dict()
         else:
             fallback_result = agents_mod.run(fallback_cfg, prompt, timeout=args.timeout, cwd=root.parent, tier=tier)

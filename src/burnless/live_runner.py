@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from .agents import AgentError, resolve_command
+from . import liveness as liveness_mod
 
 _OVERFLOW_PATTERNS = (
     re.compile(r"prompt is too long", re.IGNORECASE),
@@ -247,23 +248,30 @@ def _emit_suspect(
     delegation_id: str | None,
     tool_elapsed_s: int,
     tool_cmd_preview: str,
+    io_idle_s: int | None = None,
 ) -> None:
     """Emit a suspect alert: stderr for real-time visibility, JSONL inbox for forensic / future Maestro daemon."""
     did = delegation_id or "d???"
     cmd_short = tool_cmd_preview[:80] + ("…" if len(tool_cmd_preview) > 80 else "")
-    msg = f"[suspect] {did}: tool running {tool_elapsed_s}s, cmd: {cmd_short}"
+    if io_idle_s is not None:
+        msg = f"[suspect] {did}: tool running {tool_elapsed_s}s (io idle {io_idle_s}s), cmd: {cmd_short}"
+    else:
+        msg = f"[suspect] {did}: tool running {tool_elapsed_s}s, cmd: {cmd_short}"
     print(msg, file=sys.stderr, flush=True)
     if burnless_root:
         inbox = Path(burnless_root) / "suspect.jsonl"
         try:
             inbox.parent.mkdir(parents=True, exist_ok=True)
             with inbox.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({
+                row = {
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "did": did,
                     "tool_elapsed_s": tool_elapsed_s,
                     "tool_cmd_preview": cmd_short,
-                }, ensure_ascii=False) + "\n")
+                }
+                if io_idle_s is not None:
+                    row["io_idle_s"] = io_idle_s
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
         except OSError:
             pass
 
@@ -315,6 +323,7 @@ def run_with_live_panel(
     phase_sink: Callable[[str], None] | None = None,
     append_log: bool = False,
     append_label: str | None = None,
+    liveness_mode: str = "time",
 ) -> RunResult:
     """Run an agent while saving output and showing mode-specific progress."""
     command = resolve_command(agent_cfg)
@@ -452,6 +461,8 @@ def run_with_live_panel(
         tool_start_mono = 0.0
         tool_cmd_preview = ""
         last_suspect_alert_mono = 0.0
+        io_baseline: dict = {}
+        last_io_change_mono = 0.0
         _last_sink_phase = "thinking"
         renderer = _WatchRenderer(
             enabled=mode in {"watch", "brief"},
@@ -504,6 +515,9 @@ def run_with_live_panel(
                             tool_start_mono = now
                             tool_cmd_preview = display_line[7:107]
                             last_suspect_alert_mono = now
+                            if liveness_mode == "psutil":
+                                io_baseline = liveness_mod.capture_io_baseline(proc.pid)
+                                last_io_change_mono = now
                         elif in_tool_execution and (
                             display_line.startswith("[tool_result]")
                             or display_line.startswith("[done]")
@@ -543,14 +557,22 @@ def run_with_live_panel(
                 now_mono = time.monotonic()
                 if in_tool_execution:
                     tool_elapsed = now_mono - tool_start_mono
+                    if liveness_mode == "psutil" and io_baseline:
+                        changed, io_baseline = liveness_mod.io_changed_since(proc.pid, io_baseline)
+                        if changed:
+                            last_io_change_mono = now_mono
                     if (tool_elapsed > tool_suspect_interval_s
                             and now_mono - last_suspect_alert_mono >= tool_suspect_interval_s):
                         last_suspect_alert_mono = now_mono
+                        io_idle = None
+                        if liveness_mode == "psutil":
+                            io_idle = int(now_mono - last_io_change_mono)
                         _emit_suspect(
                             burnless_root=burnless_root,
                             delegation_id=delegation_id,
                             tool_elapsed_s=int(tool_elapsed),
                             tool_cmd_preview=tool_cmd_preview,
+                            io_idle_s=io_idle,
                         )
                     if tool_elapsed > tool_hard_max_s:
                         stale_worker = True
@@ -799,6 +821,7 @@ def run_with_overflow_retries(
     tier_agents: dict[str, dict] | None = None,
     overflow_history_turns: int = _OVERFLOW_HISTORY_TURNS,
     max_attempts: int = _OVERFLOW_MAX_ATTEMPTS,
+    liveness_mode: str = "time",
 ) -> RunResult:
     current_tier = tier
     current_cfg = agent_cfg
@@ -829,6 +852,7 @@ def run_with_overflow_retries(
             phase_sink=phase_sink,
             append_log=attempt_idx > 0,
             append_label=log_label,
+            liveness_mode=liveness_mode,
         )
         last_result = result
         first_started_at = first_started_at or result.started_at
