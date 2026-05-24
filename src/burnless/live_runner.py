@@ -50,6 +50,15 @@ def _tier_session_path(burnless_root: Path | None, tier: str | None) -> Path | N
     return burnless_root / "sessions" / f"{tier}.json"
 
 
+def _tier_session_jsonl_exists(session_uuid: str) -> bool:
+    """Glob ~/.claude/projects/*/<uuid>.jsonl to confirm session exists."""
+    projects_root = Path.home() / ".claude" / "projects"
+    if not projects_root.exists():
+        return False
+    matches = list(projects_root.glob(f"*/{session_uuid}.jsonl"))
+    return len(matches) > 0
+
+
 def _load_tier_session(burnless_root: Path | None, tier: str | None) -> str | None:
     p = _tier_session_path(burnless_root, tier)
     if p is None or not p.exists():
@@ -61,6 +70,15 @@ def _load_tier_session(burnless_root: Path | None, tier: str | None) -> str | No
     sid = data.get("session_id")
     ts = data.get("ts", 0)
     if not sid or (time.time() - float(ts)) > _SESSION_MAX_AGE_S:
+        return None
+    # Verify session jsonl actually exists on disk — otherwise it's a ghost
+    # UUID that claude-code will fail to resume.
+    if not _tier_session_jsonl_exists(sid):
+        # Self-heal: prune the stale cache file so we don't try again.
+        try:
+            p.unlink()
+        except OSError:
+            pass
         return None
     return sid
 
