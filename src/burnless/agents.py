@@ -691,8 +691,16 @@ def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | N
     ended = datetime.now(timezone.utc)
     if cwd is not None:
         try:
-            from . import warm_session as _ws
-            _ws.touch(Path(cwd) / ".burnless")
+            _prov = _detect_provider_from_parts(list(parts))
+            _model = _extract_model_from_parts(list(parts))
+            if _model is None:
+                _model = "claude-sonnet-4-6" if _prov == "claude" else "gpt-5.2"
+            if _prov == "claude":
+                from . import warm_session as _ws
+                _ws.touch(Path(cwd) / ".burnless", _model)
+            elif _prov == "codex":
+                # warm_session_codex has no touch() (uses refresh-mtime semantics)
+                pass
         except Exception:
             pass
     return {
