@@ -16,6 +16,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cold-spawn is now treated as a regression — three fallback paths in
   `agents.py` and one in `live_runner.py` now emit explicit `[burnless] WARN:
   ... will spawn COLD` on stderr instead of degrading quietly.
+- **Per-(provider, model) warm pool.** Each `(provider, model)` pair keeps
+  its own warm session at `~/.burnless/warm/<provider>/<model>.json`.
+  Opening a haiku worker after a sonnet worker no longer prunes the
+  sonnet cache; they coexist. Drift-as-prune logic is gone end-to-end
+  — different models simply live in different files. Auto-init on
+  first dispatch covers cold-start; the daemon-based keepalive is
+  available via `burnless warm daemon start` for batch-heavy use cases
+  but is NOT enabled by default (a per-day cold init costs ~$0.022
+  and a refresh ping costs ~$0.0014, so the daemon is only worthwhile
+  when daily cold-starts ≥ 1; for typical interactive use the
+  on-demand auto-init resolves the prewarm problem more cleanly).
 - **Maestro stable-prefix cache complete.** The maestro layer was already
   caching its `system` array (glossary 1h, role 1h, recent_capsules 5m); the
   `messages` history was not. With this release the last block of the last
@@ -87,6 +98,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Capsule auto-trail for runs.** Every worker writes a capsule so a
   retrospective `burnless capsule dXXX` always has a record, even after a
   partial or errored run.
+- **`list_warm_files()`** helper in `warm_session.py` and
+  `warm_session_codex.py` enumerates every `~/.burnless/warm/<provider>/*.json`
+  for daemon refresh loops and statusline rendering.
+- **`_extract_model_from_parts` + `_detect_provider_from_parts`** in
+  `agents.py` parse the worker command line to identify which warm pool
+  to use. Unknown providers (gemini, ollama, openrouter) are silently
+  skipped — they have no warm-fork analogue at the upstream CLI level
+  and that is structural, not a bug.
 
 ### Changed
 
@@ -106,6 +125,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   against observed daemon scheduling jitter.
 - **`burnless run` silent by default** (see Highlights). Old behavior
   available via `--verbose` or TTY-attached stdout.
+- **Warm pool state schema is now per-(provider, model)**, not per-provider.
+  Old `~/.burnless/warm_session.json` and `~/.burnless/warm_session_codex.json`
+  paths are no longer read; users with a v0.7.x state should delete those
+  files (or just ignore them — the next dispatch will create the new
+  per-model files automatically and the old ones will sit unused).
+- **Auto-init is the prewarm path.** Every `burnless do` checks the
+  per-model warm file and calls `init()` if missing or expired. No daemon
+  required for the basic "never spawn cold" guarantee.
 
 ### Fixed
 
@@ -145,6 +172,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Vestigial code paths that caused observable runtime bugs.
 - **Prompt compression in the delegation path.** See Changed; compression
   hurt more than it helped for specs with structural prohibitions.
+- **Prune-by-drift logic.** With per-model warm files, the "model drift"
+  condition cannot arise — different models live in different paths.
+  `cache_validity` and `prune_ghost` / `prune_stale` no longer accept
+  an `expected_model` argument.
 
 ### Documentation
 
