@@ -436,8 +436,19 @@ def run_with_live_panel(
         worker_cwd = str(cwd) if cwd else None
         if fork_uuid:
             try:
-                from . import warm_session as _ws
-                iso = _ws.worker_cwd(burnless_root)
+                from .agents import _detect_provider_from_parts, _extract_model_from_parts
+                _prov = _detect_provider_from_parts(list(command))
+                _model = _extract_model_from_parts(list(command))
+                if _model is None:
+                    _model = "claude-sonnet-4-6" if _prov == "claude" else "gpt-5.2"
+                if _prov == "claude":
+                    from . import warm_session as _ws
+                    iso = _ws.worker_cwd(burnless_root, _model)
+                elif _prov == "codex":
+                    from . import warm_session_codex as _ws
+                    iso = _ws.worker_cwd(burnless_root, _model)
+                else:
+                    iso = None
                 if iso:
                     worker_cwd = iso
             except Exception:
