@@ -104,23 +104,33 @@ def _extract_codex_model(cfg: dict) -> str | None:
 
 
 def _maybe_refresh(burnless_root: Path, cfg: dict) -> None:
-    """Run one poll iteration: refresh both warm pools if needed."""
+    """Run one poll iteration: refresh ALL warm pools per (provider, model)
+    that are alive and due for refresh.
+    """
     # claude
     try:
-        if ws_claude.is_alive(burnless_root) and ws_claude.needs_refresh(burnless_root):
-            model = _extract_claude_model(cfg) or "claude-sonnet-4-6"
-            ws_claude.refresh(burnless_root, model=model)
-            _log(burnless_root, f"claude refresh OK (model={model})")
+        for path in ws_claude.list_warm_files():
+            model = path.stem
+            try:
+                if ws_claude.is_alive(burnless_root, model) and ws_claude.needs_refresh(burnless_root, model):
+                    ws_claude.refresh(burnless_root, model=model)
+                    _log(burnless_root, f"claude refresh OK (model={model})")
+            except Exception as e:
+                _log(burnless_root, f"claude/{model} refresh ERR: {e}")
     except Exception as e:
-        _log(burnless_root, f"claude refresh ERR: {e}")
+        _log(burnless_root, f"claude refresh loop ERR: {e}")
     # codex
     try:
-        if ws_codex.is_alive(burnless_root) and ws_codex.needs_refresh(burnless_root):
-            model = _extract_codex_model(cfg) or "gpt-5.2"
-            ws_codex.refresh(burnless_root, model=model)
-            _log(burnless_root, f"codex refresh OK (model={model})")
+        for path in ws_codex.list_warm_files():
+            model = path.stem
+            try:
+                if ws_codex.is_alive(burnless_root, model) and ws_codex.needs_refresh(burnless_root, model):
+                    ws_codex.refresh(burnless_root, model=model)
+                    _log(burnless_root, f"codex refresh OK (model={model})")
+            except Exception as e:
+                _log(burnless_root, f"codex/{model} refresh ERR: {e}")
     except Exception as e:
-        _log(burnless_root, f"codex refresh ERR: {e}")
+        _log(burnless_root, f"codex refresh loop ERR: {e}")
 
 
 def run_loop(burnless_root: Path) -> int:
