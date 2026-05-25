@@ -333,12 +333,19 @@ def run_with_live_panel(
                 try:
                     _ws.init(burnless_root)
                     warm_args = _ws.fork_args(burnless_root)
-                except Exception:
+                except Exception as _e:
+                    print(f"[burnless] WARN: live_runner warm init failed ({_e}); worker COLD.",
+                          file=sys.stderr, flush=True)
                     warm_args = []
             if warm_args:
                 command = list(command) + warm_args
                 fork_uuid = warm_args[1] if len(warm_args) > 1 else None
-        except Exception:
+            else:
+                print("[burnless] WARN: no warm fork args available after init; worker spawning COLD.",
+                      file=sys.stderr, flush=True)
+        except Exception as _ws_e:
+            print(f"[burnless] WARN: warm_session unavailable ({_ws_e}); worker COLD.",
+                  file=sys.stderr, flush=True)
             warm_args = []
 
     # Bare-equivalent flags for OAuth/subscription workers — drops slash

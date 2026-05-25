@@ -6,6 +6,7 @@ import re
 import shlex
 import subprocess
 import shutil
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -569,22 +570,38 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
     """
     if cwd is None:
         return parts
+    # Warm pool is GLOBAL (~/.burnless/warm_session.json), so we don't require
+    # the project to have a local .burnless/ directory. We still pass a path
+    # for signature compatibility with _ws.fork_args/init (they ignore it).
     burnless_root = Path(cwd) / ".burnless"
-    if not burnless_root.is_dir():
-        return parts
     try:
         from . import warm_session as _ws
         extra = _ws.fork_args(burnless_root)
         if not extra:
-            # No warm or it's expired — auto-init and try again.
+            # No warm or expired — auto-init the global pool.
             try:
                 _ws.init(burnless_root)
                 extra = _ws.fork_args(burnless_root)
-            except Exception:
+            except Exception as _init_e:
+                print(
+                    f"[burnless] WARN: warm pool auto-init failed ({_init_e}); "
+                    f"worker will spawn COLD — this violates the never-fresh rule.",
+                    file=sys.stderr, flush=True,
+                )
                 extra = []
-    except Exception:
+    except Exception as _ws_e:
+        print(
+            f"[burnless] WARN: warm_session module unavailable ({_ws_e}); "
+            f"worker will spawn COLD.",
+            file=sys.stderr, flush=True,
+        )
         return parts
     if not extra:
+        print(
+            f"[burnless] WARN: no warm fork args available after init; "
+            f"worker will spawn COLD.",
+            file=sys.stderr, flush=True,
+        )
         return parts
     # Strip --append-system-prompt <text> pair to keep prefix byte-stable
     # with the warm session.
