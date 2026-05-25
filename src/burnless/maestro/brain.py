@@ -29,7 +29,12 @@ def run_brain_turn(
         adapter = current_anthropic_adapter(model)
     client = client or anthropic.Anthropic()
     system = build_system_blocks(project_root=project_root, history_messages=history_messages)
-    messages = list(history_messages)
+    # Copy history defensively (mutating the caller's list would break
+    # cross-turn invariants) and copy each message dict shallowly so the
+    # cache_control mutation in _apply_history_cache_breakpoint does not
+    # leak into the caller's session state.
+    messages = [dict(m) for m in history_messages]
+    _apply_history_cache_breakpoint(messages, ttl="5m")
     messages.append({"role": "user", "content": user_capsule})
 
     text_parts: list[str] = []
@@ -115,6 +120,42 @@ def _block(text: str, *, ttl: str | None = None) -> dict[str, Any]:
     if ttl:
         block["cache_control"] = {"type": "ephemeral", "ttl": ttl}
     return block
+
+
+def _apply_history_cache_breakpoint(
+    messages: list[dict[str, Any]], *, ttl: str = "5m"
+) -> list[dict[str, Any]]:
+    """Mark the tail of accumulated history as a cache breakpoint.
+
+    Anthropic allows up to 4 cache_control breakpoints per request. The
+    maestro's system array already uses 3 (glossary, role, recent_capsules).
+    We spend the 4th on the LAST block of the LAST history message — so
+    every turn after this point reads the history from cache (10% input
+    price) instead of re-billing it at full rate.
+
+    The current turn's user_capsule (appended AFTER this call) is NOT
+    cached: it's volatile by definition.
+
+    `messages` is mutated in place AND returned for clarity.
+    """
+    if not messages:
+        return messages
+    last = messages[-1]
+    content = last.get("content")
+    # Normalize string content into a single text block so we can attach
+    # cache_control. Anthropic accepts either form for input messages.
+    if isinstance(content, str):
+        last["content"] = [{"type": "text", "text": content}]
+    elif not isinstance(content, list) or not content:
+        # Unknown shape — leave it alone rather than corrupt the request.
+        return messages
+    blocks = last["content"]
+    # Find the last text-ish block to anchor the breakpoint.
+    for block in reversed(blocks):
+        if isinstance(block, dict) and block.get("type") in ("text", "tool_result"):
+            block["cache_control"] = {"type": "ephemeral", "ttl": ttl}
+            break
+    return messages
 
 
 def _recent_capsules_text(history_messages: list[dict[str, Any]]) -> str:
