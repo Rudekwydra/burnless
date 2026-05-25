@@ -313,7 +313,8 @@ def call_pipeline(prompt: str, session_state: dict, cwd: Path, maestro_model: st
 
 def run_scenario(scenario_path: Path, mode: str, ts_dir: Path,
                  baseline_model: str = "claude-sonnet-4-6",
-                 maestro_model: str = "claude-sonnet-4-6") -> dict:
+                 maestro_model: str = "claude-sonnet-4-6",
+                 pause_between_turns: float = 0.0) -> dict:
     scenario = json.loads(scenario_path.read_text())
     cwd = REPO_ROOT
     label_map = {"baseline": baseline_model, "light": f"light({maestro_model})", "pipeline": f"pipeline({maestro_model})"}
@@ -322,6 +323,7 @@ def run_scenario(scenario_path: Path, mode: str, ts_dir: Path,
     session_id = None
     pipeline_session = {"maestro_session_id": None}
     tmp_dir = os.environ.get("BENCHMARK_TMP_DIR", f"/tmp/burnless_bench_{mode}_{int(time.time())}")
+    prev_turn_end_ts = None
     for i, turn in enumerate(scenario["turns"]):
         user_msg = turn["user"].replace("{TMP_DIR}", tmp_dir)
         print(f"  turn {i+1}/{len(scenario['turns'])}: {user_msg[:60]}...", file=sys.stderr)
@@ -335,6 +337,44 @@ def run_scenario(scenario_path: Path, mode: str, ts_dir: Path,
         else:
             m = call_pipeline(user_msg, pipeline_session, cwd, maestro_model=maestro_model)
             results["turns"].append({"turn": i+1, "user_msg": user_msg, "metrics": m})
+
+        # Compute elapsed since previous turn end (0 for turn 1)
+        now = time.time()
+        dt_since_prev = (now - prev_turn_end_ts) if prev_turn_end_ts is not None else 0.0
+
+        # Pull cache stats (handles baseline / light / pipeline shapes)
+        brain_read  = (m.get('cache_read_input_tokens')
+                       or (m.get('maestro') or {}).get('cache_read_input_tokens') or 0)
+        brain_write = (m.get('cache_creation_input_tokens')
+                       or (m.get('maestro') or {}).get('cache_creation_input_tokens') or 0)
+        w = m.get('workers') or {}
+        wcount = int(w.get('worker_count') or 0)
+        wread  = int(w.get('total_cache_read_input_tokens') or 0)
+        wwrite = int(w.get('total_cache_creation_input_tokens') or 0)
+        w_hits = sum(1 for pw in (w.get('per_worker') or [])
+                     if int(pw.get('cache_read_input_tokens') or 0) > 1000)
+        usd  = float(m.get('usd') or m.get('total_usd') or 0.0)
+        wall = float(m.get('wall_s') or m.get('wall_s_total') or 0.0)
+
+        warn = ' WARN >5min' if dt_since_prev > 300 else ''
+        print(
+            f'  turn {i+1}: brain[r={brain_read/1e3:.1f}k w={brain_write/1e3:.1f}k] '
+            f'workers[n={wcount} r={wread/1e3:.1f}k w={wwrite/1e3:.1f}k '
+            f'warm_hit={w_hits}/{wcount}] '
+            f'usd={usd:.4f} wall={wall:.1f}s elapsed_prev={dt_since_prev:.1f}s{warn}',
+            file=sys.stderr,
+        )
+
+        # Tag the turn dict with elapsed_since_prev_s
+        results['turns'][-1]['elapsed_since_prev_s'] = dt_since_prev
+
+        prev_turn_end_ts = time.time()
+
+        # Pause if requested and not last turn
+        if pause_between_turns > 0 and (i + 1) < len(scenario['turns']):
+            print(f'  pausing {pause_between_turns:.0f}s...', file=sys.stderr)
+            time.sleep(pause_between_turns)
+
     # totals
     if mode == "baseline":
         results["totals"] = {
@@ -365,6 +405,8 @@ def main():
     p.add_argument("--baseline-model", default="claude-sonnet-4-6")
     p.add_argument("--maestro-model", default="claude-sonnet-4-6")
     p.add_argument("--label", default=None, help="custom subdir suffix for results")
+    p.add_argument('--pause-between-turns', type=float, default=0.0,
+                   help='seconds to sleep between turns (for cache TTL tests)')
     args = p.parse_args()
 
     scenario_path = SCENARIOS_DIR / f"{args.scenario}.json"
@@ -379,7 +421,7 @@ def main():
 
     for mode in (["baseline", "light", "pipeline"] if args.mode == "all" else [args.mode]):
         print(f"=== {args.scenario} / {mode} / baseline={args.baseline_model} maestro={args.maestro_model} ===", file=sys.stderr)
-        run_scenario(scenario_path, mode, ts_dir, args.baseline_model, args.maestro_model)
+        run_scenario(scenario_path, mode, ts_dir, args.baseline_model, args.maestro_model, args.pause_between_turns)
 
 
 if __name__ == "__main__":
