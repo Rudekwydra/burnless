@@ -4,6 +4,157 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] — 2026-05-25
+
+### Highlights
+
+- **Warm session pool, now global and default.** Every worker forks a cached
+  prefix held in `~/.burnless/warm_session*.json` (one pool per `(user, model)`,
+  shared across every project and window). The boot warmer pays the cold
+  establishment once per install; every subsequent `burnless do` in any
+  project forks the warm prefix, paying only the new payload. Worker silent
+  cold-spawn is now treated as a regression — three fallback paths in
+  `agents.py` and one in `live_runner.py` now emit explicit `[burnless] WARN:
+  ... will spawn COLD` on stderr instead of degrading quietly.
+- **Maestro stable-prefix cache complete.** The maestro layer was already
+  caching its `system` array (glossary 1h, role 1h, recent_capsules 5m); the
+  `messages` history was not. With this release the last block of the last
+  history message now carries the 4th (and final) Anthropic cache_control
+  breakpoint, so every turn after the first reads the accumulated history
+  from cache (10% input price) instead of re-billing it at full rate.
+- **`burnless run` is silent by default.** A successful run emits one line
+  (`OK:dXXX`) on stdout; failures emit one line and a 180-char reason.
+  Pass `--verbose` (or run with a TTY attached) to restore the full panel
+  output. The previous behavior would dump tens of thousands of tokens of
+  worker stream-JSON into whatever shell or harness invoked it, poisoning
+  any main-session that read the result.
+- **Filesystem-first audit contract.** The strict JSON envelope requirement
+  was dropped in favor of inferring status from exit_code + git diff. The
+  audit module that lived inside `cli.py` was extracted, then killed from
+  the core entirely (see fase 4 below); auditing is now a property of the
+  filesystem state the worker leaves behind, not a contract clause the
+  worker must honor.
+
+### Added
+
+- **`warm_session.py` and `warm_session_codex.py`.** Per-`(user, model)` global
+  warm pool. Each holds a UUID + ISO timestamps + neutral W0 brief at
+  `~/.burnless/warm_session*.json`. Iso-cwd workers run in
+  `~/.burnless/iso-cwd/<warm_uuid>/` to prevent CLAUDE.md leaks from any
+  project subtree. Heartbeat refreshes when `last_used > 50 minutes` (1h
+  ephemeral_1h TTL minus 10-min headroom).
+- **`warm_daemon.py`.** Background daemon that polls warm state and refreshes
+  before expiry. CLI: `burnless warm daemon {start,stop,status,run-fg}`.
+  `burnless warm refresh [--codex]` for ad-hoc refresh.
+- **Maestro `_apply_history_cache_breakpoint` helper.** Marks the tail of
+  accumulated history as a cache breakpoint; string content normalized to
+  a single text block on the fly so cache_control can attach.
+- **`session_token_audit.py` benchmark.** Measures real main-session token
+  economics (cache write vs read vs miss) under different orchestration
+  modes — baseline solo, light maestro, full pipeline.
+- **T5_app_build, T5_50_extended, T7_realistic_human benchmark scenarios.**
+  T5_app_build analysis ships with the release; longer-form scenarios staged
+  for future longitudinal runs.
+- **`runner.py:collect_worker_usage(burnless_root, since_ts)` helper.** Scans
+  `<burnless_root>/logs/d*.log` for files modified after a snapshot
+  timestamp and aggregates worker usage per model. `call_light` and
+  `call_pipeline` now include worker tokens in their `total_usd /
+  total_input_tokens / total_output_tokens` — they previously only counted
+  the maestro layer, silently subcounting every multi-worker run.
+- **`burnless run --verbose` flag.** Opt-in restoration of the pre-0.8.0
+  multi-line panel output. The flag is also implied when stdout is a TTY.
+- **Liveness v0.8.1 MVP.** Structured event protocol so background observers
+  (Monitor, dashboards) can react to worker state changes without parsing
+  free-form log lines.
+- **Debugless v0.1 MVP.** GoPro-style trace via local ollama — captures the
+  full request/response stream into a replayable artifact, no API spend.
+- **Bash whitelist + rotating block message in maestro.** Configurable
+  whitelist of commands the maestro is allowed to issue; out-of-whitelist
+  attempts trigger a rotating helpful-block-message instead of opaque
+  rejection.
+- **RTK integration.** `burnless rtk {enable,disable,status}` and a
+  pinned-version loader with PATH-first opt-in resolution. Default tracks
+  the latest RTK release with a 24h cached upstream lookup.
+- **Subprocess IO liveness probe.** Opt-in `psutil`-based check that
+  distinguishes a stuck-but-alive worker from a stalled one, so the
+  tool-aware stale timeout fires only on real stalls.
+- **Tool-aware stale timeout + suspect alerts.** Absolute timeout knows
+  which workers are mid tool-call and refuses to kill them prematurely;
+  surfaces suspect-alive states for inspection.
+- **Warm cache drift detection + opt-in auto_reinit.** Detects when the
+  warm prefix has drifted from the configured brief and (opt-in) rebuilds
+  it in place.
+- **Capsule auto-trail for runs.** Every worker writes a capsule so a
+  retrospective `burnless capsule dXXX` always has a record, even after a
+  partial or errored run.
+
+### Changed
+
+- **`burnless init` default inverted.** `CLAUDE.md` generation is now
+  opt-in (`--with-claudemd`) instead of opt-out. Most users were deleting
+  it immediately; the default now matches actual behavior.
+- **Maestro stops compressing the delegation prompt.** v0.7.x compressed
+  the spec before sending it to the worker; this stripped structural
+  cues the worker relied on (PROIBIÇÕES DURAS, DoD blocks). The
+  delegation prompt is now sent verbatim.
+- **Worker contract: audit/status taxonomy removed from docs.** The worker
+  no longer has to author an envelope; the audit layer infers everything
+  from filesystem state and exit code.
+- **Warm codex heartbeat raised 70s → 300s.** Reduces refresh chatter
+  without affecting cache hit-rate.
+- **Heartbeat poll 60s → 30s; idle threshold 50 → 59s.** Empirically tuned
+  against observed daemon scheduling jitter.
+- **`burnless run` silent by default** (see Highlights). Old behavior
+  available via `--verbose` or TTY-attached stdout.
+
+### Fixed
+
+- **`live_runner.py` auto-init warm session on the real dispatch path.**
+  Earlier auto-init only ran on a fallback path that most invocations
+  skipped, so the first delegation in a project still hit a cold worker.
+- **Warm-session ghost detection + auto-prune.** Stale UUIDs from killed
+  daemons no longer block fresh inits.
+- **Tier_session ghost path eliminated.** Same class of bug as the
+  warm-session ghost; the `_load_tier_session` / `_save_tier_session`
+  fallback was vestigial and produced infinite loops on certain restart
+  paths. Killed end-to-end.
+- **`--append-system-prompt` stripped on fork.** This flag invalidated the
+  warm prefix; stripping it keeps the cache hot across forks.
+- **Concurrent-writer tolerance in metrics.** Two parallel `burnless do`
+  calls writing to the metrics file no longer corrupt it.
+- **Worker envelope parse tolerance.** Bool, dict, and string variants of
+  `validated`/`evidence` no longer crash the parser.
+- **Delegation prose schema in English.** Some delegations were rendered
+  in PT-BR via the prose-schema path while others in EN; the worker has
+  better tool-use compliance with EN-only schemas, so all delegations
+  are now EN.
+- **JSONL stream decoder for `extract_result_json`.** The decoder now
+  correctly walks a streaming JSONL response instead of trying to
+  `json.loads` the whole thing.
+- **`audit.enabled` guard restored.** Disabling audit in config no longer
+  partially executes the audit path.
+
+### Removed
+
+- **`audit.py` module from core.** Auditing is now filesystem-first; the
+  monolithic audit module was extracted into `_pro/audit.py` (proprietary
+  tier, gitignored) and the core no longer imports it.
+- **Strict JSON envelope requirement.** Workers no longer have to author
+  a structured envelope; status is inferred from exit_code + git diff.
+- **`_load_tier_session` fallback + ghost call to `_save_tier_session`.**
+  Vestigial code paths that caused observable runtime bugs.
+- **Prompt compression in the delegation path.** See Changed; compression
+  hurt more than it helped for specs with structural prohibitions.
+
+### Documentation
+
+- README and llms.txt refreshed to describe the v0.8 default (warm-fork
+  + silent-default + filesystem-first audit) instead of the v0.7
+  envelope-driven flow.
+- Worker contract docs rewritten as filesystem-first.
+- "Pink Elephant" framing dropped from prose — describe what is shipped,
+  not what is missing.
+
 ## [0.7.3] — 2026-05-08
 
 ### Documentation — major recalibration
