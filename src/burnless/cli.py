@@ -2101,9 +2101,10 @@ def cmd_warm_init(args: argparse.Namespace) -> int:
             print(f"  claude warm init FAILED: {e}", file=sys.stderr)
     if provider in ("codex", "both"):
         from . import warm_session_codex as ws_codex
-        print(f"burnless warm init [codex]: seeding warm session for {bl_root.parent}...")
+        codex_model = getattr(args, "model", None) or "gpt-5.2"
+        print(f"burnless warm init [codex]: seeding warm session for {bl_root.parent} (model={codex_model})...")
         try:
-            state = ws_codex.init(bl_root)
+            state = ws_codex.init(bl_root, model=codex_model)
             results["codex"] = state
             cached = state.get("init_usage", {}).get("cached", 0)
             print(f"  codex warm initialized: uuid={state['uuid'][:8]}…  cached_input={cached}")
@@ -2154,30 +2155,35 @@ def cmd_warm_refresh(args: argparse.Namespace) -> int:
     provider = getattr(args, "provider", "both")
     if provider in ("claude", "both"):
         from . import warm_session as ws
-        model = getattr(args, "model", None) or "claude-sonnet-4-6"
-        if ws.needs_refresh(bl_root):
-            try:
-                state = ws.refresh(bl_root, model=model)
-                ru = state.get("last_refresh_usage") or {}
-                print(f"warm [claude] refreshed at {state.get('last_used')}")
-                print(f"  cache_read:  {ru.get('cache_read', 0):,}")
-                print(f"  cache_write: {ru.get('cache_write', 0):,}")
-            except Exception as e:
-                print(f"burnless warm refresh [claude]: failed — {e}", file=sys.stderr)
-        else:
-            print("warm [claude]: no refresh needed (fresh enough or not initialized)")
+        # Refresh every warm session under claude/
+        for path in ws.list_warm_files():
+            model = path.stem
+            if ws.needs_refresh(bl_root, model):
+                try:
+                    state = ws.refresh(bl_root, model=model)
+                    ru = state.get("last_refresh_usage") or {}
+                    print(f"warm [claude/{model}] refreshed at {state.get('last_used')}")
+                    print(f"  cache_read:  {ru.get('cache_read', 0):,}")
+                    print(f"  cache_write: {ru.get('cache_write', 0):,}")
+                except Exception as e:
+                    print(f"burnless warm refresh [claude/{model}]: failed — {e}", file=sys.stderr)
+            else:
+                print(f"warm [claude/{model}]: no refresh needed")
     if provider in ("codex", "both"):
         from . import warm_session_codex as ws_codex
-        if ws_codex.needs_refresh(bl_root):
-            try:
-                state = ws_codex.refresh(bl_root)
-                ru = state.get("last_refresh_usage") or {}
-                print(f"warm [codex] refreshed at {state.get('last_used')}")
-                print(f"  cached: {ru.get('cached', 0):,}")
-            except Exception as e:
-                print(f"burnless warm refresh [codex]: failed — {e}", file=sys.stderr)
-        else:
-            print("warm [codex]: no refresh needed (fresh enough or not initialized)")
+        # Refresh every warm session under codex/
+        for path in ws_codex.list_warm_files():
+            model = path.stem
+            if ws_codex.needs_refresh(bl_root, model):
+                try:
+                    state = ws_codex.refresh(bl_root, model=model)
+                    ru = state.get("last_refresh_usage") or {}
+                    print(f"warm [codex/{model}] refreshed at {state.get('last_used')}")
+                    print(f"  cached: {ru.get('cached', 0):,}")
+                except Exception as e:
+                    print(f"burnless warm refresh [codex/{model}]: failed — {e}", file=sys.stderr)
+            else:
+                print(f"warm [codex/{model}]: no refresh needed")
     return 0
 
 

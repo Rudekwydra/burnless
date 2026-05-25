@@ -326,27 +326,44 @@ def run_with_live_panel(
         pass
     fork_uuid: str | None = None
     if "--resume" not in command:
-        try:
-            from . import warm_session as _ws
-            warm_args = _ws.fork_args(burnless_root)
-            if not warm_args:
-                try:
-                    _ws.init(burnless_root)
-                    warm_args = _ws.fork_args(burnless_root)
-                except Exception as _e:
-                    print(f"[burnless] WARN: live_runner warm init failed ({_e}); worker COLD.",
-                          file=sys.stderr, flush=True)
-                    warm_args = []
-            if warm_args:
-                command = list(command) + warm_args
-                fork_uuid = warm_args[1] if len(warm_args) > 1 else None
-            else:
-                print("[burnless] WARN: no warm fork args available after init; worker spawning COLD.",
-                      file=sys.stderr, flush=True)
-        except Exception as _ws_e:
-            print(f"[burnless] WARN: warm_session unavailable ({_ws_e}); worker COLD.",
-                  file=sys.stderr, flush=True)
-            warm_args = []
+        from .agents import _detect_provider_from_parts, _extract_model_from_parts
+        provider = _detect_provider_from_parts(list(command))
+        if provider is not None:
+            model = _extract_model_from_parts(list(command))
+            if model is None:
+                model = "claude-sonnet-4-6" if provider == "claude" else "gpt-5.2"
+            try:
+                if provider == "claude":
+                    from . import warm_session as _ws
+                else:
+                    from . import warm_session_codex as _ws
+                warm_args = _ws.fork_args(burnless_root, model)
+                if not warm_args:
+                    try:
+                        _ws.init(burnless_root, model=model)
+                        warm_args = _ws.fork_args(burnless_root, model)
+                    except Exception as _e:
+                        print(
+                            f"[burnless] WARN: live_runner warm init failed for "
+                            f"{provider}/{model} ({_e}); worker COLD.",
+                            file=sys.stderr, flush=True,
+                        )
+                        warm_args = []
+                if warm_args:
+                    command = list(command) + warm_args
+                    fork_uuid = warm_args[1] if len(warm_args) > 1 else None
+                else:
+                    print(
+                        f"[burnless] WARN: no warm fork args available for "
+                        f"{provider}/{model}; worker spawning COLD.",
+                        file=sys.stderr, flush=True,
+                    )
+            except Exception as _e:
+                print(
+                    f"[burnless] WARN: live_runner warm module unavailable ({_e}); "
+                    f"worker COLD.",
+                    file=sys.stderr, flush=True,
+                )
 
     # Bare-equivalent flags for OAuth/subscription workers — drops slash
     # commands, MCP servers, per-worker session persistence, the user-level

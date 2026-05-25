@@ -551,41 +551,72 @@ def is_available(agent_cfg: dict) -> bool:
     return shutil.which(parts[0]) is not None
 
 
+def _extract_model_from_parts(parts: list[str]) -> str | None:
+    """Look for `--model X` or `-m X` in CLI args (claude/codex pattern).
+
+    Returns the model identifier or None if not found.
+    """
+    for i, tok in enumerate(parts):
+        if tok in ("--model", "-m") and i + 1 < len(parts):
+            return parts[i + 1]
+    return None
+
+
+def _detect_provider_from_parts(parts: list[str]) -> str | None:
+    """Inspect parts[0] (or the first non-flag token) to identify provider.
+
+    Returns 'claude' for claude CLI invocations, 'codex' for codex CLI,
+    and None for anything else (gemini, ollama, openrouter — structurally
+    no warm-fork support).
+    """
+    if not parts:
+        return None
+    bin_name = Path(parts[0]).name.lower()
+    # rtk wrapper case: rtk <real_bin> ...
+    if bin_name == "rtk" and len(parts) > 1:
+        bin_name = Path(parts[1]).name.lower()
+    if "claude" in bin_name:
+        return "claude"
+    if "codex" in bin_name:
+        return "codex"
+    return None
+
+
 def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
-    """If a warm session is active for this project, inject --resume <uuid>
-    --fork-session before --append-system-prompt so the worker inherits the
-    warm prefix cache. Returns the original parts unchanged if no warm exists.
+    """Inject --resume <warm_uuid> --fork-session into a worker command.
 
-    CRITICAL: Anthropic prompt cache requires byte-identical prefix between
-    the warm init request and the fork request. The worker's own
-    `--append-system-prompt <text>` would diverge from the warm brief and
-    invalidate the cache (cache_miss_reason: previous_message_not_found).
-    When warm is active, strip the worker's append-system-prompt so the
-    fork inherits the warm brief verbatim (which already carries the
-    BURNLESS_WORKER_MODE_v1 token + operational rules).
+    Detects (provider, model) from the command parts. If provider has warm
+    support (claude/codex), loads the per-model warm pool, auto-initializes
+    if missing/expired, and returns the modified parts. If provider has no
+    warm support (gemini, ollama, openrouter), returns parts unchanged
+    silently (this is structural, not a bug).
 
-    Auto-init: if no warm exists or it has expired (>1h since last use),
-    initialize a fresh one before forking. The system is the interceptor;
-    callers never have to remember to `burnless warm init`.
+    Per [[rule-worker-never-fresh-2026-05-24]] + per-model refactor.
     """
     if cwd is None:
         return parts
-    # Warm pool is GLOBAL (~/.burnless/warm_session.json), so we don't require
-    # the project to have a local .burnless/ directory. We still pass a path
-    # for signature compatibility with _ws.fork_args/init (they ignore it).
+    provider = _detect_provider_from_parts(parts)
+    if provider is None:
+        return parts  # structurally no warm support — silent skip
+    model = _extract_model_from_parts(parts)
+    if model is None:
+        # Default by provider
+        model = "claude-sonnet-4-6" if provider == "claude" else "gpt-5.2"
     burnless_root = Path(cwd) / ".burnless"
     try:
-        from . import warm_session as _ws
-        extra = _ws.fork_args(burnless_root)
+        if provider == "claude":
+            from . import warm_session as _ws
+        else:
+            from . import warm_session_codex as _ws
+        extra = _ws.fork_args(burnless_root, model)
         if not extra:
-            # No warm or expired — auto-init the global pool.
             try:
-                _ws.init(burnless_root)
-                extra = _ws.fork_args(burnless_root)
+                _ws.init(burnless_root, model=model)
+                extra = _ws.fork_args(burnless_root, model)
             except Exception as _init_e:
                 print(
-                    f"[burnless] WARN: warm pool auto-init failed ({_init_e}); "
-                    f"worker will spawn COLD — this violates the never-fresh rule.",
+                    f"[burnless] WARN: warm pool auto-init failed for "
+                    f"{provider}/{model} ({_init_e}); worker will spawn COLD.",
                     file=sys.stderr, flush=True,
                 )
                 extra = []
@@ -598,16 +629,16 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
         return parts
     if not extra:
         print(
-            f"[burnless] WARN: no warm fork args available after init; "
-            f"worker will spawn COLD.",
+            f"[burnless] WARN: no warm fork args available for {provider}/{model} "
+            f"after init; worker spawning COLD.",
             file=sys.stderr, flush=True,
         )
         return parts
     # Strip --append-system-prompt <text> pair to keep prefix byte-stable
-    # with the warm session.
+    # with the warm session (logic identical to pre-refactor).
     stripped: list[str] = []
     skip_next = False
-    for tok in parts[1:]:
+    for tok in parts:
         if skip_next:
             skip_next = False
             continue
@@ -615,17 +646,7 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
             skip_next = True
             continue
         stripped.append(tok)
-    # Bare-equivalent flags for OAuth/subscription users: drops slash commands,
-    # MCP servers, and per-worker session persistence. Keeps prefix byte-stable
-    # (these are CLI flags, not part of the cached system prompt). Idempotent —
-    # skip flags already present in the config-derived command.
-    bare_equiv = [
-        f for f in ("--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands")
-        if f not in stripped
-    ]
-    # Worker subprocess is `claude -p ...`; insert fork args right after the
-    # binary path. claude CLI accepts flags in any order.
-    return [parts[0]] + extra + bare_equiv + stripped
+    return stripped + list(extra)
 
 
 def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None) -> dict:
