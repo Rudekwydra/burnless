@@ -34,6 +34,7 @@ from .report_kind import (
     infer_kind_hint as _infer_kind_hint,
     normalize_report_kind as _normalize_report_kind,
 )
+from . import init_claude_code as _init_claude_code_mod
 
 from .delegation_parse import (
     parse_chain_from_delegation as _parse_chain_from_delegation,
@@ -436,6 +437,8 @@ def cmd_rtk(args: argparse.Namespace) -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
+    if getattr(args, "claude_code", False):
+        return _init_claude_code_mod.run(args)
     cwd = Path.cwd()
     root = paths_mod.root(cwd)
     p = paths_mod.paths_for(root)
@@ -2484,6 +2487,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="write a burnless block to CLAUDE.md in this directory (opt-in; default skips to avoid worker contamination)")
     sp.add_argument("--no-claude-md", action="store_true", dest="no_claude_md",
                     help="(deprecated, default now) explicitly skip CLAUDE.md creation")
+    sp.add_argument("--claude-code", action="store_true", dest="claude_code",
+                    help="install burnless agent/hook files into ~/.claude/ (opt-in)")
+    sp.add_argument("--dry-run", action="store_true", dest="dry_run",
+                    help="(with --claude-code) show what would be installed without writing files")
+    sp.add_argument("--uninstall", action="store_true", dest="uninstall",
+                    help="(with --claude-code) remove installed burnless files from ~/.claude/")
     sp.set_defaults(func=cmd_init)
 
     sp = sub.add_parser("rtk", help="toggle the RTK wrapper (token-saving CLI proxy) for tier commands")
