@@ -6,7 +6,7 @@ window. Boot warmer pays the cold once per user (~$0.03), every subsequent
 task in any project forks the warm prefix and pays only the new payload
 (~$0.003-0.006 per task instead of $0.030).
 
-State lives at ~/.burnless/warm_session.json (GLOBAL, not per-project):
+State lives at ~/.burnless/warm/claude/<model>.json (GLOBAL, not per-project):
     {
       "uuid": "<uuid4>",
       "created_at": "<iso8601>",
@@ -38,24 +38,35 @@ from pathlib import Path
 from typing import Any
 
 
-WARM_FILE_NAME = "warm_session.json"
+WARM_SUBDIR = "warm"
+PROVIDER = "claude"
 HEARTBEAT_INTERVAL_MIN = 59  # sliding TTL resets on each read, 1min margin with poll_interval=30s
 CACHE_TTL_MIN = 60
 
 
-def warm_file_path(burnless_root: Path) -> Path:
-    """Global pool: lives at ~/.burnless/warm_session.json regardless of project.
+def warm_file_path(burnless_root: Path, model: str) -> Path:
+    """Per-(provider, model) global pool location.
 
-    The `burnless_root` argument is kept for signature compatibility with
-    callers but IGNORED — there is exactly one warm pool per (user, model)
-    that is forked by every worker in every project. Boot warmer pays the
-    cold once per user install, every subsequent task forks the warm prefix.
+    Lives at ~/.burnless/warm/claude/<model>.json. The `burnless_root`
+    argument is kept for signature compatibility with callers but IGNORED —
+    there is exactly one warm pool per (user, provider, model) that is
+    forked by every worker in every project. Different models keep their
+    own caches; no prune-by-drift.
     """
-    return Path.home() / ".burnless" / WARM_FILE_NAME
+    safe_model = model.replace("/", "_").strip()
+    return Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER / f"{safe_model}.json"
 
 
-def load_state(burnless_root: Path) -> dict | None:
-    path = warm_file_path(burnless_root)
+def list_warm_files() -> list[Path]:
+    """Return all existing warm session files for this provider."""
+    base = Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER
+    if not base.is_dir():
+        return []
+    return sorted(base.glob("*.json"))
+
+
+def load_state(burnless_root: Path, model: str) -> dict | None:
+    path = warm_file_path(burnless_root, model)
     if not path.exists():
         return None
     try:
@@ -64,8 +75,8 @@ def load_state(burnless_root: Path) -> dict | None:
         return None
 
 
-def save_state(burnless_root: Path, state: dict) -> None:
-    path = warm_file_path(burnless_root)
+def save_state(burnless_root: Path, model: str, state: dict) -> None:
+    path = warm_file_path(burnless_root, model)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -153,14 +164,14 @@ def _iso_cwd(warm_uuid: str) -> Path:
     return p
 
 
-def worker_cwd(burnless_root: Path) -> str | None:
+def worker_cwd(burnless_root: Path, model: str) -> str | None:
     """CWD that worker subprocesses should run in to avoid project CLAUDE.md
     contamination. Returns the iso-cwd for the live warm session, or None when
     no warm exists (caller falls back to the project root)."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         return None
-    if not is_alive(burnless_root):
+    if not is_alive(burnless_root, model):
         return None
     return str(_iso_cwd(state["uuid"]))
 
@@ -172,6 +183,10 @@ def _project_root_from_burnless_root(burnless_root: Path) -> Path:
 
 def init(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
     """Create a fresh warm session for this project. Runs W0 to seed cache."""
+    existing = load_state(burnless_root, model)
+    if existing and is_alive(burnless_root, model):
+        return existing
+
     binary = _claude_binary()
     if binary is None:
         raise RuntimeError("claude binary not found in PATH")
@@ -227,18 +242,18 @@ def init(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
             "ephemeral_1h": (usage.get("cache_creation") or {}).get("ephemeral_1h_input_tokens", 0),
         },
     }
-    save_state(burnless_root, state)
+    save_state(burnless_root, model, state)
     return state
 
 
-def session_exists_on_disk(burnless_root: Path) -> bool:
+def session_exists_on_disk(burnless_root: Path, model: str) -> bool:
     """Check whether the warm session's jsonl file actually exists in
     ~/.claude/projects/. Claude code stores resumable sessions at
     ~/.claude/projects/<dashed-cwd>/<session-uuid>.jsonl. We glob across
     project dirs rather than trying to reconstruct the exact dashed-path
     encoding, which has edge cases (dots, hidden dirs).
     """
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         return False
     uuid = state["uuid"]
@@ -250,9 +265,9 @@ def session_exists_on_disk(burnless_root: Path) -> bool:
     return len(matches) > 0
 
 
-def is_alive(burnless_root: Path) -> bool:
+def is_alive(burnless_root: Path, model: str) -> bool:
     """True if warm session exists, within TTL, AND session jsonl is on disk."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         return False
     last = state.get("last_used")
@@ -265,46 +280,35 @@ def is_alive(burnless_root: Path) -> bool:
     age = datetime.now(timezone.utc) - last_ts
     if age >= timedelta(minutes=CACHE_TTL_MIN):
         return False
-    # NEW: verify jsonl actually exists
-    return session_exists_on_disk(burnless_root)
+    return session_exists_on_disk(burnless_root, model)
 
 
-def cache_validity(burnless_root: Path, expected_model: str, expected_brief: str) -> tuple[bool, str]:
+def cache_validity(burnless_root: Path, model: str, expected_brief: str) -> tuple[bool, str]:
     """Return (valid, reason). reason is empty if valid, else describes drift."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state:
         return (False, "no warm state")
-    if state.get("model") != expected_model:
-        return (False, f"model drift: state={state.get('model')!r} expected={expected_model!r}")
     expected_hash = hashlib.sha256(expected_brief.encode("utf-8")).hexdigest()
     if state.get("brief_hash") != expected_hash:
         return (False, "brief drift (project layout / branch changed)")
     return (True, "")
 
 
-def prune_ghost(burnless_root: Path, expected_model: str | None = None, expected_brief: str | None = None) -> tuple[bool, str]:
-    """Prune state if session jsonl missing from disk, or model/brief drift.
-
-    Returns (pruned, reason). Backward-compat: callers passing only burnless_root
-    get the original ghost-only check.
-    """
-    state = load_state(burnless_root)
+def prune_ghost(burnless_root: Path, model: str, expected_brief: str | None = None) -> tuple[bool, str]:
+    """Prune state if session jsonl missing from disk, or brief drift."""
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         return (False, "")
-    if not session_exists_on_disk(burnless_root):
+    if not session_exists_on_disk(burnless_root, model):
         reason = "session jsonl missing from disk"
-    elif expected_model is not None or expected_brief is not None:
-        valid, drift_reason = cache_validity(
-            burnless_root,
-            expected_model or state.get("model", ""),
-            expected_brief or state.get("brief", ""),
-        )
+    elif expected_brief is not None:
+        valid, drift_reason = cache_validity(burnless_root, model, expected_brief)
         if valid:
             return (False, "")
         reason = drift_reason
     else:
         return (False, "")
-    path = warm_file_path(burnless_root)
+    path = warm_file_path(burnless_root, model)
     try:
         path.unlink()
         return (True, reason)
@@ -312,9 +316,9 @@ def prune_ghost(burnless_root: Path, expected_model: str | None = None, expected
         return (False, "")
 
 
-def needs_refresh(burnless_root: Path) -> bool:
+def needs_refresh(burnless_root: Path, model: str) -> bool:
     """True if alive but approaching TTL — heartbeat should be sent."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state:
         return False
     last = state.get("last_used")
@@ -328,13 +332,13 @@ def needs_refresh(burnless_root: Path) -> bool:
     return age >= timedelta(minutes=HEARTBEAT_INTERVAL_MIN)
 
 
-def touch(burnless_root: Path) -> None:
+def touch(burnless_root: Path, model: str) -> None:
     """Mark warm as just used (called after each fork-task)."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state:
         return
     state["last_used"] = datetime.now(timezone.utc).isoformat()
-    save_state(burnless_root, state)
+    save_state(burnless_root, model, state)
 
 
 def refresh(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
@@ -344,7 +348,7 @@ def refresh(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
     ephemeral_1h TTL automatically per Anthropic docs), then is discarded.
     Does NOT mutate the warm session itself.
     """
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         raise RuntimeError("no warm session to refresh — run `burnless warm init` first")
     binary = _claude_binary()
@@ -386,34 +390,42 @@ def refresh(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
         "cache_read": usage.get("cache_read_input_tokens", 0),
         "cache_write": usage.get("cache_creation_input_tokens", 0),
     }
-    save_state(burnless_root, state)
+    save_state(burnless_root, model, state)
     return state
 
 
-def fork_args(burnless_root: Path) -> list[str]:
+def fork_args(burnless_root: Path, model: str) -> list[str]:
     """Return CLI args to inject before --append-system-prompt in a worker
     command so the worker forks off the warm session.
 
     Returns [] if no warm session exists or it's expired (caller falls back
     to the unwarmed command).
     """
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         return []
-    if not is_alive(burnless_root):
+    if not is_alive(burnless_root, model):
         return []
     return ["--resume", state["uuid"], "--fork-session"]
 
 
-def status(burnless_root: Path) -> dict:
-    """Human-readable status dict for `burnless warm status`."""
-    state = load_state(burnless_root)
+def status(burnless_root: Path, model: str | None = None) -> dict:
+    """If model is None, return {'<model>': <status_dict>} for all warm files.
+    If model is given, return the status_dict for that specific model only.
+    """
+    if model is None:
+        result = {}
+        for p in list_warm_files():
+            m = p.stem
+            result[m] = status(burnless_root, model=m)
+        return result
+    state = load_state(burnless_root, model)
     if not state:
         return {"exists": False}
     out = dict(state)
     out["exists"] = True
-    out["alive"] = is_alive(burnless_root)
-    out["needs_refresh"] = needs_refresh(burnless_root)
+    out["alive"] = is_alive(burnless_root, model)
+    out["needs_refresh"] = needs_refresh(burnless_root, model)
     last = state.get("last_used")
     if last:
         try:
