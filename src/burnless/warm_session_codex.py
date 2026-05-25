@@ -12,7 +12,7 @@ Empirical data (codex-cache-empirics-2026-05-23):
 - Cache metric: cached_input_tokens in turn.completed.usage (JSONL)
 - CWD does not affect prefix cacheability
 
-State lives at .burnless/warm_session_codex.json.
+State lives at ~/.burnless/warm/codex/<model>.json.
 """
 from __future__ import annotations
 
@@ -26,22 +26,37 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-WARM_FILE_NAME = "warm_session_codex.json"
+WARM_SUBDIR = "warm"
+PROVIDER = "codex"
 TTL_S = 300                      # conservative: base >=600s, we use 300s
 HEARTBEAT_INTERVAL_S = 300       # ~5min — base layer survives >=600s; trade off the ~1k-token secondary layer for 6x fewer pings
 ISO_CWD_ROOT_NAME = "iso-cwd-codex"  # ~/.burnless/iso-cwd-codex/<uuid>/
 DEFAULT_MODEL = "gpt-5.2"
 
 
-def warm_file_path(burnless_root: Path) -> Path:
-    """Global pool: ~/.burnless/warm_session_codex.json regardless of project.
-    See warm_session.py:warm_file_path for rationale.
+def warm_file_path(burnless_root: Path, model: str) -> Path:
+    """Per-(provider, model) global pool location.
+
+    Lives at ~/.burnless/warm/codex/<model>.json. The `burnless_root`
+    argument is kept for signature compatibility with callers but IGNORED —
+    there is exactly one warm pool per (user, provider, model) that is
+    forked by every worker in every project. Different models keep their
+    own caches; no prune-by-drift.
     """
-    return Path.home() / ".burnless" / WARM_FILE_NAME
+    safe_model = model.replace("/", "_").strip()
+    return Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER / f"{safe_model}.json"
 
 
-def load_state(burnless_root: Path) -> dict | None:
-    path = warm_file_path(burnless_root)
+def list_warm_files() -> list[Path]:
+    """Return all existing warm session files for this provider."""
+    base = Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER
+    if not base.is_dir():
+        return []
+    return sorted(base.glob("*.json"))
+
+
+def load_state(burnless_root: Path, model: str) -> dict | None:
+    path = warm_file_path(burnless_root, model)
     if not path.exists():
         return None
     try:
@@ -50,8 +65,8 @@ def load_state(burnless_root: Path) -> dict | None:
         return None
 
 
-def save_state(burnless_root: Path, state: dict) -> None:
-    path = warm_file_path(burnless_root)
+def save_state(burnless_root: Path, model: str, state: dict) -> None:
+    path = warm_file_path(burnless_root, model)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -172,6 +187,10 @@ def _project_root_from_burnless_root(burnless_root: Path) -> Path:
 
 def init(burnless_root: Path, *, model: str = DEFAULT_MODEL) -> dict:
     """Seed the codex prefix cache for this project. Runs one call to warm."""
+    existing = load_state(burnless_root, model)
+    if existing and is_alive(burnless_root, model):
+        return existing
+
     binary = _codex_binary()
     if binary is None:
         raise RuntimeError("codex binary not found in PATH")
@@ -213,7 +232,7 @@ def init(burnless_root: Path, *, model: str = DEFAULT_MODEL) -> dict:
             "output": usage.get("output_tokens", 0),
         },
     }
-    save_state(burnless_root, state)
+    save_state(burnless_root, model, state)
     return state
 
 
@@ -223,7 +242,7 @@ def refresh(burnless_root: Path, *, model: str = DEFAULT_MODEL) -> dict:
     Sends the byte-identical brief as user message prefix so cached_input_tokens
     stays active server-side.
     """
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         raise RuntimeError("no warm codex session — run `burnless warm-codex init` first")
     binary = _codex_binary()
@@ -255,13 +274,13 @@ def refresh(burnless_root: Path, *, model: str = DEFAULT_MODEL) -> dict:
         "cached": usage.get("cached_input_tokens", 0),
         "output": usage.get("output_tokens", 0),
     }
-    save_state(burnless_root, state)
+    save_state(burnless_root, model, state)
     return state
 
 
-def is_alive(burnless_root: Path, ttl_s: int = TTL_S) -> bool:
+def is_alive(burnless_root: Path, model: str, ttl_s: int = TTL_S) -> bool:
     """True if a warm codex session exists and last_used is within TTL."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         return False
     last = state.get("last_used")
@@ -275,9 +294,9 @@ def is_alive(burnless_root: Path, ttl_s: int = TTL_S) -> bool:
     return age < timedelta(seconds=ttl_s)
 
 
-def needs_refresh(burnless_root: Path, heartbeat_interval_s: int = HEARTBEAT_INTERVAL_S) -> bool:
+def needs_refresh(burnless_root: Path, model: str, heartbeat_interval_s: int = HEARTBEAT_INTERVAL_S) -> bool:
     """True if alive but approaching the partial-drop window — send heartbeat."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state:
         return False
     last = state.get("last_used")
@@ -291,26 +310,20 @@ def needs_refresh(burnless_root: Path, heartbeat_interval_s: int = HEARTBEAT_INT
     return age >= timedelta(seconds=heartbeat_interval_s)
 
 
-def cache_validity(burnless_root: Path, expected_model: str, expected_brief: str) -> tuple[bool, str]:
+def cache_validity(burnless_root: Path, model: str, expected_brief: str) -> tuple[bool, str]:
     """Return (valid, reason). reason is empty if valid, else describes drift."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state:
         return (False, "no warm state")
-    if state.get("model") != expected_model:
-        return (False, f"model drift: state={state.get('model')!r} expected={expected_model!r}")
     expected_hash = hashlib.sha256(expected_brief.encode("utf-8")).hexdigest()
     if state.get("brief_hash") != expected_hash:
         return (False, "brief drift (project layout / branch changed)")
     return (True, "")
 
 
-def prune_stale(burnless_root: Path, expected_model: str | None = None, expected_brief: str | None = None) -> tuple[bool, str]:
-    """Prune state if TTL expired OR model/brief drift.
-
-    Returns (pruned, reason). Backward-compat: callers passing only burnless_root
-    get the original TTL-only check.
-    """
-    state = load_state(burnless_root)
+def prune_stale(burnless_root: Path, model: str, expected_brief: str | None = None) -> tuple[bool, str]:
+    """Prune state if TTL expired OR brief drift."""
+    state = load_state(burnless_root, model)
     if not state:
         return (False, "")
     last = state.get("last_used")
@@ -324,18 +337,14 @@ def prune_stale(burnless_root: Path, expected_model: str | None = None, expected
     reason = ""
     if age >= timedelta(seconds=TTL_S):
         reason = f"TTL expired (age {int(age.total_seconds())}s)"
-    elif expected_model is not None or expected_brief is not None:
-        valid, drift_reason = cache_validity(
-            burnless_root,
-            expected_model or state.get("model", ""),
-            expected_brief or state.get("brief", ""),
-        )
+    elif expected_brief is not None:
+        valid, drift_reason = cache_validity(burnless_root, model, expected_brief)
         if valid:
             return (False, "")
         reason = drift_reason
     else:
         return (False, "")
-    path = warm_file_path(burnless_root)
+    path = warm_file_path(burnless_root, model)
     try:
         path.unlink()
         return (True, reason)
@@ -343,23 +352,23 @@ def prune_stale(burnless_root: Path, expected_model: str | None = None, expected
         return (False, "")
 
 
-def worker_cwd(burnless_root: Path) -> str | None:
+def worker_cwd(burnless_root: Path, model: str) -> str | None:
     """Isolated CWD path for worker subprocesses, or None if warm is dead."""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state or not state.get("uuid"):
         return None
-    if not is_alive(burnless_root):
+    if not is_alive(burnless_root, model):
         return None
     iso = state.get("iso_cwd")
     return iso if iso else None
 
 
-def warm_flags(burnless_root: Path) -> list[str]:
+def warm_flags(burnless_root: Path, model: str) -> list[str]:
     """CLI args to inject into a codex worker invocation to reuse warm iso-cwd.
 
     Returns [] if no warm session or session is expired (caller falls back).
     """
-    iso = worker_cwd(burnless_root)
+    iso = worker_cwd(burnless_root, model)
     if not iso:
         return []
     return [
@@ -370,28 +379,36 @@ def warm_flags(burnless_root: Path) -> list[str]:
     ]
 
 
-def warm_brief(burnless_root: Path) -> str:
+def warm_brief(burnless_root: Path, model: str) -> str:
     """Return the cacheable preamble to prepend to worker user messages.
 
     Empty string if warm is not alive (caller falls back to no-warm path).
     """
-    if not is_alive(burnless_root):
+    if not is_alive(burnless_root, model):
         return ""
-    state = load_state(burnless_root)
+    state = load_state(burnless_root, model)
     if not state:
         return ""
     return state.get("brief", "")
 
 
-def status(burnless_root: Path) -> dict:
-    """Status dict for `burnless warm-codex status`."""
-    state = load_state(burnless_root)
+def status(burnless_root: Path, model: str | None = None) -> dict:
+    """If model is None, return {'<model>': <status_dict>} for all warm files.
+    If model is given, return the status_dict for that specific model only.
+    """
+    if model is None:
+        result = {}
+        for p in list_warm_files():
+            m = p.stem
+            result[m] = status(burnless_root, model=m)
+        return result
+    state = load_state(burnless_root, model)
     if not state:
         return {"exists": False}
     out = dict(state)
     out["exists"] = True
-    out["alive"] = is_alive(burnless_root)
-    out["needs_refresh"] = needs_refresh(burnless_root)
+    out["alive"] = is_alive(burnless_root, model)
+    out["needs_refresh"] = needs_refresh(burnless_root, model)
     last = state.get("last_used")
     if last:
         try:
