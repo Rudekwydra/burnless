@@ -56,6 +56,8 @@ def parse_stream_json(stdout: str) -> dict:
             obj = json.loads(line)
         except Exception:
             continue
+        if not isinstance(obj, dict):
+            continue
         t = obj.get("type")
         if t == "system" and not metrics["session_id"]:
             metrics["session_id"] = obj.get("session_id")
