@@ -539,6 +539,15 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     metrics = metrics_mod.load(p["metrics"])
     text = args.text
     tier_override = args.tier
+    allow_rel = getattr(args, "allow_relative_paths", False)
+    require_abs = cfg.get("validation", {}).get("require_absolute_paths", True)
+    if not allow_rel and require_abs:
+        from . import spec_validator
+        sv = spec_validator.validate_spec_paths(text)
+        if not sv.ok:
+            lang = cfg.get("language", "pt-BR")
+            print(spec_validator.format_rejection(sv, root.parent, lang), file=sys.stderr)
+            return 6
 
     is_blocked, natural_tier, matched_kw = _hardcore_blocked(cfg, text, tier_override, args)
     if is_blocked:
@@ -2327,6 +2336,7 @@ def cmd_do(args: argparse.Namespace) -> int:
         tier=args.tier,
         chain=None,
         force=False,
+        allow_relative_paths=getattr(args, "allow_relative_paths", False),
     )
     rc = cmd_delegate(delegate_args)
     if rc != 0:
@@ -2523,6 +2533,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--chat",
         action="store_true",
         help="Maestro chat mode: render conversational template (no JSON schema, natural-text response)",
+    )
+    sp.add_argument(
+        "--allow-relative-paths",
+        action="store_true",
+        dest="allow_relative_paths",
+        help="skip the absolute-path guard (workers run in isolated cwd; relative paths may fail)",
     )
     sp.set_defaults(func=cmd_delegate)
 
@@ -2755,6 +2771,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="cold_cache",
         help="inject a nonce to force cache miss — use for cold-cache benchmarks",
+    )
+    sp.add_argument(
+        "--allow-relative-paths",
+        action="store_true",
+        dest="allow_relative_paths",
+        help="skip the absolute-path guard (workers run in isolated cwd; relative paths may fail)",
     )
     sp.set_defaults(func=cmd_do)
 
