@@ -38,3 +38,22 @@ def test_system_prompt_has_hard_rules():
     assert "do NOT" in p or "do NOT perform" in p
     assert "ONE line" in p
     assert "NEVER" in p or "Never" in p
+
+
+def test_extract_telegram_ignores_prose_preamble():
+    raw = 'Let me think.\nReasoning here.\n{"to":"gold","need":"plan","of":"x"}'
+    assert mr.extract_telegram(raw) == '{"to":"gold","need":"plan","of":"x"}'
+
+
+def test_extract_telegram_picks_last_valid():
+    raw = '{"draft":"ignore"} more thought {"to":"silver","run":"y"}'
+    assert mr.extract_telegram(raw) == '{"to":"silver","run":"y"}'
+
+
+def test_extract_telegram_clean_passthrough():
+    assert mr.extract_telegram('{"done":"z"}') == '{"done":"z"}'
+
+
+def test_extract_telegram_fence_fallback():
+    out = mr.extract_telegram('```\nnot json here\n```')
+    assert "```" not in out
