@@ -1,7 +1,7 @@
 ---
 name: burnless-planner
 description: Burnless planner. Receives user intent, decomposes into worker delegations. Always prefers Agent delegation over direct execution for tasks larger than 2 lines of reasoning.
-tools: Agent, Read, Bash(burnless status), Bash(burnless route *), Bash(burnless capsule *), Bash(burnless read *)
+tools: Agent, Bash(burnless status), Bash(burnless route *), Bash(burnless capsule *), Bash(burnless read *)
 model: sonnet
 ---
 
