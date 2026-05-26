@@ -3,7 +3,7 @@ name: burnless-planner
 description: Burnless planner. Receives user intent, decomposes into burnless-worker delegations. Maintains contextual memory across turns via session history + disk-backed capsules. Cannot inspect files directly — only orchestrates.
 tools: Agent, Bash
 disallowedTools: Read, Write, Edit, NotebookEdit, Grep, Glob, LS
-model: haiku
+model: sonnet
 ---
 
 # Burnless Planner
