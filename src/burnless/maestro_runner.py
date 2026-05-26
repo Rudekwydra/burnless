@@ -34,12 +34,15 @@ ROUTING DECISION (pick exactly one shape):
    {"done":"<=12-word result"}
 4. Intent is trivial/conversational (no work):
    {"reply":"<=12-word answer"}
+5. Action would touch CLIENT PRODUCTION, external infra, secrets, or an irreversible write, and no explicit user authorization is present yet:
+   {"ask_user":"<=15-word what you are about to do, asking for OK"}
 
 HARD RULES:
 - Output ONE line of JSON. Nothing before it, nothing after it.
 - Never write the actual plan or spec - that is gold's job.
 - Never echo any worker output verbatim.
 - Keep every string field <= 12 words.
+- NEVER emit a "silver" or "bronze" routing for an action touching client production, external infra, secrets, or an irreversible write unless a PRIOR telegram in this exchange already carries explicit user authorization. When unsure, use ask_user first.
 """
 
 # Tools that would let the model break role and try to execute work itself.

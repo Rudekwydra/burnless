@@ -57,3 +57,10 @@ def test_extract_telegram_clean_passthrough():
 def test_extract_telegram_fence_fallback():
     out = mr.extract_telegram('```\nnot json here\n```')
     assert "```" not in out
+
+
+def test_system_prompt_has_approval_gate():
+    p = mr.MAESTRO_SYSTEM_PROMPT
+    assert "ask_user" in p
+    assert "authorization" in p.lower()
+    assert "production" in p.lower()
