@@ -2323,6 +2323,22 @@ def cmd_setup(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_maestro(args: argparse.Namespace) -> int:
+    from . import maestro_runner
+    out = maestro_runner.run_maestro(args.telegram, model=args.model or maestro_runner.DEFAULT_MODEL)
+    if out.get("error"):
+        print(f"burnless maestro: {out['error']}", file=sys.stderr)
+        if out.get("raw"):
+            print(out["raw"], file=sys.stderr)
+        return 1
+    print(out["telegram_out"])
+    u = out.get("usage", {})
+    cc = u.get("cache_creation_input_tokens", 0)
+    cr = u.get("cache_read_input_tokens", 0)
+    print(f"  · maestro cache_creation={cc} cache_read={cr} cost=${out.get('cost', 0.0):.4f}", file=sys.stderr)
+    return 0
+
+
 def cmd_do(args: argparse.Namespace) -> int:
     """Atomic delegate + run in a single command. Equivalent to `burnless do "prompt"`."""
     root = paths_mod.require_root()
@@ -2779,6 +2795,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the absolute-path guard (workers run in isolated cwd; relative paths may fail)",
     )
     sp.set_defaults(func=cmd_do)
+
+    sp = sub.add_parser(
+        "maestro",
+        help="invoke the Maestro conducting layer (isolated, stateless) with a compacted telegram",
+    )
+    sp.add_argument("telegram", help="compacted one-line telegram of intent (JSON)")
+    sp.add_argument("--model", default=None, help="model for the Maestro layer (default haiku)")
+    sp.set_defaults(func=cmd_maestro)
 
     sp = sub.add_parser(
         "pipeline",
