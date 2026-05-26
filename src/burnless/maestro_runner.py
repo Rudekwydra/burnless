@@ -56,6 +56,23 @@ def strip_fences(text: str) -> str:
     return _FENCE_RE.sub("", text).strip()
 
 
+def extract_telegram(result: str) -> str:
+    """Return the last valid one-line JSON object in the model output.
+
+    The Maestro model sometimes prepends reasoning prose; keep only the final
+    JSON telegram. Falls back to fence-stripping if no JSON object parses.
+    """
+    import json as _json
+    candidates = re.findall(r"\{[^{}]*\}", result)
+    for cand in reversed(candidates):
+        try:
+            _json.loads(cand)
+            return cand
+        except ValueError:
+            continue
+    return strip_fences(result)
+
+
 def build_command(telegram: str, model: str = DEFAULT_MODEL) -> list[str]:
     return [
         _claude_bin(), "-p", telegram,
@@ -87,7 +104,7 @@ def run_maestro(telegram: str, model: str = DEFAULT_MODEL, timeout: int = 120) -
         return {"telegram_out": "", "raw": raw, "usage": {}, "cost": 0.0, "error": "non_json_output"}
     result = (data.get("result") or "").strip()
     return {
-        "telegram_out": strip_fences(result),
+        "telegram_out": extract_telegram(result),
         "raw": result,
         "usage": data.get("usage", {}) or {},
         "cost": data.get("total_cost_usd", 0.0),
