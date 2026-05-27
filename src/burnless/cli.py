@@ -1149,7 +1149,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             _orig_issues = summary.get("issues") or []
             _r_issues = _r_sum.get("issues") or []
             summary = _r_sum
-            summary["issues"] = list(dict.fromkeys(_orig_issues + _r_issues))
+            summary["issues"] = list({(_it if isinstance(_it, str) else repr(_it)): _it for _it in (_orig_issues + _r_issues)}.values())
             _cur_status = _new_status
             stale = _r_stale
             interrupted = _r_interrupted
