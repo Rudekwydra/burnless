@@ -12,13 +12,13 @@ DEFAULT_CONFIG: dict = {
         # or any other mix the user wants.
         "gold": {
             "name": "opus",
-            "command": "claude --model opus -p --output-format stream-json --verbose --include-partial-messages",
+            "command": "claude --model opus -p --setting-sources project,local --output-format stream-json --verbose --include-partial-messages",
             "role": "strategy_architecture",
             "use_for": ["architecture", "complex_reasoning", "high_level_planning"],
         },
         "silver": {
             "name": "sonnet",
-            "command": "claude --model sonnet -p --output-format stream-json --verbose --include-partial-messages",
+            "command": "claude --model sonnet -p --setting-sources project,local --output-format stream-json --verbose --include-partial-messages",
             # Optional multi-provider autobalance:
             # providers:
             #   - provider: anthropic
@@ -41,11 +41,18 @@ DEFAULT_CONFIG: dict = {
         },
         "bronze": {
             "name": "haiku",
-            "command": "claude --model haiku -p --output-format stream-json --verbose --include-partial-messages",
+            "command": "claude --model haiku -p --setting-sources project,local --output-format stream-json --verbose --include-partial-messages",
             "role": "summaries_classification",
             "use_for": ["summarize", "classify", "clean_logs"],
         },
     },
+    # ---- per-layer tier (L1 encoder / L2 maestro). L3 = "agents" above. ----
+    # preset is a shortcut that resolves the two knobs below. Explicit
+    # encoder/maestro entries OVERRIDE the preset. Omitting all three keys
+    # keeps legacy behavior (default = "protocol").
+    "preset": "protocol",          # "protocol" | "direct"
+    "encoder": {"model": None},    # L1: None→from preset; "passthrough"→no-op
+    "maestro": {"model": None},    # L2: None→from preset; "off"→short-circuit
     "routing": {
         "gold": [
             "arquitetura", "architecture", "estratégia", "estrategia", "strategy",
@@ -289,3 +296,28 @@ def _normalize_legacy_tiers(data: dict, *, prefer_diamond: bool = False) -> None
                 for kw in legacy:
                     if kw not in silver_rules:
                         silver_rules.append(kw)
+
+
+HAIKU_MODEL = "claude-haiku-4-5-20251001"
+
+_PRESET_RESOLUTIONS = {
+    "protocol": {"encoder": HAIKU_MODEL, "maestro": HAIKU_MODEL},
+    "direct":   {"encoder": "passthrough", "maestro": "off"},
+}
+
+
+def resolve_layer_models(cfg: dict) -> dict:
+    """Resolve per-layer model settings.
+    Precedence: explicit cfg[encoder|maestro][model] (non-None) > preset > "protocol".
+    Returns {"encoder": <model|"passthrough">, "maestro": <model|"off">}. Never raises.
+    """
+    preset = (cfg.get("preset") or "protocol")
+    base = _PRESET_RESOLUTIONS.get(preset, _PRESET_RESOLUTIONS["protocol"])
+    enc_cfg = cfg.get("encoder") or {}
+    mae_cfg = cfg.get("maestro") or {}
+    enc_explicit = enc_cfg.get("model")
+    mae_explicit = mae_cfg.get("model")
+    return {
+        "encoder": enc_explicit if enc_explicit is not None else base["encoder"],
+        "maestro": mae_explicit if mae_explicit is not None else base["maestro"],
+    }
