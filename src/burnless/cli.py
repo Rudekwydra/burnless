@@ -1544,7 +1544,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
         from .codec import decoder as decoder_mod
         from .codec import encoder as encoder_mod
         from .codec.police import maybe_police
-        from .maestro import brain as maestro_mod
+        from .maestro import core as maestro_mod
         from .maestro import dispatcher as dispatcher_mod
         from .maestro import session as maestro_session
 
@@ -1758,7 +1758,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
         return 2
 
     from .keepalive import KeepaliveDaemon, keepalive_enabled_by_default
-    from .maestro import brain as _maestro_mod_ka
+    from .maestro import core as _maestro_mod_ka
 
     _ka_adapter = maestro_adapters.load_adapter(cfg, model)
     try:

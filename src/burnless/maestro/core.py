@@ -8,7 +8,7 @@ import anthropic
 
 from ..maestro_adapters import MaestroAdapter, current_anthropic_adapter
 from ..codec.glossary_loader import load_glossary
-from .brain_streams import NormalizedEvent
+from .streams import NormalizedEvent
 
 DEFAULT_BRAIN_MODEL = "claude-sonnet-4-6"
 DEFAULT_MAX_TOKENS = 6000
@@ -76,7 +76,7 @@ def _create_stream(
     system: list[dict[str, Any]],
     messages: list[dict[str, Any]],
 ) -> Iterator[NormalizedEvent]:
-    from .brain_streams.anthropic import create_stream as _anthropic_stream
+    from .streams.anthropic import create_stream as _anthropic_stream
 
     if adapter.kind == "anthropic":
         thinking_kw: dict[str, Any] = {"type": "adaptive"} if adapter.supports_thinking else {}
@@ -84,15 +84,15 @@ def _create_stream(
             client, model=model, system=system, messages=messages, thinking_kw=thinking_kw
         )
     if adapter.kind == "openai":
-        from .brain_streams.openai import create_stream as _openai_stream
+        from .streams.openai import create_stream as _openai_stream
 
         return _openai_stream(None, model=model, system=system, messages=messages)
     if adapter.kind == "gemini":
-        from .brain_streams.gemini import create_stream as _gemini_stream
+        from .streams.gemini import create_stream as _gemini_stream
 
         return _gemini_stream(None, model=model, system=system, messages=messages)
     if adapter.kind == "openrouter":
-        from .brain_streams.openrouter import create_stream as _openrouter_stream
+        from .streams.openrouter import create_stream as _openrouter_stream
 
         return _openrouter_stream(None, model=model, system=system, messages=messages)
     raise NotImplementedError(
