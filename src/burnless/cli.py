@@ -2413,8 +2413,8 @@ def cmd_do(args: argparse.Namespace) -> int:
     run_args = argparse.Namespace(
         id=did,
         dry_run=False,
-        timeout=600,
-        stale_timeout_s=None,
+        timeout=getattr(args, "timeout", 600) or 600,
+        stale_timeout_s=getattr(args, "stale_timeout_s", None),
         mode="plain",
         progress=None,
         maestro=False,
@@ -2819,6 +2819,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="cold_cache",
         help="inject a nonce to force cache miss — use for cold-cache benchmarks",
+    )
+    sp.add_argument(
+        "--timeout",
+        type=int,
+        default=600,
+        help="worker timeout in seconds (forwarded to the embedded run)",
+    )
+    sp.add_argument(
+        "--stale-timeout-s",
+        type=int,
+        default=None,
+        dest="stale_timeout_s",
+        help="abort if no worker output for N seconds (forwarded to the embedded run)",
     )
     sp.add_argument(
         "--allow-relative-paths",
