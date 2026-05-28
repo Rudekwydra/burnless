@@ -41,4 +41,4 @@ def test_dashboard_renders_legacy_section():
 def test_dashboard_marks_maestro_only_counters():
     m = dict(metrics_mod.DEFAULT_METRICS)
     out = dashboard_mod.render_metrics(m)
-    assert "Maestro brain only" in out
+    assert "Maestro only" in out

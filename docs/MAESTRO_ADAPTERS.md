@@ -1,12 +1,12 @@
-# Brain Adapters
+# Maestro Adapters
 
-Burnless's Brain (the maestro orchestrator) can run on any of four providers.
-Worker tier agents (bronze/silver/gold) are independent of this — Brain is the
+Burnless's Maestro orchestrator can run on any of four providers.
+Worker tier agents (bronze/silver/gold) are independent of this — Maestro is the
 strategic layer that delegates and audits.
 
 ## Providers
 
-| Provider            | `brain_adapter` value | Env var                                | Default model                    | Optional extra        |
+| Provider            | `maestro_adapter` value | Env var                                | Default model                    | Optional extra        |
 |---------------------|-----------------------|----------------------------------------|----------------------------------|-----------------------|
 | Anthropic (default) | `anthropic`           | `ANTHROPIC_API_KEY`                    | `claude-sonnet-4-6`              | (built-in)            |
 | OpenAI              | `openai`              | `OPENAI_API_KEY`                       | `gpt-4o`                         | `burnless[brain-openai]` |
@@ -18,7 +18,7 @@ strategic layer that delegates and audits.
 In `.burnless/config.yaml`:
 
 ```yaml
-brain_adapter: openai     # anthropic | openai | gemini | openrouter
+maestro_adapter: openai     # anthropic | openai | gemini | openrouter (brain_adapter still accepted for back-compat)
 ```
 
 Then start the chat:
@@ -27,7 +27,7 @@ Then start the chat:
 burnless chat --model gpt-4o
 ```
 
-The adapter is loaded via `brain_adapters.load_adapter()` and the streaming
+The adapter is loaded via `maestro_adapters.load_adapter()` and the streaming
 implementation lives in `src/burnless/maestro/brain_streams/{provider}.py`.
 
 ## Cache + thinking semantics by provider
@@ -53,16 +53,16 @@ managed automatically based on prefix repetition.
 
 ## Adding a fifth provider
 
-1. Add a `*_adapter()` factory in `src/burnless/brain_adapters.py`
+1. Add a `*_adapter()` factory in `src/burnless/maestro_adapters.py`
    (mirror the shape of `openai_adapter()`).
 2. Wire it into `load_adapter()` switch.
 3. Implement `create_stream(client, *, model, system, messages, thinking_kw)`
    in `src/burnless/maestro/brain_streams/PROVIDER.py`. Yield `NormalizedEvent`
    instances with `kind` ∈ {`text_delta`, `think_delta`, `usage`, `done`}.
-4. Add tests in `tests/test_brain_adapters.py` covering shape + routing.
+4. Add tests in `tests/test_maestro_adapters.py` covering shape + routing.
 5. Document the env var, default model, and cache/thinking behaviour here.
 6. Add a `pyproject.toml` optional-dependency block if a new SDK is required.
 
 ## Reference
 
-Spec: `_design/brecha6_brain_adapters_spec.md` (private, internal).
+Spec: `_design/brecha6_maestro_adapters_spec.md` (private, internal).

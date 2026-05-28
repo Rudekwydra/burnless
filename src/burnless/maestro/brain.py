@@ -6,7 +6,7 @@ from typing import Any, Callable, Iterator
 
 import anthropic
 
-from ..brain_adapters import BrainAdapter, current_anthropic_adapter
+from ..maestro_adapters import MaestroAdapter, current_anthropic_adapter
 from ..codec.glossary_loader import load_glossary
 from .brain_streams import NormalizedEvent
 
@@ -15,7 +15,7 @@ DEFAULT_MAX_TOKENS = 6000
 THINKING_BUDGET_TOKENS = 4000
 
 
-def run_brain_turn(
+def run_maestro_turn(
     *,
     user_capsule: str,
     history_messages: list[dict[str, Any]],
@@ -23,7 +23,7 @@ def run_brain_turn(
     model: str = DEFAULT_BRAIN_MODEL,
     client: anthropic.Anthropic | None = None,
     on_think_delta: Callable[[str], None] | None = None,
-    adapter: BrainAdapter | None = None,
+    adapter: MaestroAdapter | None = None,
 ) -> dict[str, Any]:
     if adapter is None:
         adapter = current_anthropic_adapter(model)
@@ -69,7 +69,7 @@ def run_brain_turn(
 
 
 def _create_stream(
-    adapter: BrainAdapter,
+    adapter: MaestroAdapter,
     *,
     client: anthropic.Anthropic,
     model: str,

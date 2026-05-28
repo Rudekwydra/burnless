@@ -30,9 +30,9 @@ _PROVIDER_BINS: dict[str, list[str]] = {
 
 
 def _maestro_argv(cfg: dict) -> list[str]:
-    brain = cfg.get("brain", {})
-    provider = brain.get("provider", "anthropic")
-    model = brain.get("model")
+    maestro_cfg = cfg.get("brain", {})  # legacy persisted key name (kept for on-disk back-compat); represents the Maestro layer
+    provider = maestro_cfg.get("provider", "anthropic")
+    model = maestro_cfg.get("model")
     base = _PROVIDER_BINS.get(provider, ["claude"])
     if provider == "anthropic":
         return base

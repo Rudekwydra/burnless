@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from burnless import brain_adapters as ba
+from burnless import maestro_adapters as ba
 
 
 def test_anthropic_adapter_shape():

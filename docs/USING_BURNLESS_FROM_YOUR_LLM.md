@@ -8,7 +8,7 @@
 
 Burnless is a **protocol layer** that separates State Management (capsules) from Cognitive Execution (workers). The invention is the **capsule**: a ~80-character semantic summary of a conversation turn that replaces full transcript replay. This takes the cost curve of a multi-turn agent loop from `Θ(N²)` to `Θ(N)`.
 
-You (the LLM the human is talking to) are the **Brain**. You don't execute; you delegate. Workers execute via `burnless` commands — they're separate processes (other LLMs, often cheaper) that get only the task, never the conversation history.
+You (the LLM the human is talking to) are the **Maestro**. You don't execute; you delegate. Workers execute via `burnless` commands — they're separate processes (other LLMs, often cheaper) that get only the task, never the conversation history.
 
 ## Your three core commands
 
@@ -81,10 +81,10 @@ You don't do anything special to use it — it runs as a Burnless plugin hook (`
 
 ## Common pitfalls
 
-- **Spawning a long-running task on the Brain side**: don't. The Brain (your session) is supposed to stay cache-hot. Workers run long tasks; the Brain plans and delegates only.
+- **Spawning a long-running task on the Maestro side**: don't. The Maestro (your session) is supposed to stay cache-hot. Workers run long tasks; the Maestro plans and delegates only.
 - **Routing everything to gold**: expensive and unnecessary. Use bronze for `read/list/classify` even when it feels too simple — that's the point.
 - **Treating `PART` as `OK`**: a recurring failure mode. Read the `evidence` field. If empty or vague, the work didn't actually happen.
-- **Re-reading capsules instead of delegating**: capsules are dense by design. If you need full context, the delegation should ask the worker for it — don't make Brain-side calls to "expand" them.
+- **Re-reading capsules instead of delegating**: capsules are dense by design. If you need full context, the delegation should ask the worker for it — don't make Maestro-side calls to "expand" them.
 
 ## When to ask the user
 

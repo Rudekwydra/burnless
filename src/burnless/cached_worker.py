@@ -441,7 +441,7 @@ def run_cached_worker(
     _log(f"# ended_at: {ended.isoformat()}")
     _log(f"# usage: input={usage_totals.get('input_tokens',0)} output={usage_totals.get('output_tokens',0)} cache_read={cache_read} cache_write={cache_write}")
 
-    # Real-time brain metrics — best effort, never blocks the result path.
+    # Real-time Maestro metrics — best effort, never blocks the result path.
     try:
         from . import metrics as _metrics_mod
         from . import paths as _paths_mod

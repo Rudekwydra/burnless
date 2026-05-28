@@ -11,7 +11,7 @@ DEFAULT_STATE: dict = {
     "next": None,
     "delegation_counter": 0,
     "active_tier": None,  # None = auto routing; "gold"|"silver"|"bronze" = sticky
-    "brain_model": None,
+    "brain_model": None,  # legacy persisted key name (kept for on-disk back-compat); represents the Maestro layer
     "updated_at": None,
     "last_activity_ts": None,
     "next_keepalive_ts": None,
