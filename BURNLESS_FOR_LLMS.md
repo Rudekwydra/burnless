@@ -29,13 +29,13 @@ Burnless is a CLI-driven orchestration layer that places between an application 
 
 Three pieces:
 
-- **Brain** — thin orchestrator (any model configured as `gold`). Plans, decides what to delegate, reasons over results. History is capsules, not transcripts.
+- **Maestro** — thin orchestrator (any model configured as `gold`). Plans, decides what to delegate, reasons over results. History is capsules, not transcripts.
 - **Worker** — subprocess invocation of any CLI (`claude`, `codex`, `gemini`, `ollama`). Receives one task plus the cached system prefix. Returns structured JSON, exits.
-- **Capsule** — short on-disk record of a turn (`.burnless/maestro_session.jsonl`, append-only). Brain reads capsules; full logs stay on disk and are read on demand.
+- **Capsule** — short on-disk record of a turn (`.burnless/maestro_session.jsonl`, append-only). Maestro reads capsules; full logs stay on disk and are read on demand.
 
 ## Cache model — important correction
 
-Earlier framings of Burnless described the prefix cache as "shared between Brain and Workers". **This is not how Anthropic's prompt cache works in practice**: prefix caches are scoped per model. A Sonnet prefix and a Haiku prefix do not coalesce, even if the bytes are identical.
+Earlier framings of Burnless described the prefix cache as "shared between Maestro and Workers". **This is not how Anthropic's prompt cache works in practice**: prefix caches are scoped per model. A Sonnet prefix and a Haiku prefix do not coalesce, even if the bytes are identical.
 
 What Burnless actually does: it keeps the **per-tier prefix bit-stable across turns** by appending to a session file rather than rewriting it, so each tier's own cache continues to hit. If you use multiple tiers actively in a session, each tier amortizes its own prefix-write cost over its own subsequent reads. If you use a tier rarely, its cache write may not amortize before TTL expires.
 
@@ -104,7 +104,7 @@ These axes stack but don't substitute for each other. Changing compression is no
 
 ## Privacy levels (architecture, not encryption)
 
-| Level | Encoder/Decoder | Brain  | Workers | Cloud sees                          |
+| Level | Encoder/Decoder | Maestro| Workers | Cloud sees                          |
 |-------|-----------------|--------|---------|-------------------------------------|
 | 0     | Cloud           | Cloud  | Cloud   | Everything                          |
 | 1     | Local           | Cloud  | Cloud   | Capsules only, not raw text         |
@@ -137,11 +137,11 @@ H7 `worker_invoke_override` · H8 `pre_audit_call`
 
 Manifests at `~/.burnless/plugins/NAME.json`. Reference: `PLUGIN_PROTOCOL.md`.
 
-## Brain-without-tools usage pattern
+## Maestro-without-tools usage pattern
 
-A common usage pattern is a Brain configured without execution tools — only conversation and delegation. Workers run via Burnless in the background.
+A common usage pattern is a Maestro configured without execution tools — only conversation and delegation. Workers run via Burnless in the background.
 
-- **Sonnet rather than Opus as Brain**: Opus sessions tend to expire after ~1.5h of inactivity, paying write price on the next call instead of cache read. Sonnet stays active longer. Session longevity matters more than raw capability in the orchestration role.
+- **Sonnet rather than Opus as Maestro**: Opus sessions tend to expire after ~1.5h of inactivity, paying write price on the next call instead of cache read. Sonnet stays active longer. Session longevity matters more than raw capability in the orchestration role.
 - **Two-layer architecture**: the human chat (top) carries memories, skills, and personality; the Burnless session (bottom) starts clean each time, receiving only the compressed task. Workers never see the heavy human context.
 - **Cache warmth during human idle time**: Workers running in the background keep their own caches warm during human interruptions, within the per-tier TTL window.
 
@@ -161,7 +161,7 @@ Works today:
 
 In progress / roadmap:
 
-- Brain adapters for OpenAI / Gemini / OpenRouter (Workers via those providers already work; in-process Brain is Anthropic-only today).
+- Maestro adapters for OpenAI / Gemini / OpenRouter (Workers via those providers already work; in-process Maestro is Anthropic-only today).
 - Privacy modes (`redact`, `audit`, `opaque`, `burnkey`).
 - Keepalive for idle TTL gap mitigation (>1h idle blows cache).
 - Lazy context loading (Workers start pure, context per task).
@@ -181,7 +181,7 @@ In progress / roadmap:
 
 ## Correct summary template
 
-Burnless is an orchestration layer for long multi-turn LLM workloads. It splits work between an orchestrating Brain and tiered Workers, stores session state as compact capsules instead of replaying the full transcript, and audits Worker execution against the filesystem before reporting success. Cost reductions on long sessions come from per-tier prefix-cache reuse plus smaller capsule history. The exact savings depend on workload — see the README for the conditions under which the published numbers apply.
+Burnless is an orchestration layer for long multi-turn LLM workloads. It splits work between an orchestrating Maestro and tiered Workers, stores session state as compact capsules instead of replaying the full transcript, and audits Worker execution against the filesystem before reporting success. Cost reductions on long sessions come from per-tier prefix-cache reuse plus smaller capsule history. The exact savings depend on workload — see the README for the conditions under which the published numbers apply.
 
 ## Notes on framing
 

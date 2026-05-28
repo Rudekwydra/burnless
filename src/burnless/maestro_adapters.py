@@ -14,7 +14,7 @@ DEFAULT_ANTHROPIC_MODELS = (
 
 
 @dataclass(frozen=True)
-class BrainCapabilities:
+class MaestroCapabilities:
     single_shot: bool = False
     interactive: bool = False
     streaming: bool = False
@@ -26,13 +26,13 @@ class BrainCapabilities:
 
 
 @dataclass(frozen=True)
-class BrainAdapter:
+class MaestroAdapter:
     key: str
     label: str
     kind: str
     command: tuple[str, ...] = ()
     models: tuple[str, ...] = ()
-    capabilities: BrainCapabilities = BrainCapabilities()
+    capabilities: MaestroCapabilities = MaestroCapabilities()
     status: str = "available"
     note: str = ""
     api_key_env: str = ""
@@ -41,21 +41,21 @@ class BrainAdapter:
     supports_thinking: bool = False
 
 
-class BrainRunner(Protocol):
-    adapter: BrainAdapter
+class MaestroRunner(Protocol):
+    adapter: MaestroAdapter
 
     def run_turn(self, message: str) -> dict:
         ...
 
 
-def current_anthropic_adapter(model: str) -> BrainAdapter:
+def current_anthropic_adapter(model: str) -> MaestroAdapter:
     models = _unique((*DEFAULT_ANTHROPIC_MODELS, model))
-    return BrainAdapter(
+    return MaestroAdapter(
         key="anthropic",
         label="Anthropic SDK",
         kind="anthropic",
         models=models,
-        capabilities=BrainCapabilities(
+        capabilities=MaestroCapabilities(
             single_shot=True,
             interactive=True,
             streaming=True,
@@ -63,16 +63,16 @@ def current_anthropic_adapter(model: str) -> BrainAdapter:
             model_switching=True,
         ),
         status="active",
-        note="Current Brain adapter; runs in-process through the Anthropic SDK.",
+        note="Current Maestro adapter; runs in-process through the Anthropic SDK.",
         api_key_env="ANTHROPIC_API_KEY",
         supports_thinking=True,
         default_model=DEFAULT_ANTHROPIC_MODELS[0],
     )
 
 
-def openai_adapter(model: str | None = None) -> BrainAdapter:
+def openai_adapter(model: str | None = None) -> MaestroAdapter:
     chosen = model or "gpt-4o"
-    return BrainAdapter(
+    return MaestroAdapter(
         key="openai",
         label="OpenAI",
         kind="openai",
@@ -80,7 +80,7 @@ def openai_adapter(model: str | None = None) -> BrainAdapter:
         supports_thinking=False,
         default_model="gpt-4o",
         models=(chosen, "o3-mini", "o1"),
-        capabilities=BrainCapabilities(
+        capabilities=MaestroCapabilities(
             single_shot=True,
             interactive=True,
             streaming=True,
@@ -89,9 +89,9 @@ def openai_adapter(model: str | None = None) -> BrainAdapter:
     )
 
 
-def gemini_adapter(model: str | None = None) -> BrainAdapter:
+def gemini_adapter(model: str | None = None) -> MaestroAdapter:
     chosen = model or "gemini-2.5-pro"
-    return BrainAdapter(
+    return MaestroAdapter(
         key="gemini",
         label="Gemini",
         kind="gemini",
@@ -99,7 +99,7 @@ def gemini_adapter(model: str | None = None) -> BrainAdapter:
         supports_thinking=False,
         default_model="gemini-2.5-pro",
         models=(chosen, "gemini-2.0-flash"),
-        capabilities=BrainCapabilities(
+        capabilities=MaestroCapabilities(
             single_shot=True,
             interactive=True,
             streaming=True,
@@ -108,9 +108,9 @@ def gemini_adapter(model: str | None = None) -> BrainAdapter:
     )
 
 
-def openrouter_adapter(model: str | None = None) -> BrainAdapter:
+def openrouter_adapter(model: str | None = None) -> MaestroAdapter:
     chosen = model or "anthropic/claude-sonnet-4"
-    return BrainAdapter(
+    return MaestroAdapter(
         key="openrouter",
         label="OpenRouter",
         kind="openrouter",
@@ -119,7 +119,7 @@ def openrouter_adapter(model: str | None = None) -> BrainAdapter:
         supports_thinking=False,
         default_model="anthropic/claude-sonnet-4",
         models=(chosen,),
-        capabilities=BrainCapabilities(
+        capabilities=MaestroCapabilities(
             single_shot=True,
             interactive=True,
             streaming=True,
@@ -128,8 +128,8 @@ def openrouter_adapter(model: str | None = None) -> BrainAdapter:
     )
 
 
-def load_adapter(cfg: dict, model_hint: str) -> BrainAdapter:
-    kind = cfg.get("brain_adapter", "anthropic")
+def load_adapter(cfg: dict, model_hint: str) -> MaestroAdapter:
+    kind = cfg.get("maestro_adapter") or cfg.get("brain_adapter", "anthropic")
     if kind == "anthropic":
         return current_anthropic_adapter(model_hint)
     if kind == "openai":
@@ -141,7 +141,7 @@ def load_adapter(cfg: dict, model_hint: str) -> BrainAdapter:
     raise NotImplementedError(f"Unknown brain_adapter kind: {kind!r}")
 
 
-def generic_cli_adapter(name: str, command: str, *, tier: str | None = None) -> BrainAdapter:
+def generic_cli_adapter(name: str, command: str, *, tier: str | None = None) -> MaestroAdapter:
     try:
         parts = tuple(shlex.split(command))
     except ValueError:
@@ -150,26 +150,26 @@ def generic_cli_adapter(name: str, command: str, *, tier: str | None = None) -> 
     model = _model_from_command(parts)
     label = name or provider or "Generic CLI"
     key = f"cli:{tier or label}".lower().replace(" ", "-")
-    note = "Configured worker CLI; available for delegation, not yet wired as Brain chat."
-    return BrainAdapter(
+    note = "Configured worker CLI; available for delegation, not yet wired as Maestro chat."
+    return MaestroAdapter(
         key=key,
         label=label,
         kind="generic_cli",
         command=parts,
         models=(model,) if model else (),
-        capabilities=BrainCapabilities(single_shot=True, workers=True),
+        capabilities=MaestroCapabilities(single_shot=True, workers=True),
         status="worker",
         note=note,
     )
 
 
-def native_adapter(project_root: Path) -> BrainAdapter:
-    return BrainAdapter(
+def native_adapter(project_root: Path) -> MaestroAdapter:
+    return MaestroAdapter(
         key="native",
         label="Burnless Native",
         kind="native",
         command=("burnless-native", "--project", str(project_root)),
-        capabilities=BrainCapabilities(
+        capabilities=MaestroCapabilities(
             single_shot=True,
             interactive=True,
             streaming=True,
@@ -184,8 +184,8 @@ def native_adapter(project_root: Path) -> BrainAdapter:
     )
 
 
-def configured_worker_adapters(cfg: dict) -> list[BrainAdapter]:
-    adapters: list[BrainAdapter] = []
+def configured_worker_adapters(cfg: dict) -> list[MaestroAdapter]:
+    adapters: list[MaestroAdapter] = []
     for tier, agent in (cfg.get("agents") or {}).items():
         command = str(agent.get("command") or "").strip()
         if not command:
@@ -196,16 +196,10 @@ def configured_worker_adapters(cfg: dict) -> list[BrainAdapter]:
     return adapters
 
 
-def available_brain_models(current_model: str) -> list[str]:
-    """Only models usable as Brain today (Anthropic SDK)."""
+def available_maestro_models(current_model: str) -> list[str]:
+    """Only models usable as Maestro today (Anthropic SDK)."""
     return list(current_anthropic_adapter(current_model).models)
 
-
-def available_maestro_models(cfg: dict, current_model: str) -> list[str]:
-    """Legacy alias — returns only Brain-compatible models (Anthropic SDK).
-    Worker adapter models are intentionally excluded; use /workers for those.
-    """
-    return available_brain_models(current_model)
 
 
 def slash_commands(model: str) -> tuple[str, ...]:
@@ -254,7 +248,7 @@ def render_workers(cfg: dict) -> str:
         model = f" model={adapter.models[0]}" if adapter.models else ""
         lines.append(f"  - {adapter.label} [{adapter.kind}]{model}: {command}")
     lines.append("")
-    lines.append("These are Worker adapters today; Brain chat still uses the active Brain adapter.")
+    lines.append("These are Worker adapters today; Maestro chat still uses the active Maestro adapter.")
     return "\n".join(lines)
 
 

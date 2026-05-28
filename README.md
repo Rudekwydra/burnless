@@ -84,9 +84,9 @@ For the cost derivation behind these scenarios — including the conditions unde
 
 Three pieces:
 
-- **Brain.** A thin orchestrator (any model you configure as `gold`) that holds the plan, decides what to delegate, and reasons over results. Its conversation history holds capsules — short summaries of past turns — instead of the raw transcript.
+- **Maestro.** A thin orchestrator (any model you configure as `gold`) that holds the plan, decides what to delegate, and reasons over results. Its conversation history holds capsules — short summaries of past turns — instead of the raw transcript.
 - **Worker.** A subprocess invocation of any CLI (`claude`, `codex`, `gemini`, `ollama`, etc.) that receives one task plus the cached system prefix. It executes, returns a structured JSON result, and exits. Raw output goes to `.burnless/logs/dNNN.log`.
-- **Capsule.** A short on-disk record of a turn (`.burnless/maestro_session.jsonl`). The Brain reads capsules; full logs stay on disk and are read on demand.
+- **Capsule.** A short on-disk record of a turn (`.burnless/maestro_session.jsonl`). The Maestro reads capsules; full logs stay on disk and are read on demand.
 
 The session file is **append-only**, so the cached prefix stays bit-identical between turns and the provider's prefix cache continues to hit. On Anthropic's API the prefix is marked `cache_control: {"type": "ephemeral", "ttl": "1h"}`. On Claude Code's monthly plan, the cache is managed automatically by the CLI.
 
@@ -144,7 +144,7 @@ Tiers are commands. Any model, any provider:
 ```yaml
 # .burnless/config.yaml
 agents:
-  gold:    { command: "claude --model claude-sonnet-4-6 -p" }   # Brain
+  gold:    { command: "claude --model claude-sonnet-4-6 -p" }   # Maestro
   silver:  { command: "codex exec --sandbox workspace-write" }
   bronze:  { command: "ollama run qwen2.5-coder" }
 ```
@@ -158,10 +158,10 @@ agents:
   bronze:  { command: "ollama run llama3.2" }
 ```
 
-The Brain itself can run on a non-Anthropic provider:
+The Maestro itself can run on a non-Anthropic provider:
 
 ```yaml
-brain_adapter: openai     # anthropic | openai | gemini | openrouter
+maestro_adapter: openai     # anthropic | openai | gemini | openrouter (brain_adapter still accepted for back-compat)
 ```
 
 | Provider   | Env var                              | Default model               |
@@ -171,7 +171,7 @@ brain_adapter: openai     # anthropic | openai | gemini | openrouter
 | gemini     | `GEMINI_API_KEY` / `GOOGLE_API_KEY`  | `gemini-2.5-pro`            |
 | openrouter | `OPENROUTER_API_KEY`                 | `anthropic/claude-sonnet-4` |
 
-Install the SDK extra for non-Anthropic providers (`pip install 'burnless[brain-openai]'` etc). Reference: [`docs/BRAIN_ADAPTERS.md`](docs/BRAIN_ADAPTERS.md).
+Install the SDK extra for non-Anthropic providers (`pip install 'burnless[brain-openai]'` etc). Reference: [`docs/MAESTRO_ADAPTERS.md`](docs/MAESTRO_ADAPTERS.md).
 
 ### Per-tier permissions
 
@@ -182,7 +182,7 @@ agents:
   bronze: { command: "claude --model claude-haiku-4-5 -p --allowedTools Read,Bash" }
 ```
 
-With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Brain cannot self-upgrade above the tier the keyword router resolved — manual override requires explicit `--force`.
+With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro cannot self-upgrade above the tier the keyword router resolved — manual override requires explicit `--force`.
 
 ## Compression modes
 
@@ -197,7 +197,7 @@ compression:
 | `balanced` | L1+L2 (default)  | No               | On              |          ~88%  | Project execution                     |
 | `extreme`  | L1+L2+L3         | No               | Off             |         ~93%+  | CI/CD batches, no human in the loop   |
 
-"Anchor preserved" means the Brain's capsules retain enough argumentative structure that prior decisions remain revisable. Workers are always epistemically pure — they receive a clean task without the Brain's debate history.
+"Anchor preserved" means the Maestro's capsules retain enough argumentative structure that prior decisions remain revisable. Workers are always epistemically pure — they receive a clean task without the Maestro's debate history.
 
 The savings percentages above are what the author observes on his own workload; they will shift with session length and content density.
 
@@ -219,7 +219,7 @@ Capsule format v2: `burnless:v2:<session_id>:<key_id>:<base64_ciphertext>`. Deco
 ## CLI
 
 ```bash
-burnless                     # interactive shell (Brain)
+burnless                     # interactive shell (Maestro)
 burnless plan "<objective>"  # write plan to .burnless/maestro.md
 burnless delegate "<task>"   # create delegation, route to a tier
 burnless run d001            # execute (ephemeral progress panel by default)
@@ -258,7 +258,7 @@ In the author's measurements on Portuguese-language samples with `qwen2.5:7b-ins
 | Provider lock-in         | Varies                                | None — any CLI, any provider                |
 | Worker audit             | Generally none                        | Filesystem-first audit (QTP-A)              |
 
-Burnless and these frameworks are **not directly competing in every dimension**. You can wrap a LangChain agent as a Worker. The Brain→Worker pattern is compatible with any existing framework.
+Burnless and these frameworks are **not directly competing in every dimension**. You can wrap a LangChain agent as a Worker. The Maestro→Worker pattern is compatible with any existing framework.
 
 **When Burnless is not the right tool:** single-turn queries, one-off scripts, or workflows where a managed cloud platform is the explicit requirement.
 
@@ -281,14 +281,14 @@ What works today:
 
 In progress:
 
-- ⚠️ Brain adapters: OpenAI / Gemini / OpenRouter (in-process Maestro is Anthropic-only today; configured Worker CLIs work for any provider already)
+- ⚠️ Maestro adapters: OpenAI / Gemini / OpenRouter (in-process Maestro is Anthropic-only today; configured Worker CLIs work for any provider already)
 - ⚠️ Keepalive mode: idle-TTL-gap mitigation (>1h idle blows the cache)
 - ⚠️ Lazy context loading: Workers start pure, context loaded per-task
 - ⚠️ Privacy modes: `redact`, `audit`, `opaque`, `burnkey` are planned, not yet implemented
 
 ## Contributing
 
-Issues and PRs welcome. Priority areas: OpenAI/Gemini Brain adapter, LangChain memory adapter, keepalive daemon, lazy context loading, chat-shell UX.
+Issues and PRs welcome. Priority areas: OpenAI/Gemini Maestro adapter, LangChain memory adapter, keepalive daemon, lazy context loading, chat-shell UX.
 
 Testing map + unification plan: see `docs/testing.md`.
 

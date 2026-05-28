@@ -32,7 +32,7 @@ DELEGATION_TEMPLATE = """\
 """
 
 
-# Maestro chat — used for the persistent brain worker that the user talks
+# Maestro chat — used for the persistent Maestro worker that the user talks
 # to directly in the burnless shell. No JSON schema, no evidence contract:
 # the worker should answer like a colleague in the same chat thread, in
 # the user's language, using tools when needed and explaining what it did.

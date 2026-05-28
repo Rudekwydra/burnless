@@ -367,9 +367,9 @@ def _load_glossary(p: dict[str, Path]) -> str:
 
 def _resolve_model(tier: str, cfg: dict, state: dict) -> str:
     from .cli import MAESTRO_TIER_MODEL
-    brain_model = state.get("brain_model")
-    if brain_model:
-        return brain_model
+    maestro_model = state.get("brain_model")  # legacy persisted key name (kept for on-disk back-compat); represents the Maestro layer
+    if maestro_model:
+        return maestro_model
     agent_name = cfg.get("agents", {}).get(tier, {}).get("name", "")
     tier_map = {
         "gold": "claude-opus-4-7",

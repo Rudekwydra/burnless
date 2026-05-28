@@ -49,7 +49,7 @@ The middle term is the killer. With uniform `U_j + O_j ≈ T`, it expands to `T 
 
 ## 3. Burnless loop — derivation of `Θ(N)`
 
-Brain holds a capsule per turn instead of the raw exchange. At turn `k`, the Brain sees:
+Maestro holds a capsule per turn instead of the raw exchange. At turn `k`, the Maestro sees:
 
 ```
 P_cached  +  Σ_{j<k} C  +  U_k       as input
@@ -59,7 +59,7 @@ P_cached  +  Σ_{j<k} C  +  U_k       as input
 
 The worker is a *separate API call* with its own usage. It receives a focused prompt (`P_cached + capsules of relevant turns + new task`), executes, returns a compact result.
 
-Brain's input across `N` turns:
+Maestro's input across `N` turns:
 
 ```
 brain_input(N)  =  P  (1× cache_write)
@@ -76,7 +76,7 @@ The `(N-1) · P` cache-read term dominates for typical `N`, and it's billed at `
 
 ### 3.1 Compression filter — multiplicative refinement (not an order change)
 
-The compression filter (see [`bench/COMPRESSION_FINDINGS.md`](bench/COMPRESSION_FINDINGS.md)) is a Stage-1 LLM + Stage-2 telegrafista regex that runs locally on each user message before it reaches the Brain. Empirically across 7 models on 50 PT samples: ratio `r ≈ 2.0–2.5×`, with the family of the local LLM dominating (Qwen > Gemma ≈ gpt-oss > Mistral).
+The compression filter (see [`bench/COMPRESSION_FINDINGS.md`](bench/COMPRESSION_FINDINGS.md)) is a Stage-1 LLM + Stage-2 telegrafista regex that runs locally on each user message before it reaches the Maestro. Empirically across 7 models on 50 PT samples: ratio `r ≈ 2.0–2.5×`, with the family of the local LLM dominating (Qwen > Gemma ≈ gpt-oss > Mistral).
 
 This is a **multiplicative constant**, not an order change:
 
@@ -222,9 +222,9 @@ cache         = shared brain↔workers prefix (single byte-identical P)
 
 Four economy vectors stacked simultaneously:
 
-1. **Brain model**: Sonnet, not Opus → 5× cheaper baseline.
+1. **Maestro model**: Sonnet, not Opus → 5× cheaper baseline.
 2. **Worker tier mix**: Haiku on majority → average `$/token` collapses further.
-3. **Cache continuity**: Brain never switches model → cache_read price applies on every turn after the first.
+3. **Cache continuity**: Maestro never switches model → cache_read price applies on every turn after the first.
 4. **History compression**: capsules instead of full turns → kills the quadratic term.
 
 Each vector alone is incremental. Stacked, they multiply.
@@ -249,13 +249,13 @@ Ratios at a glance: Opus is **5× Sonnet** is **3.75× Haiku** on input, **rough
 
 Plug your own `(P, U_k, O_k, N, model_mix, α)` into §4. If your numbers contradict the simulation in `bench/v2.py`, open an issue with the JSON. We don't care if Burnless wins your specific workload — we care that the formula is right.
 
-Burnless loses in exactly one regime: **`N = 1`**. A single-turn query with no delegation pays Brain overhead for a Worker call you didn't need. The orchestration layer is pure cost when there is nothing to orchestrate.
+Burnless loses in exactly one regime: **`N = 1`**. A single-turn query with no delegation pays Maestro overhead for a Worker call you didn't need. The orchestration layer is pure cost when there is nothing to orchestrate.
 
 For every other workload — `N ≥ 2`, any non-trivial prefix, any reasonable model mix — the four economy vectors of §5.Z stack by construction:
 
-- Brain Sonnet undercuts Brain Opus on input price (5×).
+- Maestro Sonnet undercuts Maestro Opus on input price (5×).
 - Tier-down workers undercut Opus on average per-token cost.
-- A fixed-model Brain holds cache hot; a switching loop thrashes it.
+- A fixed-model Maestro holds cache hot; a switching loop thrashes it.
 - Capsules collapse the quadratic history term to a linear one.
 
 Each vector is independently positive. Their composition cannot net negative against any baseline that forgoes them. The math forces Burnless ahead — there is no "your workload is different" escape clause for `N ≥ 2`.
@@ -274,7 +274,7 @@ The Maestro session enforces four properties simultaneously:
 
 2. **Append-only chat, persisted on disk.** The session lives in `.burnless/maestro_session.jsonl`. Every new turn *extends* the message array; it never rewrites earlier blocks. The prefix that was cached on turn 1 is byte-identical on turn `k`, so the cache lookup hits.
 
-3. **Four cache breakpoints, nested.** Anthropic allows at most 4 `cache_control` markers per request. Maestro places them at the boundaries of `system → memory → plan → capsules`, so Brain and Workers all share the same prefix and pay `cache_read` from their second call onward.
+3. **Four cache breakpoints, nested.** Anthropic allows at most 4 `cache_control` markers per request. Maestro places them at the boundaries of `system → memory → plan → capsules`, so Maestro and Workers all share the same prefix and pay `cache_read` from their second call onward.
 
 4. **Realtime ROI compaction, not fixed capsule counts.** Burnless treats cached context as immutable layers: protocol header, glossary/schema, memory/plan, frozen capsule blocks, hot tail, and the new user capsule. It never rewrites a cached block. When the hot tail grows, Burnless creates a new super-capsule only if the future cache-read savings pay for the new cache write and the compaction call:
 
@@ -317,11 +317,11 @@ In a full-transcript loop, the model at turn `k` sees not only what was decided 
 
 The same content, summarized into a compact document and presented to the same model in a *fresh* session, can produce a different evaluation. The model's position on the document is not anchored to the trajectory that produced it. This is not inconsistency — it is evidence that the prior session's output was shaped by its own history, not only by the content.
 
-**The anchoring is proportional to argumentative richness.** A full transcript anchors strongly. A capsule — "cfg db → postgres :: OK" — anchors weakly: the Brain knows the result, not the argument. Weak anchoring makes past decisions more revisable.
+**The anchoring is proportional to argumentative richness.** A full transcript anchors strongly. A capsule — "cfg db → postgres :: OK" — anchors weakly: the Maestro knows the result, not the argument. Weak anchoring makes past decisions more revisable.
 
 ### Workers are always pure
 
-Workers receive a task, a cached system prompt, and the capsules relevant to that task. They do not receive the argumentative history of the Brain session. Every Worker call is epistemically fresh. This is not a limitation — it is the correct design for execution. An executor that inherits the Brain's accumulated debate would defend architectural decisions when its job is to implement them.
+Workers receive a task, a cached system prompt, and the capsules relevant to that task. They do not receive the argumentative history of the Maestro session. Every Worker call is epistemically fresh. This is not a limitation — it is the correct design for execution. An executor that inherits the Maestro's accumulated debate would defend architectural decisions when its job is to implement them.
 
 ### Compression modes as an epistemic trade-off
 
@@ -333,9 +333,9 @@ The three compression modes (`light`, `balanced`, `extreme`) are not only cost s
 | `balanced` *(default)* | Minifier + semantic encoder (L1 + L2) | No | On | ~88% | Project execution, multi-step implementation, standard workflows |
 | `extreme` | All layers (L1 + L2 + L3 opt-in) | No | **Off** | ~93%+ | CI/CD pipelines, batch automation, no human in the loop |
 
-`light` mode preserves the argumentative structure in capsules — the encoder is skipped and only deterministic minification runs. The Brain accumulates context that a human would recognize as reasoning, not just state. The cost is a fatter history and lower savings; the benefit is that the session can genuinely reconsider.
+`light` mode preserves the argumentative structure in capsules — the encoder is skipped and only deterministic minification runs. The Maestro accumulates context that a human would recognize as reasoning, not just state. The cost is a fatter history and lower savings; the benefit is that the session can genuinely reconsider.
 
-`balanced` discards the trajectory and retains only the semantic result. The Brain knows what was decided; it does not know how. This is the correct default for execution-heavy sessions where continuity of *state* matters but continuity of *argument* does not.
+`balanced` discards the trajectory and retains only the semantic result. The Maestro knows what was decided; it does not know how. This is the correct default for execution-heavy sessions where continuity of *state* matters but continuity of *argument* does not.
 
 `extreme` adds maximum compression and disables natural-language expansion (friendly mode off). Output is machine-readable capsules without prose wrapping. Appropriate for pipelines where no human reads the intermediate output.
 

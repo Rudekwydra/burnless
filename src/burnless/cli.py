@@ -23,7 +23,7 @@ from . import compression as compression_mod
 from . import lifetime as lifetime_mod
 from . import claude_integration
 from . import provider_autodetect
-from . import brain_adapters
+from . import maestro_adapters
 from . import dashboard
 from . import live_runner
 from .estimator import estimate_tokens
@@ -1491,31 +1491,31 @@ def cmd_brain(args: argparse.Namespace) -> int:
     state = state_mod.load(p["state"])
     cfg = config_mod.load(p["config"])
     model = args.model or state.get("brain_model") or "claude-opus-4-7"
-    history_path = p["root"] / "maestro" / "brain_history.jsonl"
+    history_path = p["root"] / "maestro" / "maestro_history.jsonl"
     _inflight_lock = threading.Lock()
 
     def slash_help() -> str:
-        return brain_adapters.render_commands()
+        return maestro_adapters.render_commands()
 
     def available_maestro_models() -> list[str]:
-        return brain_adapters.available_maestro_models(cfg, model)
+        return maestro_adapters.available_maestro_models(model)
 
     def render_maestro() -> str:
-        adapter = brain_adapters.current_anthropic_adapter(model)
-        brain_models = brain_adapters.available_brain_models(model)
+        adapter = maestro_adapters.current_anthropic_adapter(model)
+        maestro_models = maestro_adapters.available_maestro_models(model)
         lines = [
-            f"Current Brain: {model}",
+            f"Current Maestro: {model}",
             f"Adapter: {adapter.label} ({adapter.status})",
             "",
             "Switch with /maestro <model>  (Anthropic SDK only):",
         ]
-        for candidate in brain_models:
+        for candidate in maestro_models:
             marker = "*" if candidate == model else " "
             lines.append(f"  {marker} {candidate}")
         lines.extend(
             [
                 "",
-                "Codex / Ollama as Brain: planned for v0.6.",
+                "Codex / Ollama as Maestro: planned for v0.6.",
                 "Use /workers to see configured worker adapters.",
             ]
         )
@@ -1528,10 +1528,10 @@ def cmd_brain(args: argparse.Namespace) -> int:
             return render_maestro()
         if not next_model.startswith("claude-"):
             return (
-                f"'{next_model}' não é um modelo válido para o Brain.\n"
-                "O Brain usa o Anthropic SDK — passe um modelo claude-* "
+                f"'{next_model}' não é um modelo válido para o Maestro.\n"
+                "O Maestro usa o Anthropic SDK — passe um modelo claude-* "
                 "(ex: claude-sonnet-4-6, claude-haiku-4-5-20251001).\n"
-                "Codex e Ollama como Brain são planejados para v0.6. "
+                "Codex e Ollama como Maestro são planejados para v0.6. "
                 "Use /workers para ver os worker adapters configurados."
             )
         model = next_model
@@ -1544,7 +1544,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
         from .codec import decoder as decoder_mod
         from .codec import encoder as encoder_mod
         from .codec.police import maybe_police
-        from .maestro import brain as brain_mod
+        from .maestro import brain as maestro_mod
         from .maestro import dispatcher as dispatcher_mod
         from .maestro import session as maestro_session
 
@@ -1595,9 +1595,9 @@ def cmd_brain(args: argparse.Namespace) -> int:
                     history_messages = list(history_messages)
 
             try:
-                _adapter = brain_adapters.load_adapter(cfg, model)
+                _adapter = maestro_adapters.load_adapter(cfg, model)
                 with _inflight_lock:
-                    result = brain_mod.run_brain_turn(
+                    result = maestro_mod.run_maestro_turn(
                         user_capsule=next_capsule,
                         history_messages=history_messages,
                         project_root=root.parent,
@@ -1606,7 +1606,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
                         adapter=_adapter,
                     )
             except Exception as e:
-                print(f"brain error: {e}", file=sys.stderr)
+                print(f"maestro error: {e}", file=sys.stderr)
                 return 1
 
             think_text = result.get("think_text") or "".join(think_chunks).strip()
@@ -1740,10 +1740,10 @@ def cmd_brain(args: argparse.Namespace) -> int:
             print(slash_help())
             return None
         if message == "/workers":
-            print(brain_adapters.render_workers(cfg))
+            print(maestro_adapters.render_workers(cfg))
             return None
         if message == "/native":
-            print(brain_adapters.render_native(root.parent))
+            print(maestro_adapters.render_native(root.parent))
             return None
         if message == "/maestro" or message.startswith("/maestro "):
             print(set_maestro(message.removeprefix("/maestro").strip()))
@@ -1758,11 +1758,11 @@ def cmd_brain(args: argparse.Namespace) -> int:
         return 2
 
     from .keepalive import KeepaliveDaemon, keepalive_enabled_by_default
-    from .maestro import brain as _brain_mod_ka
+    from .maestro import brain as _maestro_mod_ka
 
-    _ka_adapter = brain_adapters.load_adapter(cfg, model)
+    _ka_adapter = maestro_adapters.load_adapter(cfg, model)
     try:
-        _system_prefix = _brain_mod_ka.build_system_blocks(
+        _system_prefix = _maestro_mod_ka.build_system_blocks(
             project_root=root.parent, history_messages=[]
         )
     except Exception:
@@ -1797,7 +1797,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
             pass
     except ImportError:
         try:
-            return _run_basic_brain_repl(run_one, handle_slash=handle_slash, model=model)
+            return _run_basic_maestro_repl(run_one, handle_slash=handle_slash, model=model)
         finally:
             _ka_daemon.stop()
 
@@ -1827,7 +1827,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
         prompt_continuation="  ",
         key_bindings=kb,
         completer=WordCompleter(
-            list(brain_adapters.slash_commands(model)),
+            list(maestro_adapters.slash_commands(model)),
             ignore_case=True,
             match_middle=False,
         ),
@@ -1836,7 +1836,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
     try:
         while True:
             try:
-                message = session.prompt("brain › ")
+                message = session.prompt("maestro › ")
             except (EOFError, KeyboardInterrupt):
                 print()
                 return 0
@@ -1856,14 +1856,14 @@ def cmd_brain(args: argparse.Namespace) -> int:
         _ka_daemon.stop()
 
 
-def _run_basic_brain_repl(run_one, *, handle_slash=None, model: str | None = None) -> int:
+def _run_basic_maestro_repl(run_one, *, handle_slash=None, model: str | None = None) -> int:
     print("Burnless Maestro chat — /help for commands, /exit to leave.")
     if model:
         print(f"Maestro: {model}")
     print("prompt_toolkit unavailable; using basic multiline input.")
     print("Submit with an empty trailing line or Ctrl-D.")
     while True:
-        print("brain › ", end="", flush=True)
+        print("maestro › ", end="", flush=True)
         lines: list[str] = []
         try:
             while True:
@@ -2693,9 +2693,9 @@ def build_parser() -> argparse.ArgumentParser:
     dsp = decisions_sub.add_parser("clear", help="clear cached architectural decisions")
     dsp.set_defaults(func=cmd_decisions_clear)
 
-    sp = sub.add_parser("brain", help="enter Maestro brain chat (model configurable in .burnless/config.yaml)")
+    sp = sub.add_parser("brain", help="enter Maestro chat (model configurable in .burnless/config.yaml)")
     sp.add_argument("--message", "-m", help="single-shot mode")
-    sp.add_argument("--model", default=None, help="override brain model")
+    sp.add_argument("--model", default=None, help="override Maestro model")
     sp.set_defaults(func=cmd_brain)
 
     sp = sub.add_parser("read", help="print compact JSON summary for delegation ID")

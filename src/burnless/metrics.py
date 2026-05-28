@@ -24,7 +24,7 @@ DEFAULT_METRICS: dict = {
     "keepalive_cost_usd": 0.0,
     # Real-time per-turn measurements. These accumulate from actual usage,
     # not from synthetic benchmarks. Conservative by construction: the
-    # decoder Haiku output is shorter than what a Brain Sonnet would
+    # decoder Haiku output is shorter than what a Maestro Sonnet would
     # produce unprompted (RLHF default leans verbose), so the "avoided"
     # numbers below are floors, not ceilings.
     "encoder_calls": 0,
@@ -183,9 +183,9 @@ def record_encoder_call(
 ) -> dict:
     """Record one encoder call: raw user message → capsule.
 
-    Conservative estimate of saved input tokens at the Brain stage:
+    Conservative estimate of saved input tokens at the Maestro stage:
         saved = (raw_input_chars / chars_per_token) - capsule_output_tokens
-    This is the floor — the actual Brain naive-replay cost would also include
+    This is the floor — the actual Maestro naive-replay cost would also include
     repeated history bytes which capsules avoid entirely.
     """
     metrics = load(metrics_path)
@@ -232,17 +232,17 @@ def record_decoder_call(
     capsule_input_tokens: int,
     expanded_output_tokens: int,
 ) -> dict:
-    """Record one decoder call: brain capsule → expanded prose.
+    """Record one decoder call: Maestro capsule → expanded prose.
 
-    Conservative estimate of avoided Brain output tokens:
+    Conservative estimate of avoided Maestro output tokens:
         avoided = expanded_output_tokens - capsule_input_tokens
 
-    Floor reasoning: a Brain Sonnet asked the same question without Burnless
+    Floor reasoning: a Maestro Sonnet asked the same question without Burnless
     rules would produce at least `expanded_output_tokens` of output (likely
     more — RLHF default leans verbose with prose padding, hedges, summaries).
-    Burnless paid `capsule_input_tokens` of Brain output instead, plus a
+    Burnless paid `capsule_input_tokens` of Maestro output instead, plus a
     Haiku decoder call (cheaper per token). The avoided count here is the
-    Brain-equivalent output that didn't get billed at Sonnet rates.
+    Maestro-equivalent output that didn't get billed at Sonnet rates.
     """
     metrics = load(metrics_path)
     metrics["decoder_calls"] = int(metrics.get("decoder_calls", 0)) + 1
@@ -269,7 +269,7 @@ def record_decoder_call(
             "ts": datetime.now(timezone.utc).isoformat(),
             "source": "output_decompression_avoided",
             "amount": avoided,
-            "reason": "decoder: brain capsule → expanded prose (Brain-equivalent floor)",
+            "reason": "decoder: Maestro capsule → expanded prose (Maestro-equivalent floor)",
             "extra": {
                 "capsule_input_tokens": capsule_input_tokens,
                 "expanded_output_tokens": expanded_output_tokens,
@@ -291,13 +291,14 @@ def record_brain_call(
     output_tokens: int,
     model: str = "unknown",
 ) -> dict:
-    """Record one Brain API call with its full usage breakdown.
+    """Record one Maestro API call with its full usage breakdown.
 
     Saved-by-cache estimate (conservative — represents the floor of what
     repeated context would cost at full input price without caching):
         saved = cache_read_tokens (these would otherwise be billed at input rate)
     """
     metrics = load(metrics_path)
+    # legacy persisted key name (kept for on-disk back-compat); represents the Maestro layer
     metrics["brain_calls"] = int(metrics.get("brain_calls", 0)) + 1
     metrics["brain_input_tokens"] = (
         int(metrics.get("brain_input_tokens", 0)) + max(input_tokens, 0)

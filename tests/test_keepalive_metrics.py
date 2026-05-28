@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from burnless import metrics as metrics_mod
-from burnless.brain_adapters import BrainAdapter, BrainCapabilities
+from burnless.maestro_adapters import MaestroAdapter, MaestroCapabilities
 from burnless.keepalive import KeepaliveDaemon
 
 
@@ -18,12 +18,12 @@ def mock_oauth_token():
         yield
 
 
-def _make_adapter() -> BrainAdapter:
-    return BrainAdapter(
+def _make_adapter() -> MaestroAdapter:
+    return MaestroAdapter(
         key="anthropic",
         label="Anthropic SDK",
         kind="anthropic",
-        capabilities=BrainCapabilities(single_shot=True),
+        capabilities=MaestroCapabilities(single_shot=True),
         status="active",
         api_key_env="ANTHROPIC_API_KEY",
         default_model="claude-sonnet-4-6",

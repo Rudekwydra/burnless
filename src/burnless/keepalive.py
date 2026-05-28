@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .brain_adapters import BrainAdapter
+    from .maestro_adapters import MaestroAdapter
 
 from .chat_mode import _load_claude_oauth_token
 
@@ -20,7 +20,7 @@ _DEFAULT_MAX_PINGS = 24
 _DEFAULT_MAX_CONSECUTIVE_MISSES = 3
 
 
-def keepalive_enabled_by_default(adapter: BrainAdapter | None) -> bool:
+def keepalive_enabled_by_default(adapter: MaestroAdapter | None) -> bool:
     if adapter is None or adapter.kind != 'anthropic':
         return False
     if os.environ.get('ANTHROPIC_API_KEY'):
@@ -34,7 +34,7 @@ class KeepaliveDaemon(threading.Thread):
         *,
         state_path: Path,
         cfg: dict,
-        adapter: BrainAdapter | None,
+        adapter: MaestroAdapter | None,
         system_prefix: list[dict[str, Any]],
         inflight_lock: threading.Lock,
         model: str | None = None,
