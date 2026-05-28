@@ -82,8 +82,8 @@ def build_command(telegram: str, model: str = DEFAULT_MODEL) -> list[str]:
         "--model", model,
         "--setting-sources", "project,local",
         "--exclude-dynamic-system-prompt-sections",
-        "--append-system-prompt", MAESTRO_SYSTEM_PROMPT,
-        "--disallowedTools", DISALLOWED_TOOLS,
+        "--system-prompt", MAESTRO_SYSTEM_PROMPT,
+        "--tools", "",
         "--output-format", "json",
     ]
 
