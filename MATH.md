@@ -100,6 +100,61 @@ Each factor is independent and multiplicative. None substitutes for the others:
 
 The protocol-layer invention is capsules (§3). The filter is a useful refinement *on top* of the protocol — analogous to gzip on a TCP stream. Worth using, not the invention.
 
+### 3.2 Maestro gate — fixed prompt/tool tax removal
+
+The lightweight Maestro gate is a separate optimization from cache reads and
+capsules. Its job is to classify a compact telegram into one of:
+
+```
+reply | ask_user | to: bronze | to: silver | to: gold
+```
+
+For this gate, loading the default Claude Code prompt and built-in tool schemas
+is pure fixed overhead. The optimized invocation replaces the default prompt
+with the small Maestro prompt and passes an empty tool list:
+
+```
+claude -p <telegram> --system-prompt <maestro> --tools ""
+```
+
+Empirical calibration on 2026-05-28 with `claude-haiku-4-5-20251001`,
+5 verbose decision scenarios, 1 run each:
+
+| Variant | Correct | Avg cost | Cost vs optimized | Avg input | Avg cache write | Avg cache read |
+|---|---:|---:|---:|---:|---:|---:|
+| optimized: `--system-prompt` + `--tools ""` | 5/5 | $0.004884 | 1.00× | 724.4 | 0.0 | 0.0 |
+| `--system-prompt` + `--disallowedTools` | 5/5 | $0.006014 | 1.23× | 9.0 | 1705.4 | 13406.0 |
+| `--append-system-prompt` + `--disallowedTools` | 4/5 | $0.008641 | 1.77× | 10.0 | 2811.4 | 18003.0 |
+
+So the formula needs a **fixed prompt/tool tax** term, not just a cache term:
+
+```
+maestro_savings_per_call =
+    max(cost(default_prompt_plus_tools) - cost(minimal_prompt_no_tools), 0)
+```
+
+Token-only accounting would misread this result because the optimized variant
+has *more uncached input tokens* than the cached variants, but fewer billed
+dollars. The relevant measured delta is the removed fixed prompt/tool overhead:
+no cache write, no cache read, and no large tool schema prefix.
+
+### 3.3 End-to-end smoke — Sonnet solo vs Burnless planner
+
+The first post-fix end-to-end smoke compared the same verbose read-only repo
+task through Sonnet solo and through the Claude Code `burnless-planner` agent,
+including nested `.burnless/logs/d*.log` worker usage in the Burnless total.
+
+Artifact: `tests/benchmarks/results/20260528T155740Z_sonnet_vs_burnless_codec_count/report.md`.
+
+| Condition | Correct | Total USD | Main USD | Worker USD | Wall | Cache write | Cache read |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Sonnet solo | 1/1 | $0.447409 | $0.447409 | $0.000000 | 11.35s | 69878 | 69422 |
+| Burnless planner | 1/1 | $0.301948 | $0.284716 | $0.017232 | 32.24s | 47969 | 99985 |
+
+Burnless was `0.67×` the Sonnet solo cost (about **32.5% cheaper**) and
+`2.84×` slower on this n=1 task. The win came from lower Sonnet prompt/cache
+tax plus a cheap Haiku worker, not from fewer total input tokens.
+
 ---
 
 ## 4. From tokens to dollars

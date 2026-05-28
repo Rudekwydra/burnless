@@ -19,7 +19,11 @@ def test_build_command_has_isolation_flags():
     assert "--setting-sources" in cmd
     assert "project,local" in cmd
     assert "--exclude-dynamic-system-prompt-sections" in cmd
-    assert "--disallowedTools" in cmd
+    assert "--system-prompt" in cmd
+    assert "--append-system-prompt" not in cmd
+    assert "--tools" in cmd
+    assert cmd[cmd.index("--tools") + 1] == ""
+    assert "--disallowedTools" not in cmd
     assert "--output-format" in cmd
     assert "json" in cmd
     assert '{"intent":"x"}' in cmd
@@ -27,10 +31,8 @@ def test_build_command_has_isolation_flags():
 
 def test_build_command_disallows_execution_tools():
     cmd = mr.build_command('{"intent":"x"}')
-    idx = cmd.index("--disallowedTools")
-    tools = cmd[idx + 1]
-    for t in ("Read", "Edit", "Write", "Bash"):
-        assert t in tools
+    assert "--tools" in cmd
+    assert cmd[cmd.index("--tools") + 1] == ""
 
 
 def test_system_prompt_has_hard_rules():
