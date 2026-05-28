@@ -2345,7 +2345,19 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 def cmd_maestro(args: argparse.Namespace) -> int:
     from . import maestro_runner
-    out = maestro_runner.run_maestro(args.telegram, model=args.model or maestro_runner.DEFAULT_MODEL)
+    root = paths_mod.require_root()
+    p = paths_mod.paths_for(root)
+    cfg = config_mod.load(p["config"])
+    layers = config_mod.resolve_layer_models(cfg)
+    resolved = args.model or layers["maestro"] or maestro_runner.DEFAULT_MODEL
+
+    if resolved == "off":
+        # L2 disabled (preset=direct / maestro.model=off) — operator is the maestro.
+        # Echo telegram unchanged so any wrapper consuming stdout still works.
+        print(args.telegram)
+        return 0
+
+    out = maestro_runner.run_maestro(args.telegram, model=resolved)
     if out.get("error"):
         print(f"burnless maestro: {out['error']}", file=sys.stderr)
         if out.get("raw"):
