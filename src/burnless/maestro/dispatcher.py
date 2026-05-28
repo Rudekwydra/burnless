@@ -120,12 +120,12 @@ def run_delegate(
     config: dict,
     chain: list[str] | None = None,
 ) -> str:
-    brain_tier = _config_tier(spec.tier)
+    maestro_tier = _config_tier(spec.tier)
     compression_mode = ((config.get("compression") or {}).get("mode") or "balanced").lower()
-    final_tier, modulation_reason = modulate_by_compression(brain_tier, "", compression_mode)
+    final_tier, modulation_reason = modulate_by_compression(maestro_tier, "", compression_mode)
     if modulation_reason:
         print(f"  · {modulation_reason}")
-    if final_tier != brain_tier or compression_mode != "balanced":
+    if final_tier != maestro_tier or compression_mode != "balanced":
         detail = f" ({modulation_reason})" if modulation_reason else ""
         print(f"  [routing] Brain said {spec.tier} → Burnless using {final_tier}{detail}")
 
