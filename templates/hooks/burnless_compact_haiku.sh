@@ -33,6 +33,24 @@ if [ ! -f "$HOME/.burnless/compactor_enabled" ] && [ "${BURNLESS_COMPACTOR:-0}" 
   exit 0
 fi
 
+# --- resolve encoder model from burnless config (fail-open to haiku) ---
+ENCODER_MODEL="$(python3 -c "
+try:
+    from burnless import config, paths
+    root = paths.require_root()
+    cfg = config.load(paths.paths_for(root)['config'])
+    print(config.resolve_layer_models(cfg)['encoder'])
+except Exception:
+    print('claude-haiku-4-5-20251001')
+" 2>/dev/null)"
+[ -z "$ENCODER_MODEL" ] && ENCODER_MODEL="claude-haiku-4-5-20251001"
+
+# passthrough → encoder disabled, no compaction (no-op, fail-open)
+if [ "$ENCODER_MODEL" = "passthrough" ]; then
+  echo '{}'
+  exit 0
+fi
+
 # --- guard: skip very short prompts (compaction overhead > gain) ---
 if [ "${#USER_PROMPT}" -lt 40 ]; then
   echo '{}'
@@ -46,7 +64,7 @@ COMPACT_PROMPT="Você é compactador telegrafo. Reescreva o input do user em JSO
 $USER_PROMPT"
 
 TELEGRAM="$(printf '%s' "$COMPACT_PROMPT" | timeout 4 /opt/homebrew/bin/claude -p \
-  --model claude-haiku-4-5-20251001 \
+  --model "$ENCODER_MODEL" \
   --permission-mode bypassPermissions \
   --allowedTools '' \
   --output-format json 2>/dev/null \
