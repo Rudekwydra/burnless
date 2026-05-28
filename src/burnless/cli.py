@@ -44,6 +44,26 @@ from .delegation_parse import (
     extract_test_status as _extract_test_status,
 )
 
+from ._pro import audit as _audit_mod
+import sys as _sys
+from . import plugin_loader as _plugin_loader_parent
+_sys.modules.setdefault("burnless._pro.plugin_loader", _plugin_loader_parent)
+del _sys, _plugin_loader_parent
+_audit_summary_evidence = _audit_mod.audit_summary_evidence
+_audit_execution_filesystem = _audit_mod.audit_execution_filesystem
+
+
+def _build_retry_prompt(original: str, did: str, status: str, summary: dict) -> str:
+    issues = summary.get("issues") or []
+    issues_str = ", ".join(str(i) for i in issues) if issues else "(none)"
+    return f"{original}\n\n[RETRY {did} prev={status}] Issues: {issues_str}"
+
+
+def _build_audit_fix_prompt(original: str, did: str, audit: dict) -> str:
+    issues = audit.get("issues") or []
+    audit_summary = audit.get("summary") or ""
+    issues_str = ", ".join(str(i) for i in issues) if issues else "(none)"
+    return f"{original}\n\n[AUDIT FIX {did}] Issues: {issues_str}. Audit: {audit_summary}"
 
 DEFAULT_MAX_TOKENS = 4096
 
