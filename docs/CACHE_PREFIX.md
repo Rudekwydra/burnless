@@ -95,6 +95,3 @@ to the operator).
 - v0.7.0 → v0.7.1: zero impact unless you flip the flag (default False)
 - v0.7.1 → v0.7.0: capsules and delegations remain compatible; only the
   in-process prompt composition changes
-- Plugin Protocol v0.7 hooks (H1 `pre_worker_prompt`, H5 `pre_brain_prompt`)
-  receive the composed prompt as before — plugins see the new layout
-  when the flag is on, but the JSON shape is unchanged

@@ -1,8 +1,14 @@
 # Burnless Plugin Protocol v0.7
 
+> ⚠️ **DEPRECATED / NOT SHIPPING in v0.9.** This 8-hook plugin protocol is an
+> aspirational design that was never wired into the shipping product. The real
+> v0.9 architecture is **Encoder/Decoder · Maestro · Workers** — see `PROTOCOL.md`
+> (canonical). This file is kept as a historical design note only; do not cite it
+> as a feature. Remove before public ship unless the protocol is actually built.
+
 **License:** MIT  
-**Status:** Stable  
-**Version:** 0.7.0
+**Status:** Deprecated design note (not shipping)  
+**Version:** 0.7.0 (historical)
 
 Burnless calls plugins; plugins never execute inside Burnless.
 
