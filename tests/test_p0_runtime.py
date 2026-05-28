@@ -280,9 +280,9 @@ def test_cmd_run_output_is_short(tmp_path: Path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
 
-    # Short format: "{status}:{id}\n{summary}"
-    assert "d001" in out
-    assert "All done fine." in out
+    # Silent-default prints only status:id — summary suppressed
+    assert "OK:d001" in out
+    assert "All done fine." not in out   # summary suppressed under silent-default
     # Verbose fields must NOT appear
     assert "Audit:" not in out
     assert "Evidence:" not in out
@@ -340,11 +340,10 @@ def test_config_progress_detail_loaded_with_default(tmp_path: Path):
 def test_minimal_spinner_nontty_prints_static(tmp_path: Path, capsys):
     from burnless.live_runner import _MinimalSpinner
     spinner = _MinimalSpinner(delegation_id="d001", tier="bronze")
-    # _enabled is False in test (no tty)
+    # non-tty start() prints nothing under silent-default
     spinner.start()
     out = capsys.readouterr().out
-    assert "d001" in out
-    assert "bronze" in out
+    assert out == ""   # non-tty spinner is silent under silent-default
 
 
 def test_minimal_spinner_stop_nontty_is_noop(capsys):
