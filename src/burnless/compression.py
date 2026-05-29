@@ -405,6 +405,7 @@ def compress_transcript(
     import secrets
     import anthropic
     from .codec.cipher import generate_key, encode as cipher_encode, pack
+    from . import config
 
     mode = normalize_mode(mode)
     if mode not in MODES:
@@ -454,7 +455,7 @@ def compress_transcript(
                 messages.append({"role": "assistant", "content": ctx["compressed"]})
         messages.append({"role": "user", "content": minified})
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=config.HAIKU_MODEL,
             max_tokens=2048,
             system=(
                 "You are a lossless semantic compressor. "

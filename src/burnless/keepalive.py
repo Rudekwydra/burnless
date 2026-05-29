@@ -136,8 +136,9 @@ class KeepaliveDaemon(threading.Thread):
                 'anthropic-beta': 'claude-code-20250219,1',
                 'content-type': 'application/json',
             }
+            from . import config as _cfg
             body = {
-                'model': 'claude-haiku-4-5-20251001',
+                'model': _cfg.HAIKU_MODEL,
                 'max_tokens': 1,
                 'system': [{'type': 'text', 'text': 'x', 'cache_control': {'type': 'ephemeral'}}],
                 'messages': [{'role': 'user', 'content': 'ping'}],
@@ -169,7 +170,8 @@ class KeepaliveDaemon(threading.Thread):
             import anthropic
 
             client = anthropic.Anthropic()
-            model = self._model or self._adapter.default_model or "claude-sonnet-4-6"
+            from . import config as _cfg
+            model = self._model or self._adapter.default_model or _cfg.DEFAULT_PROVIDER_MODELS["claude"]
             resp = client.messages.create(
                 model=model,
                 system=self._system_prefix,

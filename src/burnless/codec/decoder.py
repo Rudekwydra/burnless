@@ -6,8 +6,9 @@ from typing import Any
 import anthropic
 
 from .glossary_loader import load_glossary
+from .. import config
 
-DEFAULT_DECODER_MODEL = "claude-haiku-4-5"
+DEFAULT_DECODER_MODEL = config.HAIKU_MODEL
 DEFAULT_DENSITY = {
     "efficiency": 0.5,
     "creativity": 0.5,

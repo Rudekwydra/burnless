@@ -331,7 +331,8 @@ def run_with_live_panel(
         if provider is not None:
             model = _extract_model_from_parts(list(command))
             if model is None:
-                model = "claude-sonnet-4-6" if provider == "claude" else "gpt-5.2"
+                from . import config
+                model = config.DEFAULT_PROVIDER_MODELS.get(provider, config.DEFAULT_PROVIDER_MODELS["claude"])
             try:
                 if provider == "claude":
                     from . import warm_session as _ws
@@ -440,7 +441,8 @@ def run_with_live_panel(
                 _prov = _detect_provider_from_parts(list(command))
                 _model = _extract_model_from_parts(list(command))
                 if _model is None:
-                    _model = "claude-sonnet-4-6" if _prov == "claude" else "gpt-5.2"
+                    from . import config
+                    _model = config.DEFAULT_PROVIDER_MODELS.get(_prov, config.DEFAULT_PROVIDER_MODELS["claude"])
                 if _prov == "claude":
                     from . import warm_session as _ws
                     iso = _ws.worker_cwd(burnless_root, _model)

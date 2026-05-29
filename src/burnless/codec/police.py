@@ -15,13 +15,16 @@ def maybe_police(
     confidence: float,
     *,
     project_root: Path | None = None,
-    model: str = "claude-sonnet-4-6",
+    model: str | None = None,
     client: anthropic.Anthropic | None = None,
 ) -> tuple[str, bool]:
     """
     Returns (final_capsule, was_corrected).
     Runs only when confidence < 0.8 or BURNLESS_POLICE=1.
     """
+    if model is None:
+        from .. import config
+        model = config.DEFAULT_TIER_MODELS["silver"]
     if confidence >= 0.8 and os.environ.get("BURNLESS_POLICE") != "1":
         return capsule, False
 
