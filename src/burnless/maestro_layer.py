@@ -117,8 +117,13 @@ def process_envelope(
     timeout: int = 180,
 ) -> dict:
     """Send envelope to persistent Maestro subprocess; return structured result + decoder hint."""
-    from . import config as _config
-    model = model or _config.DEFAULT_TIER_MODELS["silver"]
+    from . import config as _config, state as _state, paths as _paths
+    if model is None:
+        try:
+            st = _state.load(_paths.paths_for(project_root / ".burnless")["state"])
+            model = st.get("brain_model") or _config.DEFAULT_TIER_MODELS["silver"]
+        except Exception:
+            model = _config.DEFAULT_TIER_MODELS["silver"]
     key = str(project_root.resolve())
     with _lock:
         session_id = _maestro_sessions.get(key)
@@ -167,6 +172,14 @@ def process_envelope(
     if compression_mode == "loose":
         decoder_hint += " You may expand with light context where helpful."
 
+    resp_text = json.dumps(response_envelope_json) if response_envelope_json else (final_text or "")
+    compression_telemetry = {
+        "envelope_chars": len(envelope),
+        "response_chars": len(resp_text),
+        "maestro_model": model,
+        "ratio": round(len(envelope) / max(len(resp_text), 1), 3),
+    }
+
     return {
         "response_envelope": response_envelope_json or {"raw_text": final_text},
         "decoder_hint": decoder_hint,
@@ -174,4 +187,5 @@ def process_envelope(
         "maestro_session_id": new_session_id or session_id,
         "maestro_exit_code": proc.returncode,
         "usage": usage,
+        "compression": compression_telemetry,
     }
