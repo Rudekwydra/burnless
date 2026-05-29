@@ -15,8 +15,9 @@ import shutil
 import subprocess
 
 from .preamble import system_prompt_with_suffix
+from . import config
 
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_MODEL = config.DEFAULT_TIER_MODELS["bronze"]
 
 MAESTRO_SYSTEM_PROMPT = """You are MAESTRO, the conducting layer of the burnless orchestration system.
 
