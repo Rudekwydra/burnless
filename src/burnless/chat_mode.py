@@ -371,12 +371,8 @@ def _resolve_model(tier: str, cfg: dict, state: dict) -> str:
     if maestro_model:
         return maestro_model
     agent_name = cfg.get("agents", {}).get(tier, {}).get("name", "")
-    tier_map = {
-        "gold": "claude-opus-4-7",
-        "silver": "claude-sonnet-4-6",
-        "bronze": "claude-haiku-4-5-20251001",
-    }
-    return MAESTRO_TIER_MODEL.get(tier, tier_map.get(tier, "claude-sonnet-4-6"))
+    tier_map = dict(config_mod.DEFAULT_TIER_MODELS)
+    return MAESTRO_TIER_MODEL.get(tier, tier_map.get(tier, config_mod.DEFAULT_TIER_MODELS["silver"]))
 
 
 def _extract_text(response) -> str:
