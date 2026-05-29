@@ -113,10 +113,12 @@ def process_envelope(
     envelope: str,
     project_root: Path,
     compression_mode: str = "tight",
-    model: str = "claude-sonnet-4-6",
+    model: str | None = None,
     timeout: int = 180,
 ) -> dict:
     """Send envelope to persistent Maestro subprocess; return structured result + decoder hint."""
+    from . import config as _config
+    model = model or _config.DEFAULT_TIER_MODELS["silver"]
     key = str(project_root.resolve())
     with _lock:
         session_id = _maestro_sessions.get(key)

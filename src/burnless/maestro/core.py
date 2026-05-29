@@ -9,8 +9,9 @@ import anthropic
 from ..maestro_adapters import MaestroAdapter, current_anthropic_adapter
 from ..codec.glossary_loader import load_glossary
 from .streams import NormalizedEvent
+from .. import config
 
-DEFAULT_BRAIN_MODEL = "claude-sonnet-4-6"
+DEFAULT_BRAIN_MODEL = config.DEFAULT_TIER_MODELS["silver"]
 DEFAULT_MAX_TOKENS = 6000
 THINKING_BUDGET_TOKENS = 4000
 

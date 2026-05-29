@@ -16,12 +16,14 @@ from typing import Any, Iterable
 import anthropic
 
 from .cache_policy import estimate_compacted_tokens, should_compact
+from . import config
 
 
-DEFAULT_MAIN_MODEL = "claude-opus-4-7"
+DEFAULT_MAIN_MODEL = config.DEFAULT_TIER_MODELS["gold"]
 DEFAULT_COMPACTOR_MODEL = "claude-haiku-4-5-20251001"
 
 PRICES_USD_PER_MTOK = {
+    "claude-opus-4-8": {"input": 15.0, "output": 75.0},
     "claude-opus-4-7": {"input": 15.0, "output": 75.0},
     "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
     "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
