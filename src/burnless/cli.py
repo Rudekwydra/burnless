@@ -721,13 +721,13 @@ def _apply_verify_gate(
             )
             verify_log += f"$ {cmd}\n{r.stdout}{r.stderr}\n"
             if r.returncode != 0:
-                stderr_tail = r.stderr[-500:] if r.stderr else ""
+                out_tail = ((r.stdout or "") + (r.stderr or "")).strip()[-500:]
                 with open(log_path, "a", encoding="utf-8") as _lf:
                     _lf.write(verify_log)
                 summary = dict(summary)
                 summary["status"] = "PART"
                 issues = list(summary.get("issues") or [])
-                issues.append(f"verify_failed: {cmd} (rc={r.returncode}): {stderr_tail}")
+                issues.append(f"verify_failed: {cmd} (rc={r.returncode}): {out_tail}")
                 summary["issues"] = issues
                 summary["next"] = cmd
                 return summary
