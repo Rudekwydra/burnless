@@ -91,7 +91,7 @@ def _extract_claude_model(cfg: dict) -> str | None:
         m = re.search(r"--model\s+(\S+)", cmd)
         if m:
             return m.group(1)
-    return "claude-sonnet-4-6"
+    return config_mod.DEFAULT_PROVIDER_MODELS["claude"]
 
 
 def _extract_codex_model(cfg: dict) -> str | None:
@@ -100,7 +100,7 @@ def _extract_codex_model(cfg: dict) -> str | None:
         m = re.search(r"\b-m\s+(\S+)", cmd)
         if m:
             return m.group(1)
-    return "gpt-5.2"
+    return config_mod.DEFAULT_PROVIDER_MODELS["codex"]
 
 
 def _maybe_refresh(burnless_root: Path, cfg: dict) -> None:

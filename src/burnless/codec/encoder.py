@@ -7,8 +7,9 @@ from typing import Any
 import anthropic
 
 from .glossary_loader import load_glossary
+from .. import config
 
-DEFAULT_ENCODER_MODEL = "claude-haiku-4-5"
+DEFAULT_ENCODER_MODEL = config.HAIKU_MODEL
 _TIER_PREFIXES = ("gld", "slv", "brz", "dia", "raw:", "~gld", "+slv")
 _ABBREV = {
     # Generic vocabulary abbreviations.

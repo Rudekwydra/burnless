@@ -84,10 +84,11 @@ def load_claude_oauth_token() -> str | None:
 
 
 def _post_messages(*, headers: dict[str, str], timeout_s: int = 10) -> dict[str, Any]:
+    from . import config
     url = "https://api.anthropic.com/v1/messages"
     body = json.dumps(
         {
-            "model": "claude-haiku-4-5-20251001",
+            "model": config.HAIKU_MODEL,
             "max_tokens": 1,
             "system": "ping",
             "messages": [{"role": "user", "content": "ping"}],
