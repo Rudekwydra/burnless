@@ -5,11 +5,10 @@ from pathlib import Path
 import shlex
 from typing import Protocol
 
+from . import config
 
-DEFAULT_ANTHROPIC_MODELS = (
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5-20251001",
+DEFAULT_ANTHROPIC_MODELS = tuple(
+    config.DEFAULT_TIER_MODELS[t] for t in ("gold", "silver", "bronze")
 )
 
 
