@@ -142,3 +142,21 @@ def test_honest_exit_code_false_skips_gate(tmp_path: Path):
     )
     assert result["status"] == "OK"
     assert result is summary
+
+
+# ── 6. verify_gate captures STDOUT in issue (not just stderr) ───────────────
+
+
+def test_verify_gate_captures_stdout_in_issue(tmp_path):
+    log_path = tmp_path / "vlog_stdout_test.log"
+    log_path.write_text("", encoding="utf-8")
+    s = cli._apply_verify_gate(
+        {"status": "OK"},
+        ['python3 -c "print(6*7)"; false'],
+        cwd="/tmp",
+        did="t",
+        log_path=log_path,
+        timeout=10,
+    )
+    assert s["status"] == "PART"
+    assert "42" in " ".join(s.get("issues", []))  # 42 is produced by 6*7, not in the command text
