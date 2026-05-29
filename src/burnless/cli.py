@@ -68,11 +68,7 @@ def _build_audit_fix_prompt(original: str, did: str, audit: dict) -> str:
 
 DEFAULT_MAX_TOKENS = 4096
 
-MAESTRO_TIER_MODEL = {
-    "gold": "claude-opus-4-7",
-    "silver": "claude-sonnet-4-6",
-    "bronze": "claude-haiku-4-5-20251001",
-}
+MAESTRO_TIER_MODEL = dict(config_mod.DEFAULT_TIER_MODELS)
 ANTHROPIC_ENV_PATHS = (
     Path.home() / ".config" / "burnless" / "anthropic.env",
 )
@@ -282,7 +278,7 @@ def _extract_model(cmd_str: str, provider: str) -> str:
     elif provider == "codex":
         m = re.search(r"-m\s+(\S+)", cmd_str)
         if not m:
-            return "gpt-5.2"
+            return config_mod.DEFAULT_PROVIDER_MODELS["codex"]
     else:
         return ""
     return m.group(1) if m else ""
@@ -1566,7 +1562,7 @@ def cmd_brain(args: argparse.Namespace) -> int:
     _load_anthropic_key()
     state = state_mod.load(p["state"])
     cfg = config_mod.load(p["config"])
-    model = args.model or state.get("brain_model") or "claude-opus-4-7"
+    model = args.model or state.get("brain_model") or config_mod.DEFAULT_TIER_MODELS["gold"]
     history_path = p["root"] / "maestro" / "maestro_history.jsonl"
     _inflight_lock = threading.Lock()
 
@@ -2196,7 +2192,7 @@ def cmd_warm_init(args: argparse.Namespace) -> int:
     results = {}
     if provider in ("claude", "both"):
         from . import warm_session as ws_claude
-        model = getattr(args, "model", None) or "claude-sonnet-4-6"
+        model = getattr(args, "model", None) or config_mod.DEFAULT_PROVIDER_MODELS["claude"]
         print(f"burnless warm init [claude]: seeding warm session for {bl_root.parent} (model={model})...")
         try:
             state = ws_claude.init(bl_root, model=model)
@@ -2209,7 +2205,7 @@ def cmd_warm_init(args: argparse.Namespace) -> int:
             print(f"  claude warm init FAILED: {e}", file=sys.stderr)
     if provider in ("codex", "both"):
         from . import warm_session_codex as ws_codex
-        codex_model = getattr(args, "model", None) or "gpt-5.2"
+        codex_model = getattr(args, "model", None) or config_mod.DEFAULT_PROVIDER_MODELS["codex"]
         print(f"burnless warm init [codex]: seeding warm session for {bl_root.parent} (model={codex_model})...")
         try:
             state = ws_codex.init(bl_root, model=codex_model)
