@@ -361,7 +361,7 @@ def main(argv_extra: list[str] | None = None) -> int:
     project = cfg.get("project_name") or (root.parent.name if root else "burnless")
     burnless_tokens = int(metrics.get("burnless_tokens", 0))
     delegations = int(metrics.get("delegation_counter", 0) or 0)
-    model = cfg.get("brain", {}).get("model", "")
+    model = config_mod.normalize_model(cfg.get("brain", {}).get("model")) or config_mod.resolve_layer_models(cfg).get("maestro") or config_mod.resolve_model("gold", cfg)
 
     # Efficiency hint — opaque estimate for Free, no formula exposed
     plan = cfg.get("plan", "free")
