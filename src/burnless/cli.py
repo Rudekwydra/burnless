@@ -42,6 +42,7 @@ from .delegation_parse import (
     parse_created_at_from_delegation as _parse_created_at_from_delegation,
     parse_goal_from_delegation as _parse_goal_from_delegation,
     extract_test_status as _extract_test_status,
+    extract_verify_block as _extract_verify_block,
 )
 
 from ._pro import audit as _audit_mod
@@ -698,6 +699,64 @@ def cmd_run(args: argparse.Namespace) -> int:
     return _cmd_run_body(args)
 
 
+def _apply_verify_gate(
+    summary: dict,
+    verify_cmds: list[str],
+    *,
+    cwd,
+    did: str,
+    log_path,
+    timeout: int,
+) -> dict:
+    """Re-execute the spec's ## Verify commands after the worker exits.
+
+    No-op if verify_cmds is empty or summary status is not OK.
+    May only demote OK→PART; never promotes any status.
+    Full stdout/stderr appended to log_path; only short tail enters summary.
+    """
+    if not verify_cmds or summary.get("status") != "OK":
+        return summary
+    verify_log = "\n--- VERIFY ---\n"
+    passed = 0
+    for cmd in verify_cmds:
+        try:
+            r = subprocess.run(
+                cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout
+            )
+            verify_log += f"$ {cmd}\n{r.stdout}{r.stderr}\n"
+            if r.returncode != 0:
+                stderr_tail = r.stderr[-500:] if r.stderr else ""
+                with open(log_path, "a", encoding="utf-8") as _lf:
+                    _lf.write(verify_log)
+                summary = dict(summary)
+                summary["status"] = "PART"
+                issues = list(summary.get("issues") or [])
+                issues.append(f"verify_failed: {cmd} (rc={r.returncode}): {stderr_tail}")
+                summary["issues"] = issues
+                summary["next"] = cmd
+                return summary
+            passed += 1
+        except subprocess.TimeoutExpired:
+            verify_log += f"$ {cmd}\n(timeout after {timeout}s)\n"
+            with open(log_path, "a", encoding="utf-8") as _lf:
+                _lf.write(verify_log)
+            summary = dict(summary)
+            summary["status"] = "PART"
+            issues = list(summary.get("issues") or [])
+            issues.append(f"verify_failed: {cmd} (rc=timeout): timed out after {timeout}s")
+            summary["issues"] = issues
+            summary["next"] = cmd
+            return summary
+    verify_log += f"(all {passed} checks passed)\n"
+    with open(log_path, "a", encoding="utf-8") as _lf:
+        _lf.write(verify_log)
+    summary = dict(summary)
+    validated = list(summary.get("validated") or [])
+    validated.append(f"verify: {passed}/{len(verify_cmds)} checks passed")
+    summary["validated"] = validated
+    return summary
+
+
 def _cmd_run_body(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
@@ -711,6 +770,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
         print(f"burnless: delegation {did} not found at {deleg_path}", file=sys.stderr)
         return 2
     deleg_text = deleg_path.read_text(encoding="utf-8")
+    _verify_cmds = _extract_verify_block(deleg_text) if cfg.get("validation", {}).get("honest_exit_code", True) else []
     chain = _parse_chain_from_delegation(deleg_text)
     cache_prefix = bool((cfg.get("cache_prefix") or {}).get("enabled", False))
     prompt = _with_runtime_context(
@@ -1085,6 +1145,13 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             except Exception as _resc_e:
                 print(f"[bronze-rescue] {did}: rescue failed ({_resc_e}), falling back to retry", file=sys.stderr)
 
+    # ── Honest exit code gate (call site A) ─────────────────────────────────
+    summary = _apply_verify_gate(
+        summary, _verify_cmds,
+        cwd=root.parent, did=did, log_path=log_path,
+        timeout=cfg.get("validation", {}).get("verify_timeout_s", 120),
+    )
+
     # ── PART/ERR automatic retry loop (before audit) ─────────────────────────
     retry_cfg = cfg.get("retry", {})
     _max_attempts = int(retry_cfg.get("max_attempts", 1))
@@ -1161,10 +1228,19 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             _new_status = str(_r_sum.get("status") or "").upper()
 
             if _new_status == "OK":
-                summary = _r_sum
-                stale = _r_stale
-                interrupted = _r_interrupted
-                break
+                # Honest exit code gate (call site B) — re-verify before accepting
+                _r_sum = _apply_verify_gate(
+                    _r_sum, _verify_cmds,
+                    cwd=root.parent, did=did, log_path=log_path,
+                    timeout=cfg.get("validation", {}).get("verify_timeout_s", 120),
+                )
+                _new_status = str(_r_sum.get("status") or "").upper()
+                if _new_status == "OK":
+                    summary = _r_sum
+                    stale = _r_stale
+                    interrupted = _r_interrupted
+                    break
+                # gate demoted: fall through to PART merge path below
 
             _orig_issues = summary.get("issues") or []
             _r_issues = _r_sum.get("issues") or []
