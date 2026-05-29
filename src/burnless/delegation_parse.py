@@ -11,6 +11,7 @@ Public API (also re-exported by cli.py with leading-underscore aliases):
     parse_created_at_from_delegation(md)   — ISO timestamp from header
     parse_goal_from_delegation(md)         — goal text from `## Goal` section
     extract_test_status(summary)           — derive OK/FAIL/SKIP from summary
+    extract_verify_block(md)               — shell commands from `## Verify` fenced block
 """
 from __future__ import annotations
 
@@ -55,6 +56,29 @@ def parse_goal_from_delegation(md: str) -> str | None:
     block = after[:end] if end != -1 else after
     text = " ".join(block.split())
     return text or None
+
+
+def extract_verify_block(md: str) -> list[str]:
+    """Extract shell commands from the first fenced code block under a ## Verify section.
+
+    Returns each non-blank, non-comment line as one command string (stripped).
+    Returns [] when the section or a matching fenced block is absent.
+    """
+    section_match = re.search(r'^##+\s*Verify\b', md, re.IGNORECASE | re.MULTILINE)
+    if not section_match:
+        return []
+    after = md[section_match.end():]
+    next_section = re.search(r'^##', after, re.MULTILINE)
+    block_scope = after[:next_section.start()] if next_section else after
+    fence_match = re.search(
+        r'^```(?:sh|bash|shell|verify)?\s*\n(.*?)^```',
+        block_scope,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not fence_match:
+        return []
+    lines = fence_match.group(1).splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.strip().startswith('#')]
 
 
 from .codec.decoder import _coerce_to_list
