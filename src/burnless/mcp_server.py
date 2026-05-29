@@ -504,7 +504,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="maestro",
-            description="3-layer pipeline: send envelope to persistent Maestro (Sonnet), get structured response + decoder hint. Call from a Haiku encoder/decoder layer in the IDE — user input compressed into envelope, Maestro processes via worker delegation, response decoded back to natural language.",
+            description="3-layer pipeline: send envelope to persistent Maestro (Sonnet), get structured response + decoder hint. Call from a Haiku encoder/decoder layer in the IDE — user input compressed into envelope, Maestro processes via worker delegation, response decoded back to natural language. Returns a compression telemetry block (envelope_chars, response_chars, maestro_model, ratio) so the layer can show the user the savings.",
             inputSchema={
                 "type": "object",
                 "properties": {
