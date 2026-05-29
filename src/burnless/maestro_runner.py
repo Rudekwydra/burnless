@@ -14,6 +14,8 @@ import re
 import shutil
 import subprocess
 
+from .preamble import system_prompt_with_suffix
+
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 MAESTRO_SYSTEM_PROMPT = """You are MAESTRO, the conducting layer of the burnless orchestration system.
@@ -82,7 +84,10 @@ def build_command(telegram: str, model: str = DEFAULT_MODEL) -> list[str]:
         "--model", model,
         "--setting-sources", "project,local",
         "--exclude-dynamic-system-prompt-sections",
-        "--system-prompt", MAESTRO_SYSTEM_PROMPT,
+        "--no-session-persistence",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--system-prompt", system_prompt_with_suffix(MAESTRO_SYSTEM_PROMPT),
         "--tools", "",
         "--output-format", "json",
     ]
