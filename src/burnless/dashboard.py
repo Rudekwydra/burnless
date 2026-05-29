@@ -141,4 +141,25 @@ def render_footer(m: dict) -> str:
     return f"\n{bt} burnless tokens"
 
 
+def render_economy(r, *, show_cost: bool = True) -> str:
+    """Render EconomyReport as human-readable string.
+
+    Per-bucket line: name <tokens>tok $<usd> (note)
+    Followed by TOTAL line and assumptions.
+    """
+    lines = []
+    for b in r.buckets:
+        tok_str = fmt_int(int(b.tokens))
+        usd_str = f"{b.usd:.2f}"
+        note_part = f"  ({b.note})" if b.note else ""
+        lines.append(f"{b.name:<40} {tok_str:>12}tok  ${usd_str:>10}{note_part}")
+    lines.append("")
+    tot_tok_str = fmt_int(int(r.total_tokens))
+    tot_usd_str = f"{r.total_usd:.2f}"
+    lines.append(f"{'TOTAL':<40} {tot_tok_str:>12}tok  ${tot_usd_str:>10}")
+    lines.append("")
+    lines.append("assumptions: " + "; ".join(r.assumptions))
+    return "\n".join(lines)
+
+
 render = render_metrics

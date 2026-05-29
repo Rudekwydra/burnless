@@ -2571,6 +2571,31 @@ def _record_and_bump(
 
 
 
+def cmd_economy(args: argparse.Namespace) -> int:
+    root = paths_mod.require_root()
+    p = paths_mod.paths_for(root)
+    cfg = config_mod.load(p["config"])
+    metrics = metrics_mod.load(p["metrics"])
+    from . import economy
+    r = economy.compute_economy(metrics, cfg)
+    if getattr(args, "json", False):
+        # Convert EconomyReport to dict for JSON output
+        buckets_dicts = [
+            {"name": b.name, "tokens": b.tokens, "usd": b.usd, "note": b.note}
+            for b in r.buckets
+        ]
+        output = {
+            "buckets": buckets_dicts,
+            "total_tokens": r.total_tokens,
+            "total_usd": r.total_usd,
+            "assumptions": r.assumptions,
+        }
+        print(json.dumps(output, indent=2, ensure_ascii=False))
+    else:
+        print(dashboard.render_economy(r))
+    return 0
+
+
 def cmd_profile(args: argparse.Namespace) -> int:
     from . import profiles as profiles_mod
     sub = getattr(args, "profile_cmd", None)
@@ -2733,6 +2758,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--since", default=None,
                     help="ISO date (YYYY-MM-DD) to filter --global events")
     sp.set_defaults(func=cmd_metrics)
+
+    sp = sub.add_parser("economy", help="show real $ savings split into 4 buckets")
+    sp.add_argument("--json", action="store_true", help="emit raw JSON")
+    sp.set_defaults(func=cmd_economy)
 
     sp = sub.add_parser("providers", help="inspect or reset multi-provider health stats")
     providers_sub = sp.add_subparsers(dest="providers_cmd")
