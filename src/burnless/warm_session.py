@@ -37,6 +37,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from . import config
+
 
 WARM_SUBDIR = "warm"
 PROVIDER = "claude"
@@ -44,16 +46,16 @@ HEARTBEAT_INTERVAL_MIN = 59  # sliding TTL resets on each read, 1min margin with
 CACHE_TTL_MIN = 60
 
 
-def warm_file_path(burnless_root: Path, model: str) -> Path:
+def warm_file_path(model: str, burnless_root: Path | None = None) -> Path:
     """Per-(provider, model) global pool location.
 
     Lives at ~/.burnless/warm/claude/<model>.json. The `burnless_root`
-    argument is kept for signature compatibility with callers but IGNORED —
-    there is exactly one warm pool per (user, provider, model) that is
-    forked by every worker in every project. Different models keep their
-    own caches; no prune-by-drift.
+    argument is ignored — there is exactly one warm pool per (user, provider,
+    model) that is forked by every worker in every project. Different models
+    keep their own caches; no prune-by-drift.
     """
-    safe_model = model.replace("/", "_").strip()
+    m = config.normalize_model(model) or model
+    safe_model = m.replace("/", "_").strip()
     return Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER / f"{safe_model}.json"
 
 
@@ -66,7 +68,7 @@ def list_warm_files() -> list[Path]:
 
 
 def load_state(burnless_root: Path, model: str) -> dict | None:
-    path = warm_file_path(burnless_root, model)
+    path = warm_file_path(model, burnless_root)
     if not path.exists():
         return None
     try:
@@ -76,7 +78,7 @@ def load_state(burnless_root: Path, model: str) -> dict | None:
 
 
 def save_state(burnless_root: Path, model: str, state: dict) -> None:
-    path = warm_file_path(burnless_root, model)
+    path = warm_file_path(model, burnless_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -181,7 +183,7 @@ def _project_root_from_burnless_root(burnless_root: Path) -> Path:
     return Path(burnless_root).parent.resolve()
 
 
-def init(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
+def init(burnless_root: Path, *, model: str = config.DEFAULT_PROVIDER_MODELS["claude"]) -> dict:
     """Create a fresh warm session for this project. Runs W0 to seed cache."""
     existing = load_state(burnless_root, model)
     if existing and is_alive(burnless_root, model):
@@ -308,7 +310,7 @@ def prune_ghost(burnless_root: Path, model: str, expected_brief: str | None = No
         reason = drift_reason
     else:
         return (False, "")
-    path = warm_file_path(burnless_root, model)
+    path = warm_file_path(model, burnless_root)
     try:
         path.unlink()
         return (True, reason)
@@ -341,7 +343,7 @@ def touch(burnless_root: Path, model: str) -> None:
     save_state(burnless_root, model, state)
 
 
-def refresh(burnless_root: Path, *, model: str = "claude-sonnet-4-6") -> dict:
+def refresh(burnless_root: Path, *, model: str = config.DEFAULT_PROVIDER_MODELS["claude"]) -> dict:
     """Send a disposable fork against the warm UUID to refresh prompt-cache TTL.
 
     The fork reads the warm prefix (cache_read on Anthropic side refreshes

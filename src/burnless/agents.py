@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
+from . import config
+
 
 class AgentError(RuntimeError):
     pass
@@ -554,11 +556,11 @@ def is_available(agent_cfg: dict) -> bool:
 def _extract_model_from_parts(parts: list[str]) -> str | None:
     """Look for `--model X` or `-m X` in CLI args (claude/codex pattern).
 
-    Returns the model identifier or None if not found.
+    Returns the canonical model id (alias resolved) or None if not found.
     """
     for i, tok in enumerate(parts):
         if tok in ("--model", "-m") and i + 1 < len(parts):
-            return parts[i + 1]
+            return config.normalize_model(parts[i + 1])
     return None
 
 
@@ -601,7 +603,7 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
     model = _extract_model_from_parts(parts)
     if model is None:
         # Default by provider
-        model = "claude-sonnet-4-6" if provider == "claude" else "gpt-5.2"
+        model = config.DEFAULT_PROVIDER_MODELS.get(provider, config.DEFAULT_PROVIDER_MODELS["claude"])
     burnless_root = Path(cwd) / ".burnless"
     try:
         if provider == "claude":
@@ -694,7 +696,7 @@ def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | N
             _prov = _detect_provider_from_parts(list(parts))
             _model = _extract_model_from_parts(list(parts))
             if _model is None:
-                _model = "claude-sonnet-4-6" if _prov == "claude" else "gpt-5.2"
+                _model = config.DEFAULT_PROVIDER_MODELS.get(_prov, config.DEFAULT_PROVIDER_MODELS["claude"])
             if _prov == "claude":
                 from . import warm_session as _ws
                 _ws.touch(Path(cwd) / ".burnless", _model)

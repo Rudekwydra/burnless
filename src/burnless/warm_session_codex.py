@@ -25,23 +25,23 @@ import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from . import config
 
 WARM_SUBDIR = "warm"
 PROVIDER = "codex"
 TTL_S = 300                      # conservative: base >=600s, we use 300s
 HEARTBEAT_INTERVAL_S = 300       # ~5min — base layer survives >=600s; trade off the ~1k-token secondary layer for 6x fewer pings
 ISO_CWD_ROOT_NAME = "iso-cwd-codex"  # ~/.burnless/iso-cwd-codex/<uuid>/
-DEFAULT_MODEL = "gpt-5.2"
+DEFAULT_MODEL = config.DEFAULT_PROVIDER_MODELS["codex"]
 
 
-def warm_file_path(burnless_root: Path, model: str) -> Path:
+def warm_file_path(model: str, burnless_root: Path | None = None) -> Path:
     """Per-(provider, model) global pool location.
 
     Lives at ~/.burnless/warm/codex/<model>.json. The `burnless_root`
-    argument is kept for signature compatibility with callers but IGNORED —
-    there is exactly one warm pool per (user, provider, model) that is
-    forked by every worker in every project. Different models keep their
-    own caches; no prune-by-drift.
+    argument is ignored — there is exactly one warm pool per (user, provider,
+    model) that is forked by every worker in every project. Different models
+    keep their own caches; no prune-by-drift.
     """
     safe_model = model.replace("/", "_").strip()
     return Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER / f"{safe_model}.json"
@@ -56,7 +56,7 @@ def list_warm_files() -> list[Path]:
 
 
 def load_state(burnless_root: Path, model: str) -> dict | None:
-    path = warm_file_path(burnless_root, model)
+    path = warm_file_path(model, burnless_root)
     if not path.exists():
         return None
     try:
@@ -66,7 +66,7 @@ def load_state(burnless_root: Path, model: str) -> dict | None:
 
 
 def save_state(burnless_root: Path, model: str, state: dict) -> None:
-    path = warm_file_path(burnless_root, model)
+    path = warm_file_path(model, burnless_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -344,7 +344,7 @@ def prune_stale(burnless_root: Path, model: str, expected_brief: str | None = No
         reason = drift_reason
     else:
         return (False, "")
-    path = warm_file_path(burnless_root, model)
+    path = warm_file_path(model, burnless_root)
     try:
         path.unlink()
         return (True, reason)
