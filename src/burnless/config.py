@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import re
 import yaml
 
 DEFAULT_CONFIG: dict = {
@@ -302,7 +303,73 @@ def _normalize_legacy_tiers(data: dict, *, prefer_diamond: bool = False) -> None
                         silver_rules.append(kw)
 
 
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_TIER_MODELS = {
+    "gold": "claude-opus-4-8",
+    "silver": "claude-sonnet-4-6",
+    "bronze": "claude-haiku-4-5-20251001",
+}
+
+DEFAULT_PROVIDER_MODELS = {
+    "claude": "claude-sonnet-4-6",
+    "codex": "gpt-5.2",
+}
+
+HAIKU_MODEL = DEFAULT_TIER_MODELS["bronze"]
+
+MODEL_ALIASES = {
+    "opus": "claude-opus-4-8",
+    "sonnet": "claude-sonnet-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+}
+
+
+def _extract_model_token(cmd: str) -> str | None:
+    m = re.search(r"(?:--model|-m)\s+(\S+)", cmd)
+    return m.group(1) if m else None
+
+
+def normalize_model(name: str | None) -> str | None:
+    if not name:
+        return name
+    return MODEL_ALIASES.get(name.strip(), name.strip())
+
+
+def resolve_model(tier: str, cfg: dict | None = None) -> str:
+    if cfg:
+        agents = cfg.get("agents", {})
+        agent = agents.get(tier, {})
+        cmd = agent.get("command", "")
+        if cmd:
+            token = _extract_model_token(cmd)
+            if token:
+                return normalize_model(token)
+        name = agent.get("name")
+        if name:
+            return normalize_model(name)
+    return DEFAULT_TIER_MODELS.get(tier, DEFAULT_TIER_MODELS["silver"])
+
+
+def resolve_fallback_model(tier: str, cfg: dict | None = None) -> str | None:
+    if cfg:
+        agents = cfg.get("agents", {})
+        agent = agents.get(tier, {})
+        providers = agent.get("providers", [])
+        if isinstance(providers, list) and len(providers) > 1:
+            p = providers[1]
+            if isinstance(p, dict):
+                cmd = p.get("command", "")
+                token = _extract_model_token(cmd) if cmd else None
+                if token:
+                    return normalize_model(token)
+                pname = p.get("name")
+                if pname:
+                    return normalize_model(pname)
+        fallback = agent.get("fallback")
+        if fallback:
+            return normalize_model(fallback)
+    return None
+
 
 _PRESET_RESOLUTIONS = {
     "protocol": {"encoder": HAIKU_MODEL, "maestro": HAIKU_MODEL},
