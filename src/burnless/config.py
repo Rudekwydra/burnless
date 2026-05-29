@@ -204,14 +204,22 @@ def resolve_stale_timeout(cfg: dict, tier: str, cli_override: int | None = None)
 
 
 def load(path: Path) -> dict:
-    if not path.exists():
+    def _read(p: Path) -> dict:
+        if not p.exists():
+            return {}
+        with p.open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+
+    global_path = Path.home() / ".config" / "burnless" / "config.yaml"
+    global_data = _read(global_path)
+    project_data = _read(path)
+    user_data = _deep_merge(global_data, project_data)
+    if not user_data:
         return DEFAULT_CONFIG
-    with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    user_agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
+    user_agents = user_data.get("agents") if isinstance(user_data.get("agents"), dict) else {}
     legacy_diamond_only = "diamond" in user_agents and "silver" not in user_agents
-    user_comp = data.get("compression", {}) if isinstance(data.get("compression"), dict) else {}
-    data = _deep_merge(DEFAULT_CONFIG, data)
+    user_comp = user_data.get("compression", {}) if isinstance(user_data.get("compression"), dict) else {}
+    data = _deep_merge(DEFAULT_CONFIG, user_data)
     _normalize_legacy_tiers(data, prefer_diamond=legacy_diamond_only)
     from . import compression as _comp
     comp = data.setdefault("compression", {})
