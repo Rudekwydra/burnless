@@ -141,3 +141,77 @@ def tail_events(burnless_root: Path, did: str, *, since_n: int = 0, follow: bool
                 if not follow:
                     return
                 time.sleep(0.5)
+
+
+def active_run(burnless_root: Path, *, stale_s: float = 8.0) -> dict | None:
+    """Poll for the most recent active run. Returns plan dict if active, else None.
+    active if: (liveness exists, fresh, last event != finish) OR (no liveness yet, plan fresh).
+    Swallows all exceptions -> None."""
+    try:
+        runs_dir = burnless_root / "runs"
+        if not runs_dir.is_dir():
+            return None
+        plans = list(runs_dir.glob("*.plan.json"))
+        if not plans:
+            return None
+
+        # Find the plan with the max started_at (string), fallback to file mtime
+        best_plan = None
+        best_ts = None
+        for p in plans:
+            try:
+                plan = json.loads(p.read_text(encoding="utf-8"))
+                ts_str = plan.get("started_at")
+                if ts_str is None:
+                    # Fallback to file mtime if no started_at
+                    ts_cmp = (p.stat().st_mtime, p)
+                else:
+                    # String compare for started_at (ISO8601 strings sort lexicographically)
+                    ts_cmp = (ts_str, p)
+
+                if best_ts is None or ts_cmp > best_ts:
+                    best_ts = ts_cmp
+                    best_plan = plan
+            except (json.JSONDecodeError, OSError, KeyError):
+                continue
+
+        if best_plan is None:
+            return None
+
+        did = best_plan.get("id")
+        if not did:
+            return None
+
+        now = time.time()
+        lv = liveness_path(burnless_root, did)
+        plan_file = runs_dir / f"{did}.plan.json"
+
+        # Check if active:
+        # Case 1: liveness file exists, is fresh, and last event is not "finish"
+        if lv.exists():
+            lv_mtime = lv.stat().st_mtime
+            if now - lv_mtime <= stale_s:
+                # Read the last non-empty line to check if last event is "finish"
+                try:
+                    with lv.open("r", encoding="utf-8") as f:
+                        last_line = ""
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                last_line = line
+                        if last_line:
+                            last_event = json.loads(last_line)
+                            if last_event.get("event") != "finish":
+                                return best_plan
+                except (json.JSONDecodeError, OSError):
+                    pass
+
+        # Case 2: no liveness file yet, but plan file is fresh
+        if not lv.exists():
+            plan_mtime = plan_file.stat().st_mtime if plan_file.exists() else 0
+            if now - plan_mtime <= stale_s:
+                return best_plan
+
+        return None
+    except Exception:
+        return None

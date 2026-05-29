@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import __version__
 from . import config as config_mod
+from . import liveness as liveness_mod
 from . import metrics as metrics_mod
 from . import paths as paths_mod
 from . import subscription_usage as sub_usage_mod
@@ -64,7 +65,8 @@ def _status_line(tokens: int, delegations: int, bin_name: str, hint: str = "",
     return base
 
 
-def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, hint: str = "") -> int:
+def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, hint: str = "",
+             cfg: dict | None = None, burnless_root: Path | None = None) -> int:
     try:
         import ptyprocess
     except ImportError:
@@ -118,11 +120,14 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
         "last_usage_hint": "",
         "last_quota_ts": 0.0,
         "last_quota_hint": "",
+        "last_run_ts": 0.0,
+        "last_run_hint": "",
     }
     _TIP_SWAP_EVERY = 10.0   # seconds
     _BURST_DURATION = 1.0    # seconds the orange "+N" stays visible
     _USAGE_TTL = 2.0         # seconds
     _QUOTA_TTL = 15.0        # seconds
+    _RUN_TTL = 1.0           # seconds
 
     _quota = sub_usage_mod.UsagePoller(ttl_s=60)
 
@@ -173,6 +178,21 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
             _session["tip_last_swap"] = now
         active_hint = _PRO_TIPS[_session["tip_index"]] if hint == "" else hint
 
+        # Poll for active run badge (tier + model label)
+        if burnless_root is not None:
+            now3 = time.time()
+            if now3 - float(_session.get("last_run_ts", 0.0) or 0.0) >= _RUN_TTL:
+                try:
+                    pr = liveness_mod.active_run(burnless_root)
+                    if pr:
+                        t = pr.get("tier", "?")
+                        _session["last_run_hint"] = f"▶ {t}·{config_mod.tier_model_label(t, cfg)}"
+                    else:
+                        _session["last_run_hint"] = ""
+                except Exception:
+                    _session["last_run_hint"] = ""
+                _session["last_run_ts"] = now3
+
         # Optional: show live cache usage from Claude Code JSONL (codeburn-style source),
         # without depending on codeburn itself.
         if os.environ.get("BURNLESS_PTY_USAGE", "1").strip() != "0":
@@ -209,6 +229,10 @@ def _run_pty(maestro_argv: list[str], metrics_path: Path | None, bin_name: str, 
                     active_hint = _session["last_quota_hint"]
             elif _session.get("last_usage_hint"):
                 active_hint = _session["last_usage_hint"]
+
+        # Prepend run badge if active
+        if _session.get("last_run_hint"):
+            active_hint = f"{_session['last_run_hint']} · {active_hint}" if active_hint else _session["last_run_hint"]
 
         line = _status_line(tokens, delegations, bin_name, active_hint, burst_delta)[:cur_cols - 1]
         title_text = f"\U0001f525 {tokens:,} bt · {delegations}d"
@@ -414,4 +438,4 @@ def main(argv_extra: list[str] | None = None) -> int:
     sys.stdout.write("\x1b[2J\x1b[H")
     sys.stdout.flush()
 
-    return _run_pty(full_argv, metrics_path, bin_name, hint)
+    return _run_pty(full_argv, metrics_path, bin_name, hint, cfg=cfg, burnless_root=root)

@@ -350,6 +350,26 @@ def resolve_model(tier: str, cfg: dict | None = None) -> str:
     return DEFAULT_TIER_MODELS.get(tier, DEFAULT_TIER_MODELS["silver"])
 
 
+def tier_model_label(tier: str, cfg: dict | None = None) -> str:
+    """Derive human-readable model label from tier (via resolve_model SSO)."""
+    try:
+        mid = (resolve_model(tier, cfg) or "").lower()
+        if "opus" in mid:
+            return "Opus"
+        elif "sonnet" in mid:
+            return "Sonnet"
+        elif "haiku" in mid:
+            return "Haiku"
+        elif "codex" in mid or "gpt" in mid:
+            return "Codex"
+        elif any(k in mid for k in ("ollama", "mistral", "llama")):
+            return "Ollama"
+        else:
+            return (mid.split("-")[0] or tier).capitalize()
+    except Exception:
+        return tier.capitalize()
+
+
 def resolve_fallback_model(tier: str, cfg: dict | None = None) -> str | None:
     if cfg:
         agents = cfg.get("agents", {})
