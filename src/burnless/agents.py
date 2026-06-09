@@ -606,10 +606,17 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> list[str]:
         model = config.DEFAULT_PROVIDER_MODELS.get(provider, config.DEFAULT_PROVIDER_MODELS["claude"])
     burnless_root = Path(cwd) / ".burnless"
     try:
-        if provider == "claude":
-            from . import warm_session as _ws
-        else:
-            from . import warm_session_codex as _ws
+        # Single-source: the warm pool follows from the provider's cache mode
+        # (cache_modes registry), not a hardcoded provider branch. warm_module is
+        # auth-invariant today, so "subscription" is a safe resolution key.
+        import importlib
+        from .coreconfig.schema import Agent as _Agent
+        from .coreconfig.resolver import resolve_cache_mode as _resolve_cache_mode
+        _prov = "anthropic" if provider == "claude" else provider  # detect-vocab → Agent-vocab
+        _cmode = _resolve_cache_mode(_Agent(name="_warm", role="execute", provider=_prov, auth="subscription"))
+        if not _cmode.warm_module:
+            return parts  # this provider's cache mode has no warm pool (structural, cold)
+        _ws = importlib.import_module(_cmode.warm_module)
         extra = _ws.fork_args(burnless_root, model)
         if not extra:
             try:
