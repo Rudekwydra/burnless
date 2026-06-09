@@ -10,6 +10,7 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime, timezone
+from dataclasses import dataclass
 
 from . import __version__, TAGLINE
 from . import config as config_mod
@@ -72,6 +73,18 @@ MAESTRO_TIER_MODEL = dict(config_mod.DEFAULT_TIER_MODELS)
 ANTHROPIC_ENV_PATHS = (
     Path.home() / ".config" / "burnless" / "anthropic.env",
 )
+
+
+@dataclass
+class RunOpts:
+    id: str
+    timeout: int | None = None
+    stale_timeout_s: int | None = None
+    dry_run: bool = False
+    progress: str | None = None
+    mode: str | None = None
+    cold_cache: bool = False
+    verbose: bool = False
 
 
 def _load_anthropic_key() -> str | None:
@@ -754,13 +767,26 @@ def _apply_verify_gate(
 
 
 def _cmd_run_body(args: argparse.Namespace) -> int:
-    root = paths_mod.require_root()
+    return execute_delegation(RunOpts(
+        id=args.id,
+        timeout=args.timeout,
+        stale_timeout_s=getattr(args, "stale_timeout_s", None),
+        dry_run=args.dry_run,
+        progress=getattr(args, "progress", None),
+        mode=getattr(args, "mode", None),
+        cold_cache=getattr(args, "cold_cache", False),
+        verbose=getattr(args, "verbose", False),
+    ))
+
+
+def execute_delegation(opts: RunOpts, root=None) -> int:
+    root = root or paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
     state = state_mod.load(p["state"])
     metrics = metrics_mod.load(p["metrics"])
     metrics_mod.bump_legacy_counter(p["metrics"], "legacy_run_calls")
-    did = args.id
+    did = opts.id
     deleg_path = p["delegations"] / f"{did}.md"
     if not deleg_path.exists():
         print(f"burnless: delegation {did} not found at {deleg_path}", file=sys.stderr)
@@ -794,7 +820,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     warm_codex_brief = ""
     warm_codex_flags: list[str] = []
 
-    if args.dry_run:
+    if opts.dry_run:
         print(f"[dry-run] would run: {' '.join(agents_mod.resolve_command(selected_agent_cfg))}")
         if selected_provider:
             print(f"[dry-run] selected provider: {selected_provider}")
@@ -813,18 +839,18 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     log_path = p["logs"] / f"{did}.log"
     bt_before = metrics_mod.load(p["metrics"])["burnless_tokens"]
     # Mode resolution: --progress > config display.progress_detail > legacy --watch/--quiet/--full
-    progress_arg = getattr(args, "progress", None)
+    progress_arg = opts.progress
     if progress_arg:
         run_mode = progress_arg
     else:
-        legacy_mode = getattr(args, "mode", None)
+        legacy_mode = opts.mode
         if legacy_mode and legacy_mode != "plain":
             run_mode = legacy_mode
         else:
             display_cfg = cfg.get("display", {}).get("progress_detail", "brief")
             run_mode = display_cfg if display_cfg in {"minimal", "brief", "full", "watch", "quiet", "plain"} else "brief"
     from burnless.config import resolve_stale_timeout
-    stale_timeout_s = resolve_stale_timeout(cfg, tier, getattr(args, "stale_timeout_s", None))
+    stale_timeout_s = resolve_stale_timeout(cfg, tier, opts.stale_timeout_s)
 
     # Persist a lightweight run snapshot before handing off to the worker.
     runs_dir = p["runs"]
@@ -844,8 +870,8 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
 
     api_key = _load_anthropic_key()
     multi_provider = _tier_has_multiple_providers(agent_cfg)
-    use_maestro = (not multi_provider) and _should_use_maestro_backend(args, cfg, tier)
-    use_cached_worker = (not multi_provider) and (not use_maestro) and _should_use_cached_worker(args, cfg, tier, api_key)
+    use_maestro = (not multi_provider) and _should_use_maestro_backend(opts, cfg, tier)
+    use_cached_worker = (not multi_provider) and (not use_maestro) and _should_use_cached_worker(opts, cfg, tier, api_key)
     result: dict | None = None
     backend_used = "subprocess"
     if use_maestro:
@@ -854,13 +880,13 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
         )
         if result is not None:
             backend_used = "maestro"
-            if sys.stdout.isatty() or getattr(args, "verbose", False):
+            if sys.stdout.isatty() or opts.verbose:
                 print(f"Running {did} with maestro/{tier} ({result['command'][1]})...")
 
     if result is None and use_cached_worker:
         from . import cached_worker as _cw
         model = MAESTRO_TIER_MODEL.get(tier, MAESTRO_TIER_MODEL["silver"])
-        if sys.stdout.isatty() or getattr(args, "verbose", False):
+        if sys.stdout.isatty() or opts.verbose:
             print(f"Running {did} with cached_worker/{tier} ({model})...", flush=True)
         try:
             result = _cw.run_cached_worker(
@@ -872,7 +898,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 max_tokens=DEFAULT_MAX_TOKENS,
                 timeout_s=stale_timeout_s,
                 log_path=log_path,
-                cold_cache=getattr(args, "cold_cache", False),
+                cold_cache=opts.cold_cache,
             )
             backend_used = "cached_worker"
         except Exception as e:
@@ -888,7 +914,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 log_path=log_path,
                 mode=run_mode,
                 burnless_tokens=bt_before,
-                timeout=args.timeout,
+                timeout=opts.timeout,
                 stale_timeout=stale_timeout_s,
                 tool_suspect_interval_s=int((cfg.get("display") or {}).get("tool_suspect_interval_s", 60)),
                 tool_hard_max_s=int((cfg.get("display") or {}).get("tool_hard_max_s", 1800)),
@@ -901,9 +927,9 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             result = result_obj.to_dict()
         except Exception as e:
             print(f"Runner failed; falling back to plain runner. ({e})", file=sys.stderr)
-            if sys.stdout.isatty() or getattr(args, "verbose", False):
+            if sys.stdout.isatty() or opts.verbose:
                 print(f"Running {did} with {tier}/{selected_agent_cfg['name']}...")
-            result = agents_mod.run(selected_agent_cfg, prompt, timeout=args.timeout, cwd=root.parent)
+            result = agents_mod.run(selected_agent_cfg, prompt, timeout=opts.timeout, cwd=root.parent)
             deleg_mod.write_log(log_path, result)
 
     if result is not None and backend_used in {"subprocess", "cached_worker"} and not result.get("provider_attempts"):
@@ -930,7 +956,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 log_path=log_path,
                 mode=run_mode,
                 burnless_tokens=bt_before,
-                timeout=args.timeout,
+                timeout=opts.timeout,
                 stale_timeout=stale_timeout_s,
                 tool_suspect_interval_s=int((cfg.get("display") or {}).get("tool_suspect_interval_s", 60)),
                 tool_hard_max_s=int((cfg.get("display") or {}).get("tool_hard_max_s", 1800)),
@@ -941,7 +967,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 warm_codex_flags=warm_codex_flags,
             ).to_dict()
         else:
-            fallback_result = agents_mod.run(fallback_cfg, prompt, timeout=args.timeout, cwd=root.parent, tier=tier)
+            fallback_result = agents_mod.run(fallback_cfg, prompt, timeout=opts.timeout, cwd=root.parent, tier=tier)
             with log_path.open("a", encoding="utf-8") as _lf:
                 _lf.write("\n\n--- PROVIDER FALLBACK ATTEMPT ---\n" + fallback_result.get("stdout", "") + "\n")
         if not fallback_result.get("provider_attempts"):
@@ -1061,7 +1087,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
             )
             try:
                 _blk_retry = agents_mod.run(
-                    agent_cfg, _full_push_prompt, timeout=args.timeout, cwd=root.parent
+                    agent_cfg, _full_push_prompt, timeout=opts.timeout, cwd=root.parent
                 )
                 with log_path.open("a", encoding="utf-8") as _lf:
                     _lf.write("\n\n--- LAZY_FALLBACK ---\n" + _blk_retry.get("stdout", "") + "\n")
@@ -1103,7 +1129,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
                 f"- Burnless state directory: {root}\n"
             )
             try:
-                _rescue_timeout = min(int(args.timeout or 300), 300)
+                _rescue_timeout = min(int(opts.timeout or 300), 300)
                 _rescue_result = agents_mod.run(
                     _bronze_tier_cfg, _rescue_prompt, timeout=_rescue_timeout, cwd=root.parent
                 )
@@ -1173,9 +1199,9 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
 
             _retry_prompt_text = prompt
             if _is_stale:
-                _retry_timeout = min(stale_timeout_s * 2, int(args.timeout or stale_timeout_s * 2))
+                _retry_timeout = min(stale_timeout_s * 2, int(opts.timeout or stale_timeout_s * 2))
             else:
-                _retry_timeout = int(args.timeout or 600)
+                _retry_timeout = int(opts.timeout or 600)
 
             print(f"[retry] {did}: prev={_cur_status}, attempt {_retry_count + 1}", file=sys.stderr)
             try:
@@ -1318,7 +1344,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
     # session history). Verbose (3-line summary+reason) opt-in via --verbose
     # or auto-on for TTY humans.
     status_str = summary.get("status", "?")
-    verbose = bool(getattr(args, "verbose", False)) or sys.stdout.isatty()
+    verbose = bool(opts.verbose) or sys.stdout.isatty()
     if interrupted and not stale:
         if verbose:
             print("Worker stopped by user.")
