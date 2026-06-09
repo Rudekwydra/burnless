@@ -9,6 +9,7 @@ from .schema import DEFAULT_TIERS, TierDefinition
 from .resolver import (
     default_config,
     load,
+    min_cache_tokens,
     normalize_model,
     resolve_keywords,
     resolve_model,
@@ -21,6 +22,7 @@ __all__ = [
     "TierDefinition",
     "default_config",
     "load",
+    "min_cache_tokens",
     "normalize_model",
     "resolve_keywords",
     "resolve_model",

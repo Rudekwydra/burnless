@@ -220,3 +220,14 @@ def resolve_cache_mode(agent: Agent, cfg: dict | None = None) -> CacheMode:
             return CacheMode(**fields)
 
     return base
+
+
+def min_cache_tokens(model: str | None) -> int:
+    """Minimum prefix tokens needed to activate prompt caching for this model.
+    Haiku requires 2048; Sonnet/Opus/Claude-4.x 1024. Single source for cold-start sizing.
+    """
+    from .schema import MODEL_MIN_CACHE_TOKENS_DEFAULT, MODEL_MIN_CACHE_TOKENS_HAIKU
+    m = (model or "").lower()
+    if "haiku" in m:
+        return MODEL_MIN_CACHE_TOKENS_HAIKU
+    return MODEL_MIN_CACHE_TOKENS_DEFAULT
