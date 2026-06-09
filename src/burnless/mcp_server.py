@@ -224,27 +224,36 @@ async def _run_background(id: str, burnless_root: Path) -> dict:
 
 
 async def _run_sync(id: str, burnless_root: Path) -> dict:
+    import io
+    import contextlib
+    import json as _json
+    from . import paths as _paths
+    from .cli import execute_delegation, RunOpts
     try:
         start = time.time()
-        cfg = _get_config(burnless_root)
-        result = live_runner.run_with_overflow_retries(
-            id=id,
-            burnless_root=burnless_root,
-            config=cfg,
-        )
+        paths = _paths.paths_for(burnless_root)
+        buf = io.StringIO()
+        # execute_delegation prints to stdout/stderr; capture so the MCP JSON-RPC channel stays clean.
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = execute_delegation(RunOpts(id=id, progress="quiet", verbose=False), root=burnless_root)
         duration = time.time() - start
 
-        if isinstance(result, dict) and "error" not in result:
-            capsule_path = burnless_root / "capsules" / f"{id}.json"
-            return {
-                "id": id,
-                "status": result.get("status", "OK"),
-                "envelope": result,
-                "capsule_path": str(capsule_path),
-                "duration_seconds": duration,
-            }
-        else:
-            return {"error": "worker_failed", "hint": str(result)}
+        summary_path = paths["temp"] / f"{id}.json"
+        capsule_path = paths["capsules"] / f"{id}.json"
+        envelope = None
+        if summary_path.exists():
+            try:
+                envelope = _json.loads(summary_path.read_text(encoding="utf-8"))
+            except Exception:
+                envelope = None
+        status = (envelope or {}).get("status") or ("OK" if rc == 0 else "ERR")
+        return {
+            "id": id,
+            "status": status,
+            "envelope": envelope,
+            "capsule_path": str(capsule_path),
+            "duration_seconds": duration,
+        }
     except Exception as e:
         return {"error": "worker_failed", "hint": str(e)}
 
