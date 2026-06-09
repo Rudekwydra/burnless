@@ -17,17 +17,18 @@ from burnless.maestro.engine import (
     window_tokens,
 )
 
-# NOTE: with the DEFAULT_CONFIG ratio (0.30) and K=8 the ROI inequality
-# K*r*(1-ratio) > W*ratio is 0.56 > 0.60 — false for ANY window size, so
-# should_compact never fires. Rolling ultra-compaction needs a more
-# aggressive ratio; 0.10 gives 0.72 > 0.20 → fires once window >= min_hot_tail.
+# NOTE: with S=150 (capsule_budget_tokens) and M=0 (compaction_cost_tokens),
+# B* = 150 + (2.0*150+0)/(8*0.10) = 525 < min_hot_tail=1500, so the
+# min_hot_tail gate is the binding constraint — compaction fires at window ≥ 1500,
+# same as the old proportional-ratio-0.10 behavior.
 CFG = {
     "cache_policy": {
         "cache_read_ratio": 0.10,
         "cache_write_ratio": 2.0,
         "expected_future_turns": 8,
         "min_hot_tail_tokens": 1500,
-        "estimated_compaction_ratio": 0.10,
+        "capsule_budget_tokens": 150,   # constant S=150 → B*=525 < min_hot_tail
+        "compaction_cost_tokens": 0,    # M=0: fires as soon as window >= min_hot_tail
     }
 }
 
@@ -178,3 +179,30 @@ def test_assemble_prompt_without_capsule_has_no_state_header():
     state = PartnerState()
     prompt = assemble_prompt(state, "hello")
     assert prompt == "user: hello"
+
+
+def test_trigger_is_size_driven():
+    """Compaction trigger must be SIZE-DRIVEN: small window no-compact, large window compact.
+
+    With DEFAULT_CONFIG cache_policy: S=1500, M=4000, w=2.0, K=8, r=0.10
+    B* = S + (w*S + M)/(K*r) = 1500 + (2.0*1500+4000)/(8*0.10) = 10250
+
+    A window far below B* must NOT compact; a window far above B* MUST compact.
+    This was broken before the fix: proportional S cancelled B in the formula,
+    making the decision independent of window size.
+    """
+    from burnless.config import DEFAULT_CONFIG
+    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    cp = cfg["cache_policy"]
+    S = cp["capsule_budget_tokens"]   # 1500
+    M = cp["compaction_cost_tokens"]  # 4000
+    w = cp["cache_write_ratio"]       # 2.0
+    K = cp["expected_future_turns"]   # 8
+    r = cp["cache_read_ratio"]        # 0.10
+    b_star = int(S + (w * S + M) / (K * r))  # 10250
+
+    small = PartnerState(window=[Turn("user", "x", b_star // 2)])  # 5125 tokens < B*
+    big = PartnerState(window=[Turn("user", "x", b_star * 3)])     # 30750 tokens > B*
+
+    assert maybe_compact(small, cfg, lambda b: "C") is False, "small window should NOT compact"
+    assert maybe_compact(big, cfg, lambda b: "C") is True, "huge window SHOULD compact"
