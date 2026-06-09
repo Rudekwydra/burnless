@@ -7,6 +7,46 @@ sequencing the delegations. Roberto: "faz o alvo consolidado que se faltar algo 
 
 ---
 
+## 0.A MAESTRO REDESIGN — partner + rolling rewind-recompact (Roberto, 2026-06-09)
+THE decision that collapses the maestro fragmentation AND simplifies the whole pipeline.
+
+**There are 4 redundant maestros today** (all do intent→decide→delegate): maestro/core (chat,
+stateful+cached), maestro_runner (one-shot subprocess), natural_planner (shell), maestro_layer (mcp).
+Plus maestro_legacy = misnamed worker backend (not a maestro). → collapse to ONE engine.
+
+**The ONE maestro engine = partner + rolling recompact (compact-AFTER):**
+```
+BASE (warm, cached, immutable): maestro system + role        ← hot header, byte-stable, cached
+LOOP per cycle:
+  fork(BASE) → msg0 = capsule_N (rolling compact state; inline now, read-by-address later)
+  user talks VERBOSE directly to the maestro; turns accumulate IN this fork (cached re-reads, 10%)
+  when should_compact()==true (token-ROI trigger, NOT a fixed turn count):
+     ultra-compact(capsule_N + window turns) → capsule_{N+1} on disk
+     discard fork → next cycle forks BASE again with capsule_{N+1}
+```
+Result: maestro live context = BASE(cached) + 1 capsule + bounded window → FLAT per turn (vs today's
+quadratic accumulate-and-cache). Cost per cycle = cached BASE + window cache_creation (paid once,
+discarded) + 1 cheap compaction call. Long-term memory = capsules on disk (addressable, recoverable —
+compaction is lossy only in hot context, never destructive). Same warm-fork machinery workers already
+use (proven: worker cache_read=21959). Wires the orphan should_compact + keep_recent_capsules.
+
+**ELIMINATES the encoder/decoder/police/glossary from the core (compact-BEFORE):**
+- compact-AFTER (rolling) handles long-term growth = ESSENTIAL.
+- compact-BEFORE (encoder) only shrinks a single verbose turn = OPTIONAL. With a cached window + the
+  maestro reading verbose directly (richer, doesn't "emburrece"), the encoder's edge is thin and it
+  costs a call + loses info. compact-before-AND-after = overkill (double cost, double info loss).
+- DECISION: core = maestro-partner reading verbose directly + rolling recompact. Encoder/decoder/
+  police/glossary → OPTIONAL layer (default off, for giant-paste inputs only), likely cut. Pipeline
+  collapses from `Encoder→Police→Maestro→Dispatcher→…→Decoder` to `Maestro-partner(rolling) → Workers(fork)`.
+- GATE before fully removing encoder: A/B on a REALISTIC VERBOSE multi-turn session (no clean synthetic
+  specs — humans debate), both cached, throttled, ~20-30 turns. A=partner+rolling (no encoder) vs
+  B=current encoder pipeline. If A ≥ B on cost without quality loss → encoder dies (→ optional layer).
+  Baseline note: there is NO "single short task" regime — real LLM work is always contextual/verbose.
+
+This supersedes §10.5/§10.6/§2's encoder-in / decoder-out framing for the CORE (they become optional).
+
+---
+
 ## 0. Identity (one line)
 
 **Burnless = a front-agnostic delegation/orchestration ENGINE.** Core (rock-solid) +
