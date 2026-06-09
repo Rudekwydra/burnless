@@ -163,11 +163,32 @@ DEFAULT_CACHE_MODES: dict[str, CacheMode] = {
         ttl="1h",
         headers=["extended-cache-ttl-2025-04-11"],
     ),
-    "codex": CacheMode(
-        name="codex",
-        module="burnless.cache_modes.codex",
+    "codex_subscription": CacheMode(
+        name="codex_subscription",
+        module="burnless.cache_modes.codex_subscription",
         mechanism="codex_native_session",
         warm_module="burnless.warm_session_codex",
+        keepalive=False,
+    ),
+    "codex_api": CacheMode(
+        name="codex_api",
+        module="burnless.cache_modes.codex_api",
+        mechanism="openai_api_cache",
+        warm_module=None,
+        keepalive=False,
+    ),
+    "gemini_subscription": CacheMode(
+        name="gemini_subscription",
+        module="burnless.cache_modes.gemini_subscription",
+        mechanism="gemini_native",
+        warm_module=None,
+        keepalive=False,
+    ),
+    "gemini_api": CacheMode(
+        name="gemini_api",
+        module="burnless.cache_modes.gemini_api",
+        mechanism="gemini_context_cache",
+        warm_module=None,
         keepalive=False,
     ),
     "none": CacheMode(

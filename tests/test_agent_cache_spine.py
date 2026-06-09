@@ -31,10 +31,28 @@ def test_resolve_cache_mode_api():
     assert cm.mechanism == "sdk_cache_control"
 
 
-def test_resolve_cache_mode_codex():
+def test_resolve_cache_mode_codex_subscription():
     a = Agent(name="silver", role="execute", provider="codex", auth="subscription")
     cm = resolve_cache_mode(a)
-    assert cm.name == "codex"
+    assert cm.name == "codex_subscription"
+
+
+def test_resolve_cache_mode_codex_api():
+    a = Agent(name="silver", role="execute", provider="codex", auth="api")
+    cm = resolve_cache_mode(a)
+    assert cm.name == "codex_api"
+
+
+def test_resolve_cache_mode_gemini_subscription():
+    a = Agent(name="silver", role="execute", provider="gemini", auth="subscription")
+    cm = resolve_cache_mode(a)
+    assert cm.name == "gemini_subscription"
+
+
+def test_resolve_cache_mode_gemini_api():
+    a = Agent(name="silver", role="execute", provider="gemini", auth="api")
+    cm = resolve_cache_mode(a)
+    assert cm.name == "gemini_api"
 
 
 def test_cfg_flips_mode():
@@ -42,7 +60,7 @@ def test_cfg_flips_mode():
     a = resolve_agent("silver", cfg)
     assert a.provider == "codex"
     cm = resolve_cache_mode(a)
-    assert cm.name == "codex"
+    assert cm.name == "codex_subscription"
 
     cfg2 = {"agents": {"silver": {"auth": "api"}}}
     a2 = resolve_agent("silver", cfg2)
@@ -52,9 +70,19 @@ def test_cfg_flips_mode():
 
 
 def test_cache_modes_registry():
-    for k in ("anthropic_subscription", "anthropic_api", "codex", "none"):
-        mod = cache_modes.get(k)
+    keys = [
+        "anthropic_subscription", "anthropic_api",
+        "codex_subscription", "codex_api",
+        "gemini_subscription", "gemini_api",
+        "none",
+    ]
+    mods = [cache_modes.get(k) for k in keys]
+    for k, mod in zip(keys, mods):
         assert mod is not None, k
+
+    # All 7 are distinct modules
+    names = [m.__name__ for m in mods]
+    assert len(set(names)) == 7, names
 
     sub = cache_modes.get("anthropic_subscription")
     api = cache_modes.get("anthropic_api")
