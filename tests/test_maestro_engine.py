@@ -278,3 +278,116 @@ def test_compact_blob_excludes_kept_tail():
         assert f"t{i}" in blobs[0], f"t{i} should be in blob"
     for i in range(n - keep, n):
         assert f"t{i}" not in blobs[0], f"t{i} (tail) must NOT be in blob"
+
+
+# ---------------------------------------------------------------------------
+# partner_turn_session: integrated session backend (fake session + runner)
+# ---------------------------------------------------------------------------
+
+from burnless.maestro.engine import partner_turn_session
+
+
+class FakeSession:
+    """Records send/rewind calls; never touches a real runner/subprocess."""
+
+    def __init__(self, response_tokens: int = 3000):
+        self.sent: list[tuple[str, object]] = []   # (user_msg, rewind_capsule)
+        self.rewound = 0
+        self.response_tokens = response_tokens
+
+    def send(self, user_msg, *, runner, rewind_capsule=None):
+        self.sent.append((user_msg, rewind_capsule))
+        return ("maestro-resp", self.response_tokens)
+
+    def rewind(self):
+        self.rewound += 1
+
+
+def _default_cfg():
+    from burnless.config import DEFAULT_CONFIG
+    return {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+
+
+def _seed_compact_fn(blob: str) -> dict:
+    return {"decisions": ["DSEED"], "constraints": ["CSEED"], "open_threads": [], "summary": "ssum"}
+
+
+def _noop_runner(cmd):
+    return {}
+
+
+def test_session_normal_turn_is_delta_send():
+    """No pending seed → rewind_capsule=None, only the user delta sent; window gains 2 Turns."""
+    fs = FakeSession(response_tokens=2)
+    state = PartnerState()
+    resp = partner_turn_session(
+        state, "hello", cfg=_default_cfg(), session=fs,
+        runner=_noop_runner, compact_fn=_seed_compact_fn,
+    )
+    assert resp == "maestro-resp"
+    assert fs.sent == [("hello", None)]
+    assert len(state.window) == 2
+    assert [t.role for t in state.window] == ["user", "maestro"]
+    assert state.pending_seed == ""
+    assert fs.rewound == 0
+
+
+def test_session_compaction_rewinds_and_sets_pending_seed():
+    """Big turns trigger compaction: session.rewind() called, pending_seed = capsule + verbatim tail."""
+    # DEFAULT_CONFIG: B*=10250, keep_tail=4. 3000-tok responses → fires on the 4th turn
+    # (window ~12k > B*, 8 turns > keep_tail).
+    fs = FakeSession(response_tokens=3000)
+    state = PartnerState()
+    for _ in range(4):
+        partner_turn_session(
+            state, "q", cfg=_default_cfg(), session=fs,
+            runner=_noop_runner, compact_fn=_seed_compact_fn,
+        )
+    assert fs.rewound == 1, "rewind must be called exactly once when compaction fires"
+    assert state.cycle == 1
+    assert state.pending_seed != ""
+    assert "DSEED" in state.pending_seed, "seed must carry the capsule's decisions"
+    assert "CSEED" in state.pending_seed
+    assert "## Recent" in state.pending_seed
+    assert "maestro: maestro-resp" in state.pending_seed, "seed must carry the verbatim tail"
+    # window rewound to the kept tail
+    assert len(state.window) == _default_cfg()["cache_policy"]["keep_tail_turns"]
+
+
+def test_session_next_send_consumes_and_clears_seed():
+    """The pending_seed set by a rewind reaches the NEXT send as rewind_capsule, then clears."""
+    fs = FakeSession(response_tokens=3000)
+    state = PartnerState()
+    for _ in range(4):
+        partner_turn_session(
+            state, "q", cfg=_default_cfg(), session=fs,
+            runner=_noop_runner, compact_fn=_seed_compact_fn,
+        )
+    seed_before = state.pending_seed
+    assert seed_before != ""
+    # 5th turn: tail (~6k) + 1 turn (~3k) stays below B*=10250 → no new compaction
+    partner_turn_session(
+        state, "q2", cfg=_default_cfg(), session=fs,
+        runner=_noop_runner, compact_fn=_seed_compact_fn,
+    )
+    assert fs.sent[-1] == ("q2", seed_before), "seed must be injected as rewind_capsule"
+    assert state.pending_seed == "", "seed must be cleared after consumption"
+    assert fs.rewound == 1, "no second rewind on the re-seeded turn"
+    # earlier sends (pre-compaction) carried no capsule
+    assert all(rc is None for (_m, rc) in fs.sent[:-1])
+
+
+def test_session_tiny_turns_never_rewind():
+    """Tiny turns: no compaction, no rewind, pending_seed stays empty, every send is bare delta."""
+    fs = FakeSession(response_tokens=2)
+    state = PartnerState()
+    for i in range(30):
+        partner_turn_session(
+            state, f"hi{i}", cfg=_default_cfg(), session=fs,
+            runner=_noop_runner, compact_fn=_seed_compact_fn,
+        )
+    assert fs.rewound == 0
+    assert state.cycle == 0
+    assert state.pending_seed == ""
+    assert all(rc is None for (_m, rc) in fs.sent)
+    assert len(state.window) == 60
