@@ -200,8 +200,18 @@ if should_compact(maestro_hot_tail, **cfg.cache_policy):   # [F] wire the orphan
 ## 7. Build sequence (anti-big-bang, each independently verifiable)
 
 0. ✅ Foundation: Agent + cache_modes + resolvers (landed).
-1. **Stage B — unify execute:** point MCP `_run_sync` + `maestro/dispatcher` at
-   `execute_delegation` (one gate set; fixes the MCP crash). The "one path" win.
+1. **Stage B — unify execute:**
+   - ✅ **B1 DONE** (commit): MCP `_run_sync` → `execute_delegation` (fixed the wrong-sig crash;
+     MCP now goes through spec_validator + ## Verify gate; stdout/stderr captured for the stdio channel).
+   - ⏸️ **B2 DEFERRED (own phase, NOT a quick delegation):** `maestro/dispatcher.run_delegate` is a
+     DIFFERENT, currently-WORKING beast — its own plugin hooks (H1/H2/H7), the maestro-tuned worker
+     prompt + isolation (BURNLESS_TASK_ID, ANTHROPIC_API_KEY-strip for OAuth subscription, project-
+     agnostic brief) that the **F4 no-leak gate + maestro cache benchmarks (cache_creation=0) depend
+     on**, and exec_log finalization. Forcing it through execute_delegation would regress the most
+     finely-tuned path. CORRECT target is NOT "dispatcher calls execute_delegation" but **extract the
+     SHARED primitives** (## Verify gate + capsule compress + worker subprocess runner) into helpers
+     BOTH use, keeping their distinct prompt-assembly. Requires re-validating F4 + maestro bench. Do
+     as its own phase.
 2. **Convergence wiring:** in execute, replace command-string model parse with
    `resolve_agent` → autobalance pick → `resolve_cache_mode` → so the provider choice
    carries cache policy (cures the root defect in LIVE behavior, not just tests). [G]
