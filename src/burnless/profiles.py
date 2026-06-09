@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 _PROFILES_DIR = Path.home() / ".burnless" / "profiles"
-_CONFIG_BASE = Path.home() / ".burnless" / "config.yaml"
+_CONFIG_BASE = Path.home() / ".config/burnless" / "config.yaml"
 _STATE_BASE = Path.home() / ".burnless" / "state"
 
 _TEMPLATES: dict[str, dict] = {
