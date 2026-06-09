@@ -229,6 +229,57 @@ Version drift to fix on swap: dist-info says 0.6.3, code is 0.9.0.
 2. Build unified execution core: extract `cmd_run` logic → shared `run_delegation(id, root, cfg)`;
    make CLI, `maestro/dispatcher`, and `mcp_server` all call it (one gate set, one validator).
 3. Fix MCP `handle_run` signature as part of (2).
+
+### 11.0 ROOT DEFECT — there is no unified "Agent" object (decided 2026-06-09, understand-first)
+Read the full `config.py` surface. The decisive finding behind ALL of Roberto's
+complaints (configs not consolidated, "change one var → propagate"):
+
+THREE divergent mechanisms define who-runs-with-what, none ties cache to the agent:
+- **Worker** (gold/silver/bronze): `agents.{tier}.command` is a SHELL STRING with
+  `--model X` embedded; model is regex-parsed out (`_extract_model_token`). The
+  "model variable" is buried in a command string, not a field.
+- **Maestro**: a SEPARATE path — `preset` ("protocol"→Haiku/"direct"→off) +
+  `encoder.model`/`maestro.model` via `resolve_layer_models`. Maestro is NOT
+  modeled as a worker. (Roberto: maestro IS a worker — role=orchestrate,
+  tools=delegate-only, rules=never-execute — and must resolve model+cache the
+  same way.)
+- **Cache**: `cache_worker.enabled`/`cache_prefix.enabled` = GLOBAL booleans +
+  `if provider=="claude" else codex` hardcoded (`agents.py:609`). Not attached to
+  any agent. `cache_policy.py` is MISNAMED (only compaction cost math, not runtime
+  routing). cached_worker.py is Anthropic-LOCKED (`import anthropic`).
+
+Consequence (answers "muda a variável e o cache segue?"): NO. Switching silver→codex
+= edit the command string; cache policy does NOT follow (it's not on the agent) →
+you LOSE the Anthropic cache path and fall to the codex warm branch. Not one variable.
+
+Cache monitoring today: PARTIAL. metrics has `brain_cache_read_tokens`/
+`brain_cache_creation_tokens` (maestro/brain side) + `keepalive_cache_renewed`.
+Worker warm-pool hit/miss + cached_worker savings are NOT a mandatory monitored flow.
+
+**TARGET (the rewrite foundation):** one `Agent` descriptor for workers AND maestro:
+`{ name, role, provider, model, allowed_tools, rules }`. Cache is DERIVED from
+provider via a single config table `cache_policy.<provider> = {mechanism, ttl, warm,
+keepalive}`. Resolvers `resolve_agent(name)→Agent` and `resolve_cache_policy(provider)
+→CachePolicy` that EVERY execution path + the maestro consult. Change `provider` →
+model + cache mechanism + warm pool + keepalive all follow. Cache = first-class
+monitored mandatory flow (hit/miss + saved tokens per agent, maestro included, in
+`economy`/footer). Extends the `coreconfig` single-source spine already started.
+
+Fragmentation evidence (file sizes): cli.py 3073 · live_runner.py 1284 · 7 maestro
+files (maestro_layer/legacy/adapters/runner + maestro/core/dispatcher + natural_planner)
+· 6 cache files (cached_worker/warm_session/warm_session_codex/keepalive/warm_daemon/cache_policy).
+
+### 11.a Unify staging (decided 2026-06-09 — anti-big-bang)
+Three divergent run impls: cli `_cmd_run_body` (full: backends+overflow+verify gate+retry),
+`dispatcher.run_delegate` (parallel subprocess, no overflow/verify), mcp `_run_sync`
+(calls `live_runner.run_with_overflow_retries(id=,burnless_root=,config=)` — WRONG sig → crash;
+`handle_run` shells `burnless run`, OK). NOTE: extracted core named **`execute_delegation`**
+(not `run_delegation`) — `burnless.__init__`/`core/delegations.py` already export a `run_delegation` stub.
+- **Stage A (in flight, `bburn` b7cla7w6y):** extract `execute_delegation(opts: RunOpts, root=None)`
+  from `_cmd_run_body`; CLI routes through it via thin adapter. Rename-only, behavior identical.
+  Verify = import + signature + zero-`args`-in-body + run-path test suite.
+- **Stage B (next):** point mcp `_run_sync` at `execute_delegation` (fixes the crash); converge
+  `dispatcher.run_delegate` onto it (gains verify gate + overflow). One gate set everywhere.
 4. Port callers of `config.py`/`routing.py` onto `coreconfig`; then rename `coreconfig`→`config`, retire old.
 5. Pending Roberto-OK items (§8): regenerate stale `<!-- burnless -->` blocks in the 11 CLAUDE.md
    via the now-fixed render_block; finish global-config dedup.

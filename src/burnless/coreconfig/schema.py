@@ -87,3 +87,92 @@ DEFAULT_TIERS: dict[str, TierDefinition] = {
         priority=4,
     ),
 }
+
+
+@dataclass
+class Agent:
+    name: str
+    role: str
+    provider: str = "anthropic"
+    auth: str = "subscription"
+    model: str | None = None
+    tools: list[str] = field(default_factory=list)
+    rules: str = ""
+
+
+@dataclass
+class CacheMode:
+    name: str
+    module: str
+    mechanism: str
+    warm_module: str | None = None
+    keepalive: bool = False
+    ttl: str | None = None
+    flags: list[str] = field(default_factory=list)
+    headers: list[str] = field(default_factory=list)
+
+
+DEFAULT_AGENTS: dict[str, Agent] = {
+    "gold": Agent(
+        name="gold",
+        role="execute",
+        provider="anthropic",
+        auth="subscription",
+        model="claude-opus-4-8",
+    ),
+    "silver": Agent(
+        name="silver",
+        role="execute",
+        provider="anthropic",
+        auth="subscription",
+        model="claude-sonnet-4-6",
+    ),
+    "bronze": Agent(
+        name="bronze",
+        role="execute",
+        provider="anthropic",
+        auth="subscription",
+        model="claude-haiku-4-5-20251001",
+    ),
+    "maestro": Agent(
+        name="maestro",
+        role="orchestrate",
+        provider="anthropic",
+        auth="subscription",
+        tools=["delegate"],
+        rules="never_execute",
+    ),
+}
+
+DEFAULT_CACHE_MODES: dict[str, CacheMode] = {
+    "anthropic_subscription": CacheMode(
+        name="anthropic_subscription",
+        module="burnless.cache_modes.anthropic_subscription",
+        mechanism="cli_setting_sources",
+        warm_module="burnless.warm_session",
+        keepalive=True,
+        ttl="1h",
+        flags=["--setting-sources", "project,local", "--exclude-dynamic"],
+    ),
+    "anthropic_api": CacheMode(
+        name="anthropic_api",
+        module="burnless.cache_modes.anthropic_api",
+        mechanism="sdk_cache_control",
+        warm_module="burnless.warm_session",
+        keepalive=True,
+        ttl="1h",
+        headers=["extended-cache-ttl-2025-04-11"],
+    ),
+    "codex": CacheMode(
+        name="codex",
+        module="burnless.cache_modes.codex",
+        mechanism="codex_native_session",
+        warm_module="burnless.warm_session_codex",
+        keepalive=False,
+    ),
+    "none": CacheMode(
+        name="none",
+        module="burnless.cache_modes.none",
+        mechanism="none",
+    ),
+}
