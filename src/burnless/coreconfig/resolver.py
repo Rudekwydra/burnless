@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from .schema import DEFAULT_TIERS, TierDefinition
+from .schema import DEFAULT_TIERS, DEFAULT_AGENTS, DEFAULT_CACHE_MODES, TierDefinition, Agent, CacheMode
 
 # Mirrored from config.py MODEL_ALIASES.
 MODEL_ALIASES = {
@@ -169,3 +169,53 @@ def route(text: str, cfg: dict | None = None) -> tuple[str, str]:
                 return tier, kw
 
     return default_tier, ""
+
+
+def resolve_agent(name: str, cfg: dict | None = None) -> Agent:
+    base = DEFAULT_AGENTS.get(name)
+    if base is None:
+        base = Agent(name=name, role="execute")
+    import dataclasses
+    fields = {f.name: getattr(base, f.name) for f in dataclasses.fields(base)}
+
+    if cfg:
+        if name == "maestro":
+            overrides = cfg.get("maestro") or {}
+        else:
+            overrides = (cfg.get("agents") or {}).get(name) or {}
+
+        for key in ("provider", "auth", "model", "role", "tools", "rules"):
+            if key in overrides:
+                fields[key] = overrides[key]
+
+        if fields["model"] is None:
+            cmd = overrides.get("command", "")
+            if cmd:
+                token = _extract_model_token(cmd)
+                if token:
+                    fields["model"] = normalize_model(token)
+
+    return Agent(**fields)
+
+
+def resolve_cache_mode(agent: Agent, cfg: dict | None = None) -> CacheMode:
+    if agent.provider == "anthropic":
+        key = f"anthropic_{agent.auth}"
+    elif agent.provider == "codex":
+        key = "codex"
+    else:
+        key = "none"
+
+    base = DEFAULT_CACHE_MODES.get(key, DEFAULT_CACHE_MODES["none"])
+
+    if cfg:
+        overrides = (cfg.get("cache_modes") or {}).get(key) or {}
+        if overrides:
+            import dataclasses
+            fields = {f.name: getattr(base, f.name) for f in dataclasses.fields(base)}
+            for k, v in overrides.items():
+                if k in fields:
+                    fields[k] = v
+            return CacheMode(**fields)
+
+    return base
