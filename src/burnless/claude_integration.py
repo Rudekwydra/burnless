@@ -16,39 +16,22 @@ BLOCK_PATTERN = re.compile(
 
 
 def render_block(version: str, project_name: str) -> str:
+    """Emit a SHORT POINTER to the canonical doctrine.
+
+    Doctrine is no longer inlined per-project (that forked stale copies into
+    every CLAUDE.md). The single source of truth lives in the burnless repo at
+    `docs/DOCTRINE.md` (how it works) and `docs/COMMANDS.md` (verified commands).
+    """
     return f"""<!-- burnless:start -->
 <!-- burnless version: v{version} -->
 ## Burnless — orchestration active in this project
 
-This project has a `.burnless/` directory. Use burnless to delegate work
+This project has a `.burnless/` directory. Delegate work with `burnless do`
 instead of editing files directly when possible.
 
-### Core commands
-
-- `burnless do "TASK" --tier <bronze|silver|gold>` — delegate + run atomically
-- `burnless route "TASK"` — preview which tier/agent would handle a task
-- `burnless metrics` — see token savings + counters
-- `burnless status` — project health
-
-### Tier selection (spec quality determines tier)
-
-| Signal in spec | Tier |
-|---|---|
-| Exact files + schema + bugs already diagnosed → mechanical | bronze |
-| Implementation with some judgment calls | silver |
-| Architecture, structural refactor | gold |
-| Irreversible decision / second opinion | diamond |
-
-If you wrote a spec detailed enough to compile mentally into code, it's bronze.
-If it requires "thinking through the problem", silver. If it requires
-"deciding between architectures", gold.
-
-### Workflow rules
-
-1. **Commit working tree before delegating** — workers may reset files
-2. **Audit DoD point-by-point** after worker returns OK — don't trust
-   status=OK blindly; grep/test each declared deliverable
-3. **PART output → reject and re-spec smaller**, don't merge partial work
+Doctrine is canonical in the burnless repo (do not inline/copy it here):
+- **How it works / how to use it:** `docs/DOCTRINE.md`
+- **Verified command reference:** `docs/COMMANDS.md`
 
 Project: {project_name}
 <!-- burnless:end -->"""
