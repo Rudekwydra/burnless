@@ -105,6 +105,7 @@ DEFAULT_CONFIG: dict = {
         "keep_recent_capsules": 8,
         "capsule_budget_tokens": 1500,      # CONSTANT ultra-compact capsule size (NOT proportional to window)
         "compaction_cost_tokens": 4000,     # M: input-token-equiv cost of one compaction call (capsule is OUTPUT tokens ~5x)
+        "keep_tail_turns": 4,   # turns kept VERBATIM in the window across a rewind (anti-whiplash)
     },
     "privacy": {
         "mode": "cost",       # cost | redact | audit | opaque

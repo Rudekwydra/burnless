@@ -33,8 +33,24 @@ class Turn:
 
 
 @dataclass
+class RollingCapsule:
+    decisions: list[str] = field(default_factory=list)     # carried VERBATIM, append-only across cycles
+    constraints: list[str] = field(default_factory=list)   # carried VERBATIM, append-only across cycles
+    open_threads: list[str] = field(default_factory=list)  # may be rewritten each cycle
+    summary: str = ""                                       # lossy chatter summary, rewritten each cycle
+
+    def render(self) -> str:
+        parts = []
+        if self.decisions:    parts.append("Decisions:\n" + "\n".join(f"- {d}" for d in self.decisions))
+        if self.constraints:  parts.append("Constraints:\n" + "\n".join(f"- {c}" for c in self.constraints))
+        if self.open_threads: parts.append("Open:\n" + "\n".join(f"- {o}" for o in self.open_threads))
+        if self.summary:      parts.append("Summary:\n" + self.summary)
+        return "\n\n".join(parts)
+
+
+@dataclass
 class PartnerState:
-    rolling_capsule: str = ""          # compact carry-forward state (the "prompt 1" of each cycle)
+    rolling_capsule: RollingCapsule = field(default_factory=RollingCapsule)
     window: list[Turn] = field(default_factory=list)
     cycle: int = 0                     # how many compaction cycles have happened
     capsule_paths: list[str] = field(default_factory=list)
@@ -43,7 +59,7 @@ class PartnerState:
 # Injectable side-effects (real impls wire to claude warm-fork / bronze compaction;
 # tests inject deterministic fakes so no LLM/network is needed).
 ModelFn = Callable[[str], tuple[str, int]]   # (assembled_prompt) -> (response_text, response_tokens)
-CompactFn = Callable[[str], str]             # (prior capsule + window blob) -> new compact capsule text
+CompactFn = Callable[[str], dict]            # (prior capsule + window blob) -> {decisions, constraints, open_threads, summary}
 
 
 def estimate_tokens(text: str) -> int:
@@ -53,8 +69,9 @@ def estimate_tokens(text: str) -> int:
 def assemble_prompt(state: PartnerState, user_text: str) -> str:
     """Bounded context for one model call: capsule + window + current user msg."""
     parts = []
-    if state.rolling_capsule:
-        parts.append("## State\n" + state.rolling_capsule)
+    rendered = state.rolling_capsule.render()
+    if rendered:
+        parts.append("## State\n" + rendered)
     for t in state.window:
         parts.append(f"{t.role}: {t.text}")
     parts.append(f"user: {user_text}")
@@ -72,9 +89,10 @@ def maybe_compact(
     burnless_root: Optional[Path] = None,
 ) -> bool:
     """If should_compact says it pays, ultra-compact the window into a new
-    rolling capsule and REWIND (clear the window). Returns True if compacted."""
+    rolling capsule and REWIND (keeping verbatim tail). Returns True if compacted."""
     cp = (cfg.get("cache_policy") or {})
     capsule_budget = int(cp.get("capsule_budget_tokens", 1500))
+    keep_tail = int(cp.get("keep_tail_turns", 0))
     decision = cache_policy.should_compact(
         old_tokens=window_tokens(state),
         compacted_tokens=capsule_budget,
@@ -86,18 +104,48 @@ def maybe_compact(
     )
     if not decision.should_compact:
         return False
-    blob = (state.rolling_capsule + "\n\n" if state.rolling_capsule else "") + \
-        "\n".join(f"{t.role}: {t.text}" for t in state.window)
-    state.rolling_capsule = compact_fn(blob)
-    state.window = []                      # REWIND
+    # Nothing to compact if the entire window would be kept as tail
+    if keep_tail > 0 and len(state.window) <= keep_tail:
+        return False
+    if keep_tail > 0:
+        to_compact = state.window[:-keep_tail]
+        tail = state.window[-keep_tail:]
+    else:
+        to_compact = state.window
+        tail = []
+    prior_render = state.rolling_capsule.render()
+    blob = (prior_render + "\n\n" if prior_render else "") + \
+        "\n".join(f"{t.role}: {t.text}" for t in to_compact)
+    result = compact_fn(blob)
+    # decisions/constraints: append-only, dedup exact dups
+    for d in (result.get("decisions") or []):
+        if d not in state.rolling_capsule.decisions:
+            state.rolling_capsule.decisions.append(d)
+    for c in (result.get("constraints") or []):
+        if c not in state.rolling_capsule.constraints:
+            state.rolling_capsule.constraints.append(c)
+    # open_threads and summary: replaced each cycle
+    state.rolling_capsule.open_threads = list(result.get("open_threads") or [])
+    state.rolling_capsule.summary = result.get("summary") or ""
+    state.window = tail                      # REWIND keeping verbatim tail
     state.cycle += 1
     if burnless_root is not None:
         d = Path(burnless_root) / "maestro" / "rolling"
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"capsule_{state.cycle}.json"
+        rendered = state.rolling_capsule.render()
         p.write_text(
             json.dumps(
-                {"cycle": state.cycle, "capsule": state.rolling_capsule},
+                {
+                    "cycle": state.cycle,
+                    "capsule": rendered,
+                    "structured": {
+                        "decisions": state.rolling_capsule.decisions,
+                        "constraints": state.rolling_capsule.constraints,
+                        "open_threads": state.rolling_capsule.open_threads,
+                        "summary": state.rolling_capsule.summary,
+                    },
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",

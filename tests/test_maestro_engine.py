@@ -10,6 +10,7 @@ from pathlib import Path
 from burnless.maestro import engine
 from burnless.maestro.engine import (
     PartnerState,
+    RollingCapsule,
     Turn,
     assemble_prompt,
     maybe_compact,
@@ -44,8 +45,8 @@ def tiny_model_fn(prompt: str) -> tuple[str, int]:
 
 
 def make_compact_fn(state: PartnerState):
-    def compact_fn(blob: str) -> str:
-        return f"CAP{state.cycle + 1}"
+    def compact_fn(blob: str) -> dict:
+        return {"decisions": [], "constraints": [], "open_threads": [], "summary": f"CAP{state.cycle + 1}"}
     return compact_fn
 
 
@@ -96,7 +97,7 @@ def test_rolling_capsule_nonempty_after_first_compaction():
         if state.cycle >= 1:
             break
     assert state.cycle >= 1
-    assert state.rolling_capsule == "CAP1"
+    assert state.rolling_capsule.summary == "CAP1"
 
 
 def test_capsules_written_to_disk(tmp_path):
@@ -113,7 +114,7 @@ def test_capsules_written_to_disk(tmp_path):
     import json
     data = json.loads((rolling / f"capsule_{state.cycle}.json").read_text(encoding="utf-8"))
     assert data["cycle"] == state.cycle
-    assert data["capsule"] == state.rolling_capsule
+    assert data["capsule"] == state.rolling_capsule.render()
     assert state.capsule_paths == [str(f) for f in files]
 
 
@@ -121,7 +122,7 @@ def test_tiny_turns_never_compact():
     state = PartnerState()
     run_turns(state, 30, tiny_model_fn, "hi")
     assert state.cycle == 0
-    assert state.rolling_capsule == ""
+    assert state.rolling_capsule.render() == ""
     assert state.capsule_paths == []
     # window holds all 60 tiny turns but stays below min_hot_tail
     assert len(state.window) == 60
@@ -129,7 +130,7 @@ def test_tiny_turns_never_compact():
 
 
 def test_assemble_prompt_user_seen_exactly_once():
-    state = PartnerState(rolling_capsule="CAPX")
+    state = PartnerState(rolling_capsule=RollingCapsule(summary="CAPX"))
     state.window.append(Turn("user", "earlier", 2))
     state.window.append(Turn("maestro", "earlier-reply", 3))
     seen = {}
@@ -140,11 +141,12 @@ def test_assemble_prompt_user_seen_exactly_once():
 
     partner_turn(
         state, "current question", cfg=CFG,
-        model_fn=spy_model, compact_fn=lambda blob: "CAP",
+        model_fn=spy_model,
+        compact_fn=lambda blob: {"decisions": [], "constraints": [], "open_threads": [], "summary": "CAP"},
     )
     prompt = seen["prompt"]
     assert prompt.count("user: current question") == 1
-    assert "## State\nCAPX" in prompt
+    assert "## State\nSummary:\nCAPX" in prompt
     assert "user: earlier" in prompt
     # after the turn the window holds both the user msg and the response
     assert [t.role for t in state.window[-2:]] == ["user", "maestro"]
@@ -153,24 +155,24 @@ def test_assemble_prompt_user_seen_exactly_once():
 def test_maybe_compact_below_threshold_is_noop():
     state = PartnerState()
     state.window.append(Turn("user", "small", 100))
-    assert maybe_compact(state, CFG, lambda blob: "CAP") is False
+    assert maybe_compact(state, CFG, lambda blob: {"decisions": [], "constraints": [], "open_threads": [], "summary": "CAP"}) is False
     assert state.cycle == 0
     assert len(state.window) == 1
 
 
 def test_compact_blob_includes_prior_capsule_and_window():
-    state = PartnerState(rolling_capsule="OLDCAP")
+    state = PartnerState(rolling_capsule=RollingCapsule(summary="OLDCAP"))
     state.window.append(Turn("user", "big question", 2000))
     blobs = []
 
-    def capture_compact(blob: str) -> str:
+    def capture_compact(blob: str) -> dict:
         blobs.append(blob)
-        return "NEWCAP"
+        return {"decisions": [], "constraints": [], "open_threads": [], "summary": "NEWCAP"}
 
     assert maybe_compact(state, CFG, capture_compact) is True
-    assert blobs[0].startswith("OLDCAP\n\n")
+    assert blobs[0].startswith("Summary:\nOLDCAP\n\n")
     assert "user: big question" in blobs[0]
-    assert state.rolling_capsule == "NEWCAP"
+    assert state.rolling_capsule.summary == "NEWCAP"
     assert state.window == []
     assert state.cycle == 1
 
@@ -199,10 +201,80 @@ def test_trigger_is_size_driven():
     w = cp["cache_write_ratio"]       # 2.0
     K = cp["expected_future_turns"]   # 8
     r = cp["cache_read_ratio"]        # 0.10
+    keep = cp["keep_tail_turns"]      # 4
     b_star = int(S + (w * S + M) / (K * r))  # 10250
 
-    small = PartnerState(window=[Turn("user", "x", b_star // 2)])  # 5125 tokens < B*
-    big = PartnerState(window=[Turn("user", "x", b_star * 3)])     # 30750 tokens > B*
+    _noop = lambda b: {"decisions": [], "constraints": [], "open_threads": [], "summary": "C"}
+    small = PartnerState(window=[Turn("user", "x", b_star // 2)])     # 5125 tokens < B*, should_compact=False
+    # big: 5 turns (> keep_tail=4) with total tokens >> B*
+    big = PartnerState(window=[Turn("user", "x", b_star)] * (keep + 1))
 
-    assert maybe_compact(small, cfg, lambda b: "C") is False, "small window should NOT compact"
-    assert maybe_compact(big, cfg, lambda b: "C") is True, "huge window SHOULD compact"
+    assert maybe_compact(small, cfg, _noop) is False, "small window should NOT compact"
+    assert maybe_compact(big, cfg, _noop) is True, "huge window SHOULD compact"
+
+
+# ---------------------------------------------------------------------------
+# New tests: verbatim tail, structured append-only capsule, blob excludes tail
+# ---------------------------------------------------------------------------
+
+def test_verbatim_tail_kept_after_compact():
+    """After compaction, window retains exactly keep_tail_turns most-recent turns."""
+    from burnless.config import DEFAULT_CONFIG
+    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    keep = cfg["cache_policy"]["keep_tail_turns"]  # 4
+    turns = [Turn("user" if i % 2 == 0 else "maestro", f"t{i}", 30000) for i in range(10)]
+    state = PartnerState(window=turns)
+    assert maybe_compact(state, cfg, lambda b: {"decisions": [], "constraints": [], "open_threads": [], "summary": "s"}) is True
+    assert len(state.window) == keep, f"expected {keep} tail turns, got {len(state.window)}"
+    assert state.window[-1].text == "t9", "most-recent turn must be last in tail"
+    assert state.window[0].text == f"t{10 - keep}", "oldest kept turn must be first in tail"
+
+
+def test_decisions_and_constraints_accumulate_across_two_cycles():
+    """Decisions/constraints carry VERBATIM across cycles (append-only); summary is replaced."""
+    from burnless.config import DEFAULT_CONFIG
+    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    state = PartnerState(window=[Turn("user", "x", 30000) for _ in range(10)])
+
+    def cf1(blob: str) -> dict:
+        return {"decisions": ["D1"], "constraints": ["C1"], "open_threads": ["O1"], "summary": "s1"}
+
+    assert maybe_compact(state, cfg, cf1) is True
+    assert state.rolling_capsule.decisions == ["D1"]
+    assert state.rolling_capsule.constraints == ["C1"]
+    assert state.rolling_capsule.summary == "s1"
+
+    # second cycle: refill window with enough turns
+    for i in range(10):
+        state.window.append(Turn("user", f"x{i}", 30000))
+
+    def cf2(blob: str) -> dict:
+        return {"decisions": ["D2"], "constraints": [], "open_threads": [], "summary": "s2"}
+
+    assert maybe_compact(state, cfg, cf2) is True
+    assert "D1" in state.rolling_capsule.decisions, "D1 must survive into cycle 2"
+    assert "D2" in state.rolling_capsule.decisions, "D2 from cycle 2 must be present"
+    assert "C1" in state.rolling_capsule.constraints, "C1 must survive into cycle 2"
+    assert state.rolling_capsule.summary == "s2", "summary must be replaced"
+
+
+def test_compact_blob_excludes_kept_tail():
+    """The blob passed to compact_fn must not contain the tail turns (no double-count)."""
+    from burnless.config import DEFAULT_CONFIG
+    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    keep = cfg["cache_policy"]["keep_tail_turns"]  # 4
+    n = keep + 4  # 8 turns total
+    state = PartnerState(window=[Turn("user", f"t{i}", 30000) for i in range(n)])
+    blobs: list[str] = []
+
+    def capture(blob: str) -> dict:
+        blobs.append(blob)
+        return {"decisions": [], "constraints": [], "open_threads": [], "summary": "s"}
+
+    assert maybe_compact(state, cfg, capture) is True
+    assert len(blobs) == 1
+    # turns in blob: t0..t(n-keep-1); tail: t(n-keep)..t(n-1)
+    for i in range(n - keep):
+        assert f"t{i}" in blobs[0], f"t{i} should be in blob"
+    for i in range(n - keep, n):
+        assert f"t{i}" not in blobs[0], f"t{i} (tail) must NOT be in blob"
