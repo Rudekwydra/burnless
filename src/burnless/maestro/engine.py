@@ -74,14 +74,14 @@ def maybe_compact(
     """If should_compact says it pays, ultra-compact the window into a new
     rolling capsule and REWIND (clear the window). Returns True if compacted."""
     cp = (cfg.get("cache_policy") or {})
+    capsule_budget = int(cp.get("capsule_budget_tokens", 1500))
     decision = cache_policy.should_compact(
         old_tokens=window_tokens(state),
-        compacted_tokens=cache_policy.estimate_compacted_tokens(
-            window_tokens(state), float(cp.get("estimated_compaction_ratio", 0.30))
-        ),
+        compacted_tokens=capsule_budget,
         expected_future_turns=int(cp.get("expected_future_turns", 8)),
         cache_read_ratio=float(cp.get("cache_read_ratio", 0.10)),
         cache_write_ratio=float(cp.get("cache_write_ratio", 2.0)),
+        compaction_cost_tokens=int(cp.get("compaction_cost_tokens", 4000)),
         min_hot_tail_tokens=int(cp.get("min_hot_tail_tokens", 1500)),
     )
     if not decision.should_compact:
