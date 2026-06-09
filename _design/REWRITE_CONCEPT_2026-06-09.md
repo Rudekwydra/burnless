@@ -198,4 +198,37 @@ from a single source (`--help` and `docs/COMMANDS.md` must not drift).
 ### Pending Roberto OK (irreversible — do NOT auto-apply)
 - Unify the two global configs (`~/.config/burnless` vs `~/.burnless/config.yaml`) per D3 proposal.
 - Trim/fix inline burnless doctrine in the 11 CLAUDE.md/soul.md/AGENTS.md per D4 audit.
-- Delete dead code (`cli.py.bak.*`, and — after wiring re-check — `maestro_legacy.py`, `natural_planner.py`).
+- Delete dead code (`cli.py.bak.*` DONE; `maestro_legacy.py`/`natural_planner.py` are WIRED — keep).
+
+## 9. MCP is the 4th dispatch path (and `run` is broken)
+
+burnless exposes itself to Claude via MCP (`mcp_server.py`, desktop app). Mapped:
+- Tools: `delegate, route, run, capsule, read, status, maestro`.
+- `handle_delegate` shares `routing.route()` with the CLI, but `handle_run` **reimplements**
+  execution and calls `live_runner.run_with_overflow_retries()` with the **wrong signature**
+  (3 args vs 8+) → **crashes at runtime**. The MCP `run` is effectively broken today.
+- MCP **bypasses every gate**: no spec_validator (relative paths), no hardcore filter, no
+  `## Verify` gate, no provider ranking. Hardcoded tier strings + `"bronze"`/`"haiku"` fallbacks.
+→ Confirms §7: CLI + Maestro(dispatcher) + MCP must all call ONE execution core. The MCP
+  fix is part of the unify-dispatch step, not a separate patch.
+
+## 10. Build strategy: editable install ⇒ frozen builder
+
+burnless is **editable-installed** (`_editable_impl_burnless.pth`) → every edit to `src/`
+is live in the running `burnless`. Safe for additive/back-compat changes (done so far);
+HAZARDOUS for the core-swap (the running tool imports half-edited hot-path files).
+
+**Frozen builder** set up: `git worktree` at the last-green commit (`23cd308`) + copied-in
+gitignored `_pro`, invoked via `/Users/roberto/antigravity/burnless-builder/bburn` (PYTHONPATH
+to the frozen src). Use `bburn do "..."` to delegate the risky core-swap so the tool doing the
+rewrite never moves under us. Refresh the builder to a new green commit between phases.
+Version drift to fix on swap: dist-info says 0.6.3, code is 0.9.0.
+
+## 11. Next session entry point (resume here)
+1. Refresh frozen builder if HEAD advanced; delegate via `bburn` from now on for hot-path work.
+2. Build unified execution core: extract `cmd_run` logic → shared `run_delegation(id, root, cfg)`;
+   make CLI, `maestro/dispatcher`, and `mcp_server` all call it (one gate set, one validator).
+3. Fix MCP `handle_run` signature as part of (2).
+4. Port callers of `config.py`/`routing.py` onto `coreconfig`; then rename `coreconfig`→`config`, retire old.
+5. Pending Roberto-OK items (§8): regenerate stale `<!-- burnless -->` blocks in the 11 CLAUDE.md
+   via the now-fixed render_block; finish global-config dedup.
