@@ -6,7 +6,10 @@ def get(mode_name: str):
     _MAP = {
         "anthropic_subscription": ".anthropic_subscription",
         "anthropic_api": ".anthropic_api",
-        "codex": ".codex",
+        "codex_subscription": ".codex_subscription",
+        "codex_api": ".codex_api",
+        "gemini_subscription": ".gemini_subscription",
+        "gemini_api": ".gemini_api",
         "none": ".none",
     }
     rel = _MAP.get(mode_name, ".none")

@@ -1,4 +1,4 @@
-"""Codex cache mode. Native codex session caching; warm pool via warm_session_codex."""
+"""Codex subscription (ChatGPT plan) cache mode."""
 MECHANISM = "codex_native_session"
 KEEPALIVE = False
 

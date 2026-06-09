@@ -199,11 +199,12 @@ def resolve_agent(name: str, cfg: dict | None = None) -> Agent:
 
 
 def resolve_cache_mode(agent: Agent, cfg: dict | None = None) -> CacheMode:
-    if agent.provider == "anthropic":
-        key = f"anthropic_{agent.auth}"
-    elif agent.provider == "codex":
-        key = "codex"
+    if agent.provider in {"anthropic", "codex", "gemini"}:
+        key = f"{agent.provider}_{agent.auth}"
     else:
+        key = "none"
+
+    if key not in DEFAULT_CACHE_MODES:
         key = "none"
 
     base = DEFAULT_CACHE_MODES.get(key, DEFAULT_CACHE_MODES["none"])
