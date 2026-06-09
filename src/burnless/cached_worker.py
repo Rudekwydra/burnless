@@ -235,8 +235,12 @@ def _find_design_dir(project_root: Path) -> Path:
     local = project_root / "_design" / "maestro_v1"
     if local.is_dir():
         return local
-    # Fall back to the design dir bundled with the Burnless package itself.
-    pkg_design = Path(__file__).parent.parent.parent / "_design" / "maestro_v1"
+    # Fall back to a design dir bundled *inside* the Burnless package itself.
+    # (Resolves relative to the package dir, not the repo root — so an unrelated
+    # project_root never picks up burnless's own maestro docs; that matches a
+    # wheel install, where no repo-root _design exists and fallback strings +
+    # per-model cache padding are the active path.)
+    pkg_design = Path(__file__).resolve().parent / "_design" / "maestro_v1"
     if pkg_design.is_dir():
         return pkg_design
     return local  # return non-existent path; _load_text uses fallback strings
@@ -288,17 +292,19 @@ def build_system_blocks(
     estimated_tokens = len(combined) / _CHARS_PER_TOKEN
     if estimated_tokens < min_tokens:
         import sys
-        shortfall = int(min_tokens - estimated_tokens)
+        # Chars needed = shortfall-in-tokens * chars-per-token, + a margin to
+        # clear the int-truncation in the estimate. Earlier code divided by the
+        # ratio instead of multiplying, so the pad fell far short of min_tokens
+        # (the documented Haiku undersizing). Multiply to actually hit the floor.
+        shortfall_tokens = min_tokens - estimated_tokens
+        pad_chars = int(shortfall_tokens * _CHARS_PER_TOKEN) + 128  # 128 chars margin
         print(
             f"[cached_worker] WARNING: system block ~{int(estimated_tokens)} tokens "
-            f"(need {min_tokens} for cache). Adding {shortfall * int(_CHARS_PER_TOKEN)} "
+            f"(need {min_tokens} for cache). Adding {pad_chars} "
             "chars of padding to activate cache.",
             file=sys.stderr,
         )
         # Pad with a harmless comment to reach the minimum threshold.
-        # Use ceil division with float ratio + 25% safety margin to avoid
-        # the off-by-one from int truncation.
-        pad_chars = int(shortfall / _CHARS_PER_TOKEN * 4) + 128  # 128 extra as margin
         combined += "\n\n<!-- burnless-cache-pad " + ("." * pad_chars) + " -->"
 
     return [{"type": "text", "text": combined, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
