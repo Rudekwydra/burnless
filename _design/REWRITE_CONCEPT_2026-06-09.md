@@ -224,6 +224,83 @@ to the frozen src). Use `bburn do "..."` to delegate the risky core-swap so the 
 rewrite never moves under us. Refresh the builder to a new green commit between phases.
 Version drift to fix on swap: dist-info says 0.6.3, code is 0.9.0.
 
+## 10.5 RUNTIME control-flow Roberto wants (2026-06-09) — vs what exists
+Most of this ALREADY EXISTS, scattered/hardcoded/unnamed (code more mature than roadmap).
+Mapping his spec to reality + the real gaps:
+
+| # | Desired runtime step | Exists? | Where | Gap |
+|---|---|---|---|---|
+| 1 | provider/llm set + gold/silver/bronze | YES | coreconfig Agent (landed 45c81f3) | — |
+| 2 | check cache; if absent inject COLD-START sized to activate cache (per provider/llm/function) | PARTIAL | cached_worker.CACHE_MIN_TOKENS=1024 + padding to activate; chat_mode pad ≥1024 | hardcoded 1024 — NOT per-model (Haiku needs 2048) nor per-function; lives in 2 places. → make a `min_cache_tokens`/cold-start field on CacheMode, per provider/model |
+| 3 | first worker job forks a branch for /rewind | YES | warm_session: `claude -p --resume <uuid> --fork-session` | already this |
+| 4 | before worker: check cache; branch exists→same (parallels) else create; close/recycle policy | PARTIAL | is_alive (TTL+jsonl), fork_args reuses uuid, heartbeat TTL refresh, brief-drift→reinit | explicit recycle not deliberate/config/monitored. NOTE: fork-session base is immutable+cache-read-only, forks DON'T pollute base → parallels don't bloat; recycle trigger = TTL expiry OR brief-drift, not manual flush |
+| 5 | the SYSTEM (not maestro/worker) writes disk; intercept on BOTH ends of maestro | PARTIAL | worker→done: execute_delegation calls write_summary+compress+write; human→maestro: codec/encoder.encode | concept exists but scattered in cli.py; not one clean I/O-interception layer. Human side intercept = the Encoder; worker side = the runner's compress. Consolidate into one layer |
+
+THE THREE REAL GAPS to design: (a) cold-start sizing per provider/model/function (not a 1024
+constant); (b) explicit, config-driven, monitored branch recycle policy; (c) one unified I/O
+interception layer on both maestro ends (encoder in / compress out), instead of scattered cli calls.
+
+### 10.5.E Warm-cache MONITORING → derives behavior per (provider/model/auth) (Roberto 2026-06-09)
+PARTIAL. Exists: aggregate counters metrics.brain_cache_read_tokens / brain_cache_creation_tokens +
+record_*_cache; warm_session.is_alive / needs_heartbeat (per model file). GAP: not keyed per
+(provider,model,auth) and does NOT feed decisions — it's historical counting, not a live monitor.
+TARGET: a monitor that, per resolved cache_mode, reports {alive?, age, size, hit_ratio} and feeds
+resolve_cache_mode / recycle / cold-start decisions. Attaches to the Agent+CacheMode foundation.
+
+### 10.5.F Context-SIZE monitor → auto-compact → disk history (relieve the maestro) (Roberto 2026-06-09)
+ESSENTIALLY UNBUILT (only sketched). The math `cache_policy.should_compact` EXISTS (params in config:
+expected_future_turns=8, min_hot_tail_tokens=1500, keep_recent_capsules=8) but has ZERO live callers —
+an orphan stub (likely residue of desktop-version thinking, never wired). The maestro NEVER compacts
+its history to disk today.
+CONVERGENCE with the §10.5 #4 branch-recycle question: worker forks DON'T bloat (immutable base,
+cache-read-only); it's the MAESTRO prefix that grows (one capsule per turn). So "recycle branch / keep
+only hot header" APPLIED TO THE MAESTRO == F: each turn, monitor maestro hot-tail size → when over
+threshold AND should_compact==yes → roll old capsules into a summary, write verbose to disk-history,
+keep only keep_recent_capsules hot. This is "relieve maestro" + "hot header" in one mechanism.
+Bonus evidence for gap (a): chat_mode pads to >=2048 ("safe for all models") while cached_worker uses
+1024 — two cold-start numbers in two places → must become a per-model field on CacheMode.
+
+### 10.5.G Autobalance (multi-provider) — IMPLEMENTED, not a sketch (Roberto 2026-06-09)
+Real and working in agents.py: rank_providers() loads PERSISTED provider health, scores
+`success_rate*0.6 + (1/norm_latency)*0.4`, sorts; AutobalanceWorker persists health; select_provider;
+provider_health_snapshot (monitorable); automatic fallback to ranked[1] on retryable failure;
+provider_autodetect.py detects installed CLIs. GAP: bound to the OLD shape (command-string + agents.
+<tier>.providers[]) AND the provider pick does NOT carry cache policy — autobalance swaps anthropic
+<->codex but cache does not follow (the root defect again). TARGET: autobalance = "rank an Agent's
+provider candidates by health → pick → resolve_cache_mode(pick.provider) follows automatically." The
+provider choice and the cache policy become THE SAME decision. Autobalance + cache_modes + Agent unify.
+
+Other runtime components already present (the "que mais temos"): Encoder+Police (human→capsule+
+confidence, police re-check if <0.8 = the human-side intercept) · Decoder (capsule→prose, voice_match) ·
+Routing (keyword→tier) · `## Verify` gate · Retry loop + bronze-rescue · Parallel jitter (anti-529) ·
+Keepalive daemon · Metrics/economy/footer · Compression modes (light/balanced/extreme) · Privacy modes
+(cost/redact/audit/opaque) · Isolation/no-leak (worker cwd /tmp, F4 gate) · Glossary (shared compression vocab).
+
+## 10.6 DECISIONS — front/IO/expander/privacy/encoder (Roberto, 2026-06-09)
+- **D1 Worker output stays COMPACT, forever.** Worker returns a compact capsule; the SYSTEM
+  stores it; NO expansion. The expander-out (LLM "expand for human") applies ONLY to
+  maestro→human turns. Already exists: `codec/decoder.py::decode()`. Rewrite = scope it to
+  maestro turns only.
+- **D2 voice_match = NOT core.** Optional, maybe a future paid option. Default off; cut if it
+  complicates. (Already an optional param of decoder.)
+- **D3 Privacy modes = optional SEPARATE layer (toggle).** Affects WHERE capsules are written +
+  HOW they are sent to providers. Conceptual until practiced. Not core; organized as a separable
+  layer. (cost/redact/audit/opaque exist as config only today.)
+- **D4 Encoder/front = DECOUPLE from core (defer the encoder/front decision).** Roberto distrusts
+  the "Haiku-as-encoder just to keep the Claude terminal" hack. Resolution: the core must be
+  FRONT-AGNOSTIC with a two-sided contract:
+    - IN: "produce a compact capsule + raw-to-disk from a human turn" — Haiku-encoder is ONE
+      implementation; a local-LLM standalone terminal is another.
+    - OUT: "stream worker/maestro events on a channel" — ALREADY EXISTS: the liveness JSONL inbox
+      (`live_runner._emit_suspect` → "future Maestro daemon"), `run_with_live_panel`/`_WatchRenderer`,
+      and per-provider `maestro/streams/`. Any front subscribes to render real-time worker windows.
+  Consequence: the Encoder stops being central → becomes a pluggable INPUT ADAPTER (front #1 =
+  Claude Code + Haiku-encoder, kept working; front #2 = a local-LLM chat terminal = **Synapsis**,
+  which consumes the same core + same event channel and gives "live worker windows WITHOUT writing
+  to chat history" — Roberto's key requirement for this stage). Burnless = engine; Synapsis = front.
+  Do NOT bake the encoder into the core. Trade-off: local-LLM front is more work + worse compression
+  than Haiku, but is the only path to live-windows-without-chat-history.
+
 ## 11. Next session entry point (resume here)
 1. Refresh frozen builder if HEAD advanced; delegate via `bburn` from now on for hot-path work.
 2. Build unified execution core: extract `cmd_run` logic → shared `run_delegation(id, root, cfg)`;
