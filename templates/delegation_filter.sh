@@ -6,6 +6,16 @@
 set -euo pipefail
 
 INPUT=$(cat)
+# --- burnless mode shim: off EXPLICITO desliga o guard (fail-closed) ---
+__BL_SID=$(echo "$INPUT" | jq -r '.session_id // ""')
+__BL_MODE=""
+if [[ -n "$__BL_SID" && -f "$HOME/.burnless/state/session-$__BL_SID.mode" ]]; then
+  __BL_MODE=$(tr -d '[:space:]' < "$HOME/.burnless/state/session-$__BL_SID.mode" 2>/dev/null || true)
+fi
+if [[ "${BURNLESS_OFF:-0}" == "1" || "$__BL_MODE" == "off" ]]; then
+  exit 0
+fi
+# --- fim shim ---
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
 TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // ""')
 
