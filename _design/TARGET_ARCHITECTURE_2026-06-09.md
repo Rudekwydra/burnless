@@ -45,6 +45,32 @@ use (proven: worker cache_read=21959). Wires the orphan should_compact + keep_re
 
 This supersedes §10.5/§10.6/§2's encoder-in / decoder-out framing for the CORE (they become optional).
 
+### 0.A.1 Maestro = tool-less + skill-less pure delegator (Roberto, 2026-06-09)
+- **No tools, no skills on the maestro.** Tools (~22k defs) or skills (SKILL.md bodies) on the maestro
+  = bloat ("incha à toa") + blur the maestro/worker boundary. The maestro CAN'T execute → structurally
+  safe (resolves prod-secrets lesson). "Partner" comes from MODEL quality + conversation, NOT tools.
+- **ALL capability use is worker-side.** Need to read a file / run a check / use a skill? → delegate to
+  a worker (bronze for investigation; tier per task). Worker forks warm, loads ONLY the skill it needs
+  (skills are progressive/on-demand = naturally lean). Tradeoff: tool-less maestro adds a round-trip for
+  investigation vs staying lean; default = lean.
+- **Maestro keeps lightweight INDEXES for routing, not bodies:** a skill-index (name + 1-line desc) +
+  capsule summaries + tier table. Same memory model: maestro routes over indexes, workers load full content.
+- **Cache dissolves when tool-less:** the `--tools ""` cache-kill (measured) only mattered with a big
+  tool prefix. Tool-less ⇒ small prefix ⇒ cheap by being SMALL, not by caching. Also slim the bloated
+  MAESTRO_SYSTEM_PROMPT (3672 tok today). MEASURE (don't assume): does the rolling WINDOW still cache
+  under tool-less? If the cache-kill extends to accumulated content, either accept (small bounded window)
+  or keep a minimal tool just to enable cache.
+
+### 0.A.2 Skill index = derived, mtime-managed, system-rebuilt (Roberto, 2026-06-09)
+- skill_index (`.burnless/skill_index.json`) = DERIVED state, regenerable, never hand-maintained.
+- Reindex trigger = **mtime drift** of skill dirs vs index (mtime-is-truth). Rebuild = cheap, NO LLM —
+  parse each SKILL.md frontmatter (name + description). System does it automatically; never user/LLM.
+- REUSE the existing `warm_session` brief-drift→re-init mechanism: skill-drift = another base-drift
+  trigger (skill adds are rare → rebuilding the cached base occasionally is acceptable). If the index
+  lives in the cached base, a skill add busts+rebuilds the base (like brief drift); else read-by-address.
+- Unified rule for ALL indexes (skill, capsule, warm brief): derived · auto-fresh on mtime-drift ·
+  cheap rebuild without LLM · system-managed · regenerable. ONE mechanism, not three.
+
 ---
 
 ## 0. Identity (one line)
