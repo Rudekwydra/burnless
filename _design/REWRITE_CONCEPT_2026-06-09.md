@@ -161,3 +161,41 @@ burnless/
 
 Each step ported piece-by-piece against the current map (§2) so no hidden feature is lost —
 the documented risk of a rewrite.
+
+---
+
+## 6. DECISION (2026-06-09): identity = core + optional layers
+
+Roberto locked it: **burnless is the DELEGATION / ORCHESTRATION protocol.**
+- **Core (must be rock-solid):** config/tier single-source · ONE dispatch path · verify gate · capsule trail · a Maestro that chains delegations.
+- **Optional toggle modules (built ON the core, may be cut):** encoder/decoder, warm/cache, privacy levels (PROTOCOL.md §29 levels 1-3), redact/audit/burnkey.
+- Consequence: the encoder/decoder that stalled Roberto is **no longer a blocker** — it's an opt-in module decided later. Grounded in his own prior calls: tier-routing = MoE not compression; compression is commodity (Synapsis pivot); Maestro = humble delegator.
+
+## 7. FINDING: dispatch is fragmented (the real rot behind the `--force` bug)
+
+There are **N divergent execution paths**, each with its own flag/gate/validator handling:
+- CLI `burnless do` (argparse + hardcore gate + relative-path validator)
+- CLI `delegate` + `run` (accepts `--force`; `do` does NOT — undocumented asymmetry; `do` forwards `--timeout`/`--stale-timeout-s` but not `--force`)
+- `maestro/dispatcher.run_all()` (in-process, bypasses the CLI entirely — what the Maestro uses)
+- `maestro_legacy.py` session backend (default-off)
+
+**Requirement for the rewrite:** ONE execution core that both the human CLI and the
+Maestro call. One flag model, one gate, one path validator. Flags + docs generated
+from a single source (`--help` and `docs/COMMANDS.md` must not drift).
+
+## 8. Progress log
+
+- **2026-06-09** config-spine landed: `src/burnless/coreconfig/` (schema = single-source
+  DEFAULT_TIERS; resolver = cascade + route, mirrors legacy without importing it).
+  `tests/test_config_spine.py` **8 passed**. Additive — old config.py untouched; rename
+  coreconfig→config when old retires.
+- **2026-06-09** HD hygiene round 1: zombie `.burnless` dirs (semgit ×3 + Dropbox/CHARDON)
+  moved to `~/.burnless_quarantine_2026-06-09/` (reversible via `restore.sh`); live project
+  configs untouched. Reports in `_design/hd_hygiene_2026-06-09/` (config_inventory,
+  global_config_reconciliation, doctrine_audit) — **proposals only, irreversible application
+  gated on Roberto's review.**
+
+### Pending Roberto OK (irreversible — do NOT auto-apply)
+- Unify the two global configs (`~/.config/burnless` vs `~/.burnless/config.yaml`) per D3 proposal.
+- Trim/fix inline burnless doctrine in the 11 CLAUDE.md/soul.md/AGENTS.md per D4 audit.
+- Delete dead code (`cli.py.bak.*`, and — after wiring re-check — `maestro_legacy.py`, `natural_planner.py`).
