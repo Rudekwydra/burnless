@@ -243,7 +243,8 @@ def _find_design_dir(project_root: Path) -> Path:
 
 
 def build_system_blocks(
-    *, project_root: Path, burnless_root: Path, memory_index: Path | None = None
+    *, project_root: Path, burnless_root: Path, memory_index: Path | None = None,
+    model: str = "",
 ) -> list[dict[str, Any]]:
     """Build a single cached system block with all static context.
 
@@ -277,14 +278,20 @@ def build_system_blocks(
 
     combined = "\n\n".join([glossary, worker_role, static_context])
 
+    # Size the cache threshold by the worker's model (single source); fall back
+    # to the module constant when model is empty/unknown. Local import to avoid
+    # any import cycle with coreconfig.
+    from .coreconfig.resolver import min_cache_tokens as _min_cache_tokens
+    min_tokens = _min_cache_tokens(model) if model else CACHE_MIN_TOKENS
+
     # Safety check: warn if estimated tokens are below the API cache minimum.
     estimated_tokens = len(combined) / _CHARS_PER_TOKEN
-    if estimated_tokens < CACHE_MIN_TOKENS:
+    if estimated_tokens < min_tokens:
         import sys
-        shortfall = int(CACHE_MIN_TOKENS - estimated_tokens)
+        shortfall = int(min_tokens - estimated_tokens)
         print(
             f"[cached_worker] WARNING: system block ~{int(estimated_tokens)} tokens "
-            f"(need {CACHE_MIN_TOKENS} for cache). Adding {shortfall * int(_CHARS_PER_TOKEN)} "
+            f"(need {min_tokens} for cache). Adding {shortfall * int(_CHARS_PER_TOKEN)} "
             "chars of padding to activate cache.",
             file=sys.stderr,
         )
@@ -344,6 +351,7 @@ def run_cached_worker(
         project_root=project_root,
         burnless_root=burnless_root,
         memory_index=memory_index,
+        model=model,
     )
     if cold_cache:
         system = bust_cache(system)

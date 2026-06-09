@@ -197,3 +197,9 @@ DEFAULT_CACHE_MODES: dict[str, CacheMode] = {
         mechanism="none",
     ),
 }
+
+
+# Minimum tokens a prompt prefix must reach to activate prompt caching, per model.
+# Anthropic: Sonnet/Opus/Claude-4.x = 1024; Haiku 3.5 = 2048. Default 1024.
+MODEL_MIN_CACHE_TOKENS_DEFAULT = 1024
+MODEL_MIN_CACHE_TOKENS_HAIKU = 2048
