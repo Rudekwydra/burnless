@@ -50,7 +50,8 @@ flipping provider/auth flips the cache policy.
                    │ capsule only                        │ compact maestro result
                    ▼                                     │
         ┌──────────────── MAESTRO (Agent role=orchestrate) ─────────────────┐
-        │  reads ONLY capsules + glossary + role; cwd isolated (no leak)     │
+        │  reads ONLY capsules + role; cwd isolated (no leak)               │
+        │  (glossary DROPPED — telegrammer compaction covers it)            │
         │  routes (keyword→tier), emits delegate lines                       │
         │  [F] context-size monitor → auto-compact old capsules → disk hist  │
         └───────────────┬───────────────────────────────────────────────────┘
@@ -93,7 +94,8 @@ burnless/
                  verify gate, retry loop + bronze-rescue. (extracted from cli._cmd_run_body)
   providers/     autobalance (rank_providers, health scores, fallback), autodetect,
                  provider→command resolution. [G]
-  cache/         cache_modes/ (anthropic_subscription | anthropic_api | codex | none),
+  cache/         cache_modes/ — provider×auth MATRIX (anthropic_subscription | anthropic_api |
+                   codex_subscription | codex_api | gemini_subscription | gemini_api | none); key=f"{provider}_{auth}",
                  warm/ (session + codex), cold_start (per-model sizing) [a],
                  recycle (TTL/drift policy) [b], monitor (per provider/auth state) [E].
   maestro/       orchestrate (route, decide, emit delegates), isolation (no-leak flags),
@@ -219,9 +221,50 @@ editable. `## Verify` gate on every code delegation.
 
 ---
 
-## 8. Open holes for Roberto to catch (if any)
+## 8. Open holes — ANSWERED by Roberto (2026-06-09)
 
-- Is the maestro itself ever multi-provider (autobalanced), or always one fixed provider?
-- Recycle [b] trigger for very long batches — TTL/drift only, or also a size cap?
-- Privacy `opaque`/`audit` — do they encrypt capsules at rest, or only gate transmission?
-- Does Synapsis (front #2) need a stable engine API/IPC, or is CLI-invocation enough at first?
+1. **Maestro multi-provider?** Per-agent config: each Agent is either FIXED (one provider, set once
+   in config) or AUTOBALANCE (a providers pool). Independent per agent → any combo: worker-autobalance
+   + maestro-fixed, both-autobalance, or both-fixed. (Agent gains `provider` xor `providers: [...]`.)
+2. **Recycle [b] trigger for long batches?** DECIDED: worker fork-branches need NO size cap (immutable
+   base, forks disposable) — they recycle on TTL / brief-drift / provider-switch (bridge). The only
+   size-driven recycle is the MAESTRO context = [F] compact-to-disk. So: no separate batch size cap.
+3. **Privacy opaque/audit encrypt-at-rest?** Optional; deferred. Layer concern, design later.
+4. **Synapsis API vs CLI?** It WILL be an API (paid). CLI-invocation OK at first. Consequence:
+   the paid API/Synapsis CANNOT ship on free PyPI → see §9 open-core split.
+
+## 9. Roberto corrections — round 2 (2026-06-09, authoritative)
+
+- **Glossary DROPPED from the maestro read-set.** Telegrammer (Haiku) compaction already covers what
+  the glossary did. Glossary survives ONLY as an optional APPEND inside the encoder layer for privacy
+  (vocab substitution) — a `layers/encoder_police` concern, never a maestro input. (Diagram fixed §2.)
+
+- **Autobalance = a PRO feature, not free core. Corrected definition** (capsule autobalance-multi-
+  provider-todo): pick the best provider FOR THIS USER NOW by `w_cost·cost + w_speed·latency +
+  w_quality·failure`, where cost = cumulative month spend per provider and the key signal is
+  **rate-limit HEADROOM left on each subscription tier of the account** (Roberto's "comparar os tiers
+  mensais de assinatura disponíveis na conta"). On provider switch → **bridge capsule**: bronze writes
+  a short prior-session summary reformatted for the new provider (context continuity without paying
+  full input). Pending cross-provider BENCH before implementing. What's SHIPPED today (agents.
+  rank_providers: success·0.6 + latency·0.4) is only a health-failover SEED, not the real feature.
+  Target home: `providers/` for the free seed (fixed + simple health failover); the cost/headroom/
+  quality scorer + bridge capsule live in the PRO layer (_pro/).
+
+- **cache_modes = provider × auth MATRIX.** Not just codex single — every provider splits by auth:
+  anthropic_subscription, anthropic_api, codex_subscription, codex_api, gemini_subscription,
+  gemini_api, ... + none. Resolve key = f"{provider}_{auth}". (DEFAULT_CACHE_MODES must be expanded
+  from today's 4 to the full matrix.)
+
+- **Capsule = ONE compression model** (drop the multi-mode light/balanced/extreme as the capsule's own
+  knob — keep a single canonical compression). PLUS an **emotion/salience WEIGHT** to bias how much a
+  capsule matters. DECISION: the weight is a **Forgetless** concern (memory ranking = its BM25+
+  PageRank+salience domain). Burnless capsule carries an OPTIONAL `weight`/`salience` field that
+  Forgetless populates & ranks by; Burnless does not score it. Keeps burnless to one compression model.
+
+- **Metrics follow the provider automatically.** Metrics keyed by (provider, cache_mode); change the
+  provider → metrics re-key with zero code. Same single-source rule as everything else. Non-negotiable.
+
+- **Open-core split (from hole 4).** Free core (MIT, PyPI): engine, fixed-provider + health-failover
+  seed, CLI front. PRO (paid, private `_pro/`, NOT on free PyPI): full autobalance (cost/headroom/
+  quality + bridge capsule), Synapsis API + front, multitenant. Mirrors the existing free.burnless.pro
+  vs burnless.pro domain split. The engine exposes a stable API that the Pro/Synapsis side consumes.
