@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .. import cache_policy
+from .session_runner import MaestroSession
 
 
 @dataclass
@@ -54,6 +55,7 @@ class PartnerState:
     window: list[Turn] = field(default_factory=list)
     cycle: int = 0                     # how many compaction cycles have happened
     capsule_paths: list[str] = field(default_factory=list)
+    pending_seed: str = ""             # capsule+tail text to inject when the NEXT fork starts
 
 
 # Injectable side-effects (real impls wire to claude warm-fork / bronze compaction;
@@ -174,4 +176,43 @@ def partner_turn(
     state.window.append(Turn("user", user_text, estimate_tokens(user_text)))
     state.window.append(Turn("maestro", response, rtoks))
     maybe_compact(state, cfg, compact_fn, burnless_root)
+    return response
+
+
+def _render_tail(state: PartnerState) -> str:
+    return "\n".join(f"{t.role}: {t.text}" for t in state.window)
+
+
+def partner_turn_session(
+    state: PartnerState,
+    user_text: str,
+    *,
+    cfg: dict,
+    session: MaestroSession,
+    runner,                       # RunnerFn passed through to session.send
+    compact_fn: CompactFn,        # -> structured dict (maybe_compact contract)
+    burnless_root: Optional[Path] = None,
+) -> str:
+    """One partner turn over a conversation-native session.
+
+    - Sends ONLY the delta (user_text) to the session; when a prior rewind left
+      a pending_seed, that seed (capsule.render() + verbatim tail) is injected
+      as the new fork's opening via rewind_capsule.
+    - Maintains state.window so the should_compact trigger accounting matches
+      what the fork has actually accumulated.
+    - On compaction: maybe_compact updates the structured capsule + keeps the
+      verbatim tail in window; then session.rewind() drops the fork and
+      pending_seed = capsule.render() + recent tail is stashed so the NEXT send
+      re-forks BASE re-seeded (engine window and fork stay in agreement).
+    """
+    seed = state.pending_seed or None
+    response, rtoks = session.send(user_text, runner=runner, rewind_capsule=seed)
+    state.pending_seed = ""                                   # consumed
+    state.window.append(Turn("user", user_text, estimate_tokens(user_text)))
+    state.window.append(Turn("maestro", response, rtoks))
+    if maybe_compact(state, cfg, compact_fn, burnless_root):  # rewinds window to verbatim tail
+        session.rewind()                                      # next send will fork BASE
+        tail = _render_tail(state)                            # the kept verbatim tail
+        cap = state.rolling_capsule.render()
+        state.pending_seed = cap + (("\n\n## Recent\n" + tail) if tail else "")
     return response
