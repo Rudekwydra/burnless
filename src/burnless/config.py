@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import os
 import re
 import yaml
 
@@ -214,8 +215,11 @@ def load(path: Path) -> dict:
         with p.open("r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
-    global_path = Path.home() / ".config" / "burnless" / "config.yaml"
-    global_data = _read(global_path)
+    env_global = os.environ.get("BURNLESS_GLOBAL_CONFIG")
+    if env_global is not None:
+        global_data = _read(Path(env_global)) if env_global else {}
+    else:
+        global_data = _read(Path.home() / ".config" / "burnless" / "config.yaml")
     project_data = _read(path)
     user_data = _deep_merge(global_data, project_data)
     if not user_data:
