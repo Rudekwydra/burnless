@@ -1,93 +1,42 @@
-"""3-layer pipeline: Maestro subprocess management.
+"""3-layer pipeline: Maestro subprocess management (v1 engine path).
 
 User flow:
   IDE Haiku (encoder/decoder layer) → mcp__burnless__maestro(envelope) → this module
-  → subprocess Sonnet (persistent session) → response_envelope → back to IDE Haiku
+  → MaestroSession (warm base + persistent fork) → response_envelope → back to IDE Haiku
 
-Cache strategy: Maestro session resumed across calls; HARD RULES system prompt
-goes in EVERY user message (cached prefix) to enforce "always delegate" habit.
+Cache strategy: warm maestro base seeded once; each MCP call resumes the persisted
+fork (mcp_fork.json) so context accumulates across calls within a project.
 """
 from __future__ import annotations
+import functools
 import json
 import re
-import subprocess
-import threading
 from pathlib import Path
 
-MAESTRO_HARD_RULES = """[MAESTRO ROLE — read this every turn]
 
-You are the Maestro in a 3-layer Burnless pipeline. You receive ENVELOPES
-(compressed user intent) from a Haiku encoder. You respond with envelope-shaped
-output that a Haiku decoder will expand for the user.
-
-HARD RULES — never break, even if "cheaper" to break:
-1. NEVER read files directly. Delegate: run `burnless do --tier bronze "read X and report Y"`.
-2. NEVER run shell commands directly beyond `burnless do` / `burnless run` / `burnless capsule`.
-3. NEVER decode envelope to natural language. Output stays in envelope/structured form.
-4. For ANY action larger than 2 lines of reasoning: STOP. Delegate to a worker.
-
-OUTPUTS ALLOWED:
-  A. Tool calls (Bash) limited to: burnless do / burnless run / burnless capsule / burnless read
-  B. Final response as JSON object:
-     {
-       "response_envelope": "<terse summary of decision/result>",
-       "key_facts": [...],
-       "delegations_made": ["d042", "d043"],
-       "next": "<what's next or empty>"
-     }
-
-If tempted to read/execute directly: that is "escapulida". Always delegate.
-Habit > micro-optimization. Better to lose 1/50 than skip the protocol.
-"""
+def _load_fork(burnless_root: Path, model: str) -> str | None:
+    fork_file = burnless_root / "maestro" / "mcp_fork.json"
+    if not fork_file.exists():
+        return None
+    try:
+        data = json.loads(fork_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if data.get("model") != model:
+        return None
+    return data.get("fork_session_id") or None
 
 
-_maestro_sessions: dict[str, str] = {}
-_lock = threading.Lock()
-
-
-def _build_user_message(envelope: str, compression_mode: str) -> str:
-    return (
-        MAESTRO_HARD_RULES
-        + f"\n\n[COMPRESSION MODE: {compression_mode}]"
-        + "\n\n[INCOMING ENVELOPE FROM ENCODER]\n"
-        + envelope
-        + "\n\n[END ENVELOPE — process and respond per HARD RULES]"
+def _save_fork(burnless_root: Path, model: str, fork_id: str | None) -> None:
+    if not fork_id:
+        return
+    fork_dir = burnless_root / "maestro"
+    fork_dir.mkdir(parents=True, exist_ok=True)
+    fork_file = fork_dir / "mcp_fork.json"
+    fork_file.write_text(
+        json.dumps({"model": model, "fork_session_id": fork_id}, ensure_ascii=False),
+        encoding="utf-8",
     )
-
-
-def _parse_stream_json(stdout: str) -> tuple[str | None, str, dict]:
-    """Extract (session_id, final_text, usage_metrics) from claude stream-json output."""
-    session_id: str | None = None
-    final_text = ""
-    usage = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "duration_ms": 0,
-        "model": None,
-    }
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        t = obj.get("type")
-        if t == "system" and "session_id" in obj and not session_id:
-            session_id = obj["session_id"]
-            usage["model"] = obj.get("model") or usage["model"]
-        elif t == "result":
-            final_text = obj.get("result", "") or final_text
-            u = obj.get("usage") or {}
-            usage["input_tokens"] += int(u.get("input_tokens", 0))
-            usage["output_tokens"] += int(u.get("output_tokens", 0))
-            usage["cache_creation_input_tokens"] += int(u.get("cache_creation_input_tokens", 0))
-            usage["cache_read_input_tokens"] += int(u.get("cache_read_input_tokens", 0))
-            usage["duration_ms"] = int(obj.get("duration_ms", 0)) or usage["duration_ms"]
-    return session_id, final_text, usage
 
 
 def _try_extract_envelope_json(text: str) -> dict | None:
@@ -116,51 +65,68 @@ def process_envelope(
     model: str | None = None,
     timeout: int = 180,
 ) -> dict:
-    """Send envelope to persistent Maestro subprocess; return structured result + decoder hint."""
+    """Send envelope to persistent Maestro session via engine; return structured result + decoder hint."""
     from . import config as _config, state as _state, paths as _paths
+    from .maestro.base import maestro_base_init, maestro_iso_cwd
+    from .maestro.session_runner import MaestroSession
+    from .maestro.runners import runner_claude_json
+    from .maestro import dispatcher
+    from . import warm_session
+
+    burnless_root = project_root / ".burnless"
+
     if model is None:
         try:
-            st = _state.load(_paths.paths_for(project_root / ".burnless")["state"])
-            model = st.get("brain_model") or _config.DEFAULT_TIER_MODELS["silver"]
+            st = _state.load(_paths.paths_for(burnless_root)["state"])
+            model = st.get("brain_model") or _config.DEFAULT_TIER_MODELS["bronze"]
         except Exception:
-            model = _config.DEFAULT_TIER_MODELS["silver"]
-    key = str(project_root.resolve())
-    with _lock:
-        session_id = _maestro_sessions.get(key)
+            model = _config.DEFAULT_TIER_MODELS["bronze"]
 
-    cmd = [
-        "/opt/homebrew/bin/claude", "-p",
-        "--model", model,
-        "--permission-mode", "bypassPermissions",
-        "--allowedTools", "Bash",
-        "--output-format", "stream-json",
-        "--verbose",
-        "--include-partial-messages",
-    ]
-    if session_id:
-        cmd += ["--resume", session_id]
-
-    user_message = _build_user_message(envelope, compression_mode)
     try:
-        proc = subprocess.run(
-            cmd,
-            input=user_message,
-            capture_output=True,
-            text=True,
-            cwd=str(project_root),
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
+        base_uuid = maestro_base_init(burnless_root, model)
+    except RuntimeError as exc:
         return {
-            "error": "maestro_timeout",
-            "decoder_hint": "Tell the user the Maestro timed out. Suggest retry or smaller request.",
+            "error": "maestro_unavailable",
+            "detail": str(exc),
+            "decoder_hint": "Tell the user the Maestro is unavailable.",
         }
 
-    new_session_id, final_text, usage = _parse_stream_json(proc.stdout)
+    session = MaestroSession(
+        base_uuid=base_uuid,
+        model=model,
+        claude_bin=warm_session._claude_binary() or "claude",
+        fork_session_id=_load_fork(burnless_root, model),
+    )
+    runner = functools.partial(
+        runner_claude_json,
+        timeout=timeout,
+        cwd=maestro_iso_cwd(burnless_root, model),
+    )
 
-    if new_session_id and not session_id:
-        with _lock:
-            _maestro_sessions[key] = new_session_id
+    text, _ = session.send(envelope, runner=runner)
+    _save_fork(burnless_root, model, session.fork_session_id)
+
+    lines = text.splitlines()
+    has_delegates = any(
+        dispatcher.DELEGATE_RE.match(l.strip()) or dispatcher.DELEGATE_SHORT_RE.match(l.strip())
+        for l in lines
+    )
+    final_text = text
+    if has_delegates:
+        try:
+            cfg = _config.load(_paths.paths_for(burnless_root)["config"])
+        except Exception:
+            cfg = {}
+        capsules = dispatcher.run_all(
+            lines,
+            burnless_root=burnless_root,
+            project_root=project_root,
+            config=cfg,
+        )
+        if capsules:
+            text2, _ = session.send("\n".join(capsules), runner=runner)
+            _save_fork(burnless_root, model, session.fork_session_id)
+            final_text = text2 or text
 
     response_envelope_json = _try_extract_envelope_json(final_text)
 
@@ -180,12 +146,20 @@ def process_envelope(
         "ratio": round(len(envelope) / max(len(resp_text), 1), 3),
     }
 
+    agg_usage: dict = {
+        "input_tokens": sum(int(u.get("input_tokens", 0) or 0) for u in session.usages),
+        "output_tokens": sum(int(u.get("output_tokens", 0) or 0) for u in session.usages),
+        "cache_creation_input_tokens": sum(int(u.get("cache_creation_input_tokens", 0) or 0) for u in session.usages),
+        "cache_read_input_tokens": sum(int(u.get("cache_read_input_tokens", 0) or 0) for u in session.usages),
+        "model": model,
+    }
+
     return {
         "response_envelope": response_envelope_json or {"raw_text": final_text},
         "decoder_hint": decoder_hint,
         "compression_mode": compression_mode,
-        "maestro_session_id": new_session_id or session_id,
-        "maestro_exit_code": proc.returncode,
-        "usage": usage,
+        "maestro_session_id": session.fork_session_id,
+        "maestro_exit_code": 0,
+        "usage": agg_usage,
         "compression": compression_telemetry,
     }
