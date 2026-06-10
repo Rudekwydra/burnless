@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timezone
@@ -28,6 +29,16 @@ try:
     import anthropic
 except ImportError:  # optional dep; tests monkeypatch this
     anthropic = None  # type: ignore[assignment]
+
+
+def _strip_gemma_channels(text: str) -> str:
+    import re as _re
+    # gemma-4 harmony "thought" channel: drop everything up to and incl the final <channel|>
+    if "<channel|>" in text:
+        text = text.rsplit("<channel|>", 1)[1]
+    text = _re.sub(r"<\|?channel\|?>", "", text)         # stray channel tokens
+    text = _re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", text)  # any residual ANSI CSI
+    return text.strip()
 
 
 MODES = ("light", "balanced", "extreme")
@@ -469,16 +480,16 @@ def compress_transcript(
                 for ctx in (session_context or [])[-6:]:
                     ctx_block += f"RAW:\n{ctx['raw']}\nCOMPRESSED:\n{ctx['compressed']}\n\n"
             combined = _SYSTEM_PROMPT + "\n\n" + ctx_block + "INPUT:\n" + minified
-            proc = subprocess.run(
-                ["ollama", "run", model],
-                input=combined,
-                capture_output=True,
-                text=True,
-                timeout=300,
+            _payload = json.dumps({"model": model, "prompt": combined, "stream": False}).encode()
+            _req = urllib.request.Request(
+                "http://localhost:11434/api/generate",
+                data=_payload,
+                headers={"Content-Type": "application/json"},
             )
-            if proc.returncode != 0:
-                raise RuntimeError(proc.stderr[:400] or "ollama failed")
-            compressed = proc.stdout.strip()
+            with urllib.request.urlopen(_req, timeout=300) as _resp:
+                _data = json.loads(_resp.read().decode())
+            compressed = (_data.get("response") or "").strip()
+            compressed = _strip_gemma_channels(compressed)
             compressed = re.sub(r"^```[^\n]*\n?", "", compressed)
             compressed = re.sub(r"\n?```$", "", compressed).strip()
         else:
