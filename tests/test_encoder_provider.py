@@ -39,6 +39,23 @@ def _make_anthropic_stub(recorded):
     return FakeAnthropic()
 
 
+def _make_urlopen_stub(response_bytes):
+    """Return a fake urlopen that returns a context manager yielding given bytes."""
+
+    class FakeResp:
+        def read(self):
+            return response_bytes
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+
+    def fake_urlopen(req, timeout=None):
+        return FakeResp()
+
+    return fake_urlopen
+
+
 def test_default_anthropic_unchanged(monkeypatch):
     """encoder=None → anthropic path, uses config.HAIKU_MODEL."""
     recorded = {}
@@ -51,16 +68,12 @@ def test_default_anthropic_unchanged(monkeypatch):
     assert stats["mode"] == "balanced"
 
 
-def test_ollama_local_routes_subprocess(monkeypatch):
-    """encoder=ollama-local → subprocess path, correct cmd, capsule returned."""
-    called_with = {}
-
-    def fake_run(cmd, **kwargs):
-        called_with["cmd"] = cmd
-        result = types.SimpleNamespace(returncode=0, stdout="CMP", stderr="")
-        return result
-
-    monkeypatch.setattr(compression, "subprocess", types.SimpleNamespace(run=fake_run))
+def test_ollama_local_routes_http(monkeypatch):
+    """encoder=ollama-local → HTTP API path, capsule returned and unpacks."""
+    monkeypatch.setattr(
+        compression.urllib.request, "urlopen",
+        _make_urlopen_stub(b'{"response":"CMP"}'),
+    )
 
     capsule, stats = compression.compress_transcript(
         TEXT,
@@ -68,21 +81,38 @@ def test_ollama_local_routes_subprocess(monkeypatch):
         encoder={"provider": "ollama-local", "model": "gemma-x"},
     )
 
-    assert called_with.get("cmd") == ["ollama", "run", "gemma-x"], called_with
     assert capsule.startswith("burnless:")
-    # unpack to verify the compressed payload is accessible
     _sid, _key, _ct = unpack(capsule)
 
 
+def test_ollama_http_strips_channels(monkeypatch):
+    """ollama response with harmony channel token → stripped before pack."""
+    monkeypatch.setattr(
+        compression.urllib.request, "urlopen",
+        _make_urlopen_stub(b'{"response":"<channel|>CMP"}'),
+    )
+
+    capsule, stats = compression.compress_transcript(
+        TEXT,
+        mode="balanced",
+        encoder={"provider": "ollama-local", "model": "gemma-x"},
+    )
+
+    assert capsule.startswith("burnless:")
+    from burnless.codec.cipher import decode as cipher_decode
+    _sid, key, ciphertext = unpack(capsule)
+    decoded = cipher_decode(ciphertext, key)
+    assert "<channel" not in decoded
+
+
 def test_ollama_failure_falls_back_to_minify(monkeypatch):
-    """ollama returncode!=0 → graceful degrade, no exception, capsule returned."""
+    """urlopen raises → graceful degrade, no exception, capsule returned."""
 
-    def fake_run_fail(cmd, **kwargs):
-        return types.SimpleNamespace(returncode=1, stdout="", stderr="connection refused")
+    def fake_urlopen_fail(req, timeout=None):
+        raise OSError("connection refused")
 
-    monkeypatch.setattr(compression, "subprocess", types.SimpleNamespace(run=fake_run_fail))
+    monkeypatch.setattr(compression.urllib.request, "urlopen", fake_urlopen_fail)
 
-    # Must not raise
     capsule, stats = compression.compress_transcript(
         TEXT,
         mode="balanced",
@@ -94,12 +124,12 @@ def test_ollama_failure_falls_back_to_minify(monkeypatch):
 
 
 def test_ollama_exception_falls_back_to_minify(monkeypatch):
-    """subprocess.run raises → graceful degrade, capsule returned."""
+    """urlopen raises (variant) → graceful degrade, capsule returned."""
 
-    def fake_run_exc(cmd, **kwargs):
+    def fake_urlopen_exc(req, timeout=None):
         raise OSError("ollama not found")
 
-    monkeypatch.setattr(compression, "subprocess", types.SimpleNamespace(run=fake_run_exc))
+    monkeypatch.setattr(compression.urllib.request, "urlopen", fake_urlopen_exc)
 
     capsule, stats = compression.compress_transcript(
         TEXT,
@@ -108,3 +138,8 @@ def test_ollama_exception_falls_back_to_minify(monkeypatch):
     )
 
     assert capsule.startswith("burnless:")
+
+
+def test_strip_gemma_channels():
+    """_strip_gemma_channels drops everything up to and incl the last <channel|>."""
+    assert compression._strip_gemma_channels("<|channel>thought\n<channel|>HI") == "HI"
