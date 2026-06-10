@@ -19,6 +19,12 @@ MODEL_PRICES = {
         "cache_read": 0.10,
         "cache_write": 1.25,
     },
+    "fable": {
+        "input": 10,
+        "output": 50,
+        "cache_read": 1.00,
+        "cache_write": 12.50,
+    },
 }
 
 BASELINE_MODEL = "opus"
