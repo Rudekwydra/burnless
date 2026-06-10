@@ -95,7 +95,8 @@ def process_envelope(
         _cfg = _config.load(_paths.paths_for(burnless_root)["config"])
     except Exception:
         _cfg = {}
-    _epochs_enabled = bool((_cfg.get("epochs") or {}).get("enabled", False))
+    from . import epochs as _ep
+    _epochs_enabled = _ep.is_enabled(project_root, _cfg)
     _chat_id = f"maestro-{model}"
 
     session = MaestroSession(

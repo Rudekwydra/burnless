@@ -203,3 +203,30 @@ def epoch_summarizer(project_root: Path):
             return None
 
     return _summarize
+
+
+def _enabled_marker(project_root) -> Path:
+    return Path(project_root) / ".burnless" / "epochs.on"
+
+
+def is_enabled(project_root, cfg=None) -> bool:
+    "True if config epochs.enabled OR the marker file exists. Fail-open False."
+    try:
+        if cfg and bool((cfg.get("epochs") or {}).get("enabled", False)):
+            return True
+        return _enabled_marker(project_root).exists()
+    except Exception:
+        return False
+
+
+def set_enabled(project_root, on: bool) -> bool:
+    "Create/remove the marker. Returns the new state. Fail-open."
+    m = _enabled_marker(project_root)
+    try:
+        if on:
+            m.parent.mkdir(parents=True, exist_ok=True); m.write_text("on", encoding="utf-8")
+        elif m.exists():
+            m.unlink()
+    except Exception:
+        pass
+    return is_enabled(project_root)
