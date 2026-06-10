@@ -829,11 +829,13 @@ def cmd_compress(args: argparse.Namespace) -> int:
     cfg = config_mod.load(root / "config.yaml")
     mode = args.level or cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
     mode = compression_mod.normalize_mode(mode)
+    enc_cfg = cfg.get("encoder") or {}
     try:
         capsule_text, stats = compression_mod.compress_transcript(
             text,
             mode=mode,
             session_context=[],
+            encoder=enc_cfg,
         )
     except ValueError as e:
         print(f"burnless: {e}", file=sys.stderr)
