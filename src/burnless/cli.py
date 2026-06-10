@@ -1177,10 +1177,32 @@ def cmd_route(args: argparse.Namespace) -> int:
 def cmd_epoch(args: argparse.Namespace) -> int:
     import sys as _sys
     root_path = Path(getattr(args, "root", None) or paths_mod.find_root() or Path.cwd())
-    chat_id = args.chat_id
+    chat_id = getattr(args, "chat_id", None)
     epoch_cmd = getattr(args, "epoch_cmd", None)
 
-    if epoch_cmd == "capture":
+    if epoch_cmd == "on":
+        from .epochs import set_enabled
+        set_enabled(root_path, True)
+        print("epochs: ON")
+        return 0
+
+    elif epoch_cmd == "off":
+        from .epochs import set_enabled
+        set_enabled(root_path, False)
+        print("epochs: OFF")
+        return 0
+
+    elif epoch_cmd == "status":
+        from .epochs import is_enabled
+        state = is_enabled(root_path)
+        epochs_base = root_path / ".burnless" / "epochs"
+        chats = [d for d in epochs_base.iterdir() if d.is_dir()] if epochs_base.exists() else []
+        summaries = sum(len(list(d.glob("*.md"))) for d in chats)
+        label = "ON" if state else "OFF"
+        print(f"epochs: {label}  ({len(chats)} chats, {summaries} summaries)")
+        return 0
+
+    elif epoch_cmd == "capture":
         text = _sys.stdin.read()
         summarizer = epochs_mod.epoch_summarizer(root_path)
         s = summarizer(text)
@@ -1799,8 +1821,8 @@ def build_parser() -> argparse.ArgumentParser:
     dsp.add_argument("--model", default="qwen2.5-coder:7b", help="ollama model to use")
     dsp.set_defaults(func=cmd_debugless_sweep)
 
-    sp = sub.add_parser("epoch", help="rolling-memory epoch engine (capture/read/cleanup)")
-    sp.add_argument("--chat-id", required=True, dest="chat_id", help="chat ID for epoch storage")
+    sp = sub.add_parser("epoch", help="rolling-memory epoch engine (capture/read/cleanup/on/off/status)")
+    sp.add_argument("--chat-id", required=False, default=None, dest="chat_id", help="chat ID for epoch storage (required for capture/read/cleanup)")
     sp.add_argument("--root", default=None, help="project root (default: find_root())")
     epoch_sub = sp.add_subparsers(dest="epoch_cmd", required=True)
     esp = epoch_sub.add_parser("capture", help="read STDIN, summarize, append, consolidate")
@@ -1809,6 +1831,12 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="read")
     esp = epoch_sub.add_parser("cleanup", help="remove originais directory")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="cleanup")
+    esp = epoch_sub.add_parser("on", help="enable rolling memory (create marker file)")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="on")
+    esp = epoch_sub.add_parser("off", help="disable rolling memory (remove marker file)")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="off")
+    esp = epoch_sub.add_parser("status", help="show ON/OFF state + chat/summary count")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="status")
 
     return p
 

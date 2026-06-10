@@ -100,3 +100,9 @@ Never pipe `do`/`run` through `tail`/`head` — it masks the exit code. Capture 
 - Config commands use **absolute paths** — subprocess workers don't inherit full `PATH`. `burnless
   init` resolves them via `shutil.which()`.
 - Before pushing the public repo: run `./scripts/public_git_check.sh`.
+
+---
+
+## Rolling memory (epochs)
+
+In `burnless chat`, the maestro's own context rolls instead of growing — each turn is summarized to `.burnless/epochs/`, every 10 turns the fork rotates and re-seeds from the rolling summary (Θ(N²)→Θ(N)). Toggle: `burnless epoch on|off`. Default off.
