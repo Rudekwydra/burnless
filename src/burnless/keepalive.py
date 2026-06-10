@@ -10,9 +10,23 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .maestro_adapters import MaestroAdapter
 
-from .chat_mode import _load_claude_oauth_token
-
 logger = logging.getLogger(__name__)
+
+
+def _load_claude_oauth_token() -> str | None:
+    """Read Claude Code OAuth token from macOS Keychain (fallback when no API key)."""
+    try:
+        import subprocess, json as _json
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            return None
+        data = _json.loads(r.stdout.strip())
+        return data.get("claudeAiOauth", {}).get("accessToken")
+    except Exception:
+        return None
 
 _DEFAULT_IDLE_THRESHOLD_S = 3000  # 50 min
 _POLL_INTERVAL_S = 30
