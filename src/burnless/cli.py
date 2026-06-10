@@ -811,79 +811,25 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_compress(args: argparse.Namespace) -> int:
-    if args.file:
-        text = Path(args.file).read_text(encoding="utf-8")
-    elif not sys.stdin.isatty():
-        text = sys.stdin.read()
-    else:
-        print(
-            "burnless compress: no input. Pipe a transcript or pass --file <path>.\n"
-            "  Example: cat session.log | burnless compress\n"
-            "           burnless compress --file session.log",
-            file=sys.stderr,
-        )
-        return 2
-
-    _load_anthropic_key()
-    root = paths_mod.find_root() or paths_mod.root(Path.cwd())
-    cfg = config_mod.load(root / "config.yaml")
-    mode = args.level or cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
-    mode = compression_mod.normalize_mode(mode)
-    enc_cfg = cfg.get("encoder") or {}
-    try:
-        capsule_text, stats = compression_mod.compress_transcript(
-            text,
-            mode=mode,
-            session_context=[],
-            encoder=enc_cfg,
-        )
-    except ValueError as e:
-        print(f"burnless: {e}", file=sys.stderr)
-        return 2
-
-    try:
-        from .codec.cipher import unpack_metadata
-
-        version, session_id, key_ref = unpack_metadata(capsule_text)
-    except ValueError as e:
-        print(f"burnless: {e}", file=sys.stderr)
-        return 2
-
-    if args.out:
-        out_path = Path(args.out)
-    else:
-        out_path = root / "sessions" / f"{session_id}.capsule"
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(capsule_text, encoding="utf-8")
     print(
-        f"capsule [{session_id}] {version}/{key_ref} — "
-        f"{stats['original_chars']}c → {stats['capsule_chars']}c "
-        f"({stats['ratio']}%) saved: {out_path}"
+        "burnless compress is deprecated. The encrypted-capsule compressor (cipher + "
+        "key custody) is reserved for burnless Pro / Synapsis; the v1 key_store was "
+        "memory-only with no cross-process decode. The live chat uses semantic "
+        "compression (no cipher). See capsule burnless-cipher-decoder-deprecated-2026-06-10.",
+        file=sys.stderr,
     )
-    if version == "v2":
-        print("note: v2 decode requires the local in-memory keyring for this process.")
-    return 0
+    return 2
 
 
 def cmd_decode(args: argparse.Namespace) -> int:
-    if args.file:
-        capsule_text = Path(args.file).read_text(encoding="utf-8").strip()
-    elif args.capsule:
-        capsule_text = args.capsule.strip()
-    else:
-        print("burnless: provide a capsule string or --file path", file=sys.stderr)
-        return 2
-
-    try:
-        from .codec.cipher import decode as cipher_decode, unpack
-
-        _session_id, key, ciphertext = unpack(capsule_text)
-        print(cipher_decode(ciphertext, key))
-    except Exception as e:
-        print(f"burnless: decode failed: {e}", file=sys.stderr)
-        return 2
-    return 0
+    print(
+        "burnless decode is deprecated. Cipher capsule decoding (XOR + in-memory key) does "
+        "not work across processes and is reserved for burnless Pro / Synapsis. The live "
+        "chat decodes semantically via the Maestro decoder_hint (no cipher). See capsule "
+        "burnless-cipher-decoder-deprecated-2026-06-10.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def _resolve_burnless_root() -> Path | None:
@@ -1639,14 +1585,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="print existing events and exit (do not tail)")
     sp.set_defaults(func=cmd_watch)
 
-    sp = sub.add_parser("compress", help="compress a transcript into a capsule")
+    sp = sub.add_parser("compress", help="(deprecated) cipher capsule compressor — reserved for Pro/Synapsis")
     sp.add_argument("--file", "-f", default=None)
     sp.add_argument("--level", default=None, choices=["light", "balanced", "extreme"])
     sp.add_argument("--out", "-o", default=None)
     sp.set_defaults(func=cmd_compress)
 
-    sp = sub.add_parser("decode", help="decode a burnless capsule")
+    sp = sub.add_parser("decode", help="(deprecated) cipher capsule decoder — reserved for Pro/Synapsis")
     sp.add_argument("capsule", nargs="?", default=None)
+    sp.add_argument("--capsule", dest="capsule_flag", default=None)
     sp.add_argument("--file", "-f", default=None)
     sp.set_defaults(func=cmd_decode)
 

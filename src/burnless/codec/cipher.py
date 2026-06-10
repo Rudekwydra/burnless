@@ -1,3 +1,13 @@
+"""RESERVED / DEPRECATED in burnless free.
+
+The encrypted-capsule cipher (XOR + key custody) is NOT used by the live chat pipeline
+(which decodes semantically via the Maestro decoder_hint). The standalone
+`burnless compress`/`decode` CLI that used this is deprecated: key_store was memory-only
+(_MEMORY_KEYS), so v2 capsules are not decodable across processes. The concept (encrypted
+capsules + persistent key custody, the planned key_store=local) is migrated to the burnless
+Pro / Synapsis roadmap. Code kept intact for that reuse. See capsule
+burnless-cipher-decoder-deprecated-2026-06-10.
+"""
 import base64
 import hashlib
 import secrets
