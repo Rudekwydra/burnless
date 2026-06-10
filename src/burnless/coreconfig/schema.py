@@ -191,6 +191,13 @@ DEFAULT_CACHE_MODES: dict[str, CacheMode] = {
         warm_module=None,
         keepalive=False,
     ),
+    "ollama_none": CacheMode(
+        name="ollama_none",
+        module="burnless.cache_modes.none",
+        mechanism="local_inference",
+        warm_module=None,
+        keepalive=False,
+    ),
     "none": CacheMode(
         name="none",
         module="burnless.cache_modes.none",
