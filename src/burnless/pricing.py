@@ -25,6 +25,27 @@ MODEL_PRICES = {
         "cache_read": 1.00,
         "cache_write": 12.50,
     },
+    # Local inference (ollama / gemma): $0 marginal cost.
+    "gemma": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+    },
+    # codex / gpt on subscription: marginal $ unverified → assumed sonnet-equivalent.
+    "gpt": {
+        "input": 3,
+        "output": 15,
+        "cache_read": 0.30,
+        "cache_write": 3.75,
+    },
+    # gemini: marginal $ unverified → assumed sonnet-equivalent.
+    "gemini": {
+        "input": 3,
+        "output": 15,
+        "cache_read": 0.30,
+        "cache_write": 3.75,
+    },
 }
 
 BASELINE_MODEL = "opus"

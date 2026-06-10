@@ -118,13 +118,15 @@ CACHE_WRITE_MULT = 2.0
 SOLO_K_CALLS_PER_TURN = 6
 SOLO_MODEL = "sonnet"
 
-_FAMILIES = ("haiku", "sonnet", "opus", "fable")
+_FAMILIES = ("haiku", "sonnet", "opus", "fable", "gemma", "gpt", "gemini")
 
 
 def model_family(model_id: str | None) -> str:
     """Map a full model id (e.g. claude-haiku-4-5-20251001) to a pricing
     family. Unknown/missing -> sonnet (the chat-footer default)."""
     low = (model_id or "").lower()
+    if "codex" in low:
+        return "gpt"
     for fam in _FAMILIES:
         if fam in low:
             return fam
