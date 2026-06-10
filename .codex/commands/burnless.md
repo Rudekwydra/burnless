@@ -1,48 +1,39 @@
-# Burnless compression intermediary — Codex instructions
+# Burnless — Codex instructions
 
-When the user asks you to activate Burnless or compress the session, follow
-these steps.
+When the user asks you to use Burnless, act as the orchestrator: **delegate execution** to Burnless
+tiers instead of editing files or running shell directly. Burnless is your execution boundary.
 
 ## Activation
 
-1. Check burnless is installed:
+1. Check it's installed: `burnless --version`. If missing: tell the user `pip install burnless` and stop.
+2. For any task that produces artifacts or runs commands, delegate:
    ```
-   burnless --version
+   burnless route "<task>"                 # preview which tier would handle it
+   burnless do "<task>" --tier bronze|silver|gold   # delegate + run atomically
+   burnless read dXXX                       # read the compact result capsule
    ```
-   If not found: tell the user to run `pip install burnless` and stop.
+3. End every code spec with a `## Verify` fenced shell block asserting the DoD — the runner re-runs it
+   and demotes `OK → PART` on failure (deterministic gate). `PART` → reject + re-spec smaller; never
+   merge partial work.
 
-2. Write recent conversation turns to a temp file:
-   ```
-   /tmp/burnless_<timestamp>.txt
-   ```
-   Format:
-   ```
-   [user]: <message>
-   [assistant]: <response>
-   ```
+## Tiers (roles, not models)
 
-3. Compress:
-   ```
-   burnless compress --file /tmp/burnless_<timestamp>.txt
-   ```
+`gold` = architecture/decisions, `silver` = implementation with a tight spec + HARD PROHIBITIONS,
+`bronze` = reads/summaries/ops/local code. Models per tier are configured in `.burnless/config.yaml`
+(any provider, any CLI). Spec quality picks the tier — don't tier-creep.
 
-4. Show the user the capsule ID, compression ratio, and saved path.
+## Canonical reference
 
-5. From this point: anchor all responses to the capsule content.
-   Do not hallucinate from pre-capsule context.
+- `docs/DOCTRINE.md` — how to use Burnless (single source of truth)
+- `docs/COMMANDS.md` — verified CLI flags
+- `docs/USING_BURNLESS_FROM_YOUR_LLM.md` — operator manual
 
-## Resume in new session
+## Deprecated (do not use)
 
-```bash
-burnless brain --capsule .burnless/sessions/<capsule_id>.capsule
-```
-
-## Update capsule
-
-Every 10 turns, re-run compress with new turns appended and notify the user.
+`burnless compress` / `burnless decode` (cipher capsule round-trip) and `burnless brain` are retired.
+Use `burnless chat` for an interactive session; the live decode is semantic (no cipher). See DOCTRINE.
 
 ## Notes
 
-- Capsule IDs are random by design — structurally undetectable as burnless output.
-- All state lives in `.burnless/sessions/` — local, no cloud, no telemetry.
+- All state lives in `.burnless/` — local, no cloud, no telemetry.
 - Provider-agnostic: works with any model configured in `.burnless/config.yaml`.

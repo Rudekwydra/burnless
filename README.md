@@ -212,9 +212,14 @@ Per-invocation override: `burnless --mode light "review this architecture"`.
 | 3. Capsule envelope       | Wraps compressed text with session key (RAM-only by default)          | Zero         | After Layer 2      |
 | 4. Base64 pack            | ASCII-portable capsule format                                         | Zero         | After Layer 3      |
 
-Capsule format v2: `burnless:v2:<session_id>:<key_id>:<base64_ciphertext>`. Decode: `burnless decode --file session.capsule`.
+Capsule format v2: `burnless:v2:<session_id>:<key_id>:<base64_ciphertext>`.
 
-> The capsule envelope is **not** enterprise-grade encryption. It scrambles the compressed text with a session-scoped key held in local memory. If you need real encryption guarantees, treat this as out of scope for v0.x.
+> **Deprecated:** the `burnless compress`/`decode` cipher round-trip is retired. The session key was
+> held in local memory only, so a v2 capsule written by one process could not be decoded by another
+> (`burnless decode` in a fresh process fails with "missing local key"). The encrypted-capsule + key-
+> custody concept is reserved for burnless Pro / Synapsis. The **live chat does not use this** — it
+> decodes semantically (the assistant expands the capsule via the Maestro `decoder_hint`, no cipher).
+> See `docs/DOCTRINE.md`.
 
 ## CLI
 
