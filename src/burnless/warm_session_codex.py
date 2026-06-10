@@ -392,6 +392,16 @@ def warm_brief(burnless_root: Path, model: str) -> str:
     return state.get("brief", "")
 
 
+def warm_args(burnless_root: Path, model: str) -> list[str]:
+    """Protocol alias: codex warm = byte-prefix flags."""
+    return warm_flags(burnless_root, model)
+
+
+def warm_prefix(burnless_root: Path, model: str) -> str:
+    """Codex caches by identical byte-prefix; the stable brief IS the cached prefix."""
+    return warm_brief(burnless_root, model)
+
+
 def status(burnless_root: Path, model: str | None = None) -> dict:
     """If model is None, return {'<model>': <status_dict>} for all warm files.
     If model is given, return the status_dict for that specific model only.

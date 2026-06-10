@@ -411,6 +411,14 @@ def fork_args(burnless_root: Path, model: str) -> list[str]:
     return ["--resume", state["uuid"], "--fork-session"]
 
 
+warm_args = fork_args  # protocol alias: claude warm = session fork flags
+
+
+def warm_prefix(burnless_root: Path, model: str) -> str:
+    """Claude caches via session fork, not a prompt prefix."""
+    return ""
+
+
 def status(burnless_root: Path, model: str | None = None) -> dict:
     """If model is None, return {'<model>': <status_dict>} for all warm files.
     If model is given, return the status_dict for that specific model only.

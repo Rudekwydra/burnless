@@ -201,6 +201,8 @@ def resolve_agent(name: str, cfg: dict | None = None) -> Agent:
 def resolve_cache_mode(agent: Agent, cfg: dict | None = None) -> CacheMode:
     if agent.provider in {"anthropic", "codex", "gemini"}:
         key = f"{agent.provider}_{agent.auth}"
+    elif agent.provider in {"ollama", "ollama-local"}:
+        key = "ollama_none"
     else:
         key = "none"
 
