@@ -19,9 +19,15 @@ agent to pick up the work where this one left off.
 from __future__ import annotations
 import json
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, timezone
+
+try:
+    import anthropic
+except ImportError:  # optional dep; tests monkeypatch this
+    anthropic = None  # type: ignore[assignment]
 
 
 MODES = ("light", "balanced", "extreme")
@@ -392,6 +398,7 @@ def compress_transcript(
     *,
     mode: str = "balanced",
     session_context: list[dict] | None = None,
+    encoder: dict | None = None,
 ) -> tuple[str, dict]:
     """
     4-layer compression of arbitrary text (chat transcript, briefing, session).
@@ -403,7 +410,6 @@ def compress_transcript(
     not embedded in the capsule. v1 capsules with embedded keys are legacy only.
     """
     import secrets
-    import anthropic
     from .codec.cipher import generate_key, encode as cipher_encode, pack
     from . import config
 
@@ -445,28 +451,51 @@ def compress_transcript(
         }
         return capsule, stats
 
-    # Layer 2: Haiku semantic compression via cache-emergent glossary.
+    # Layer 2: semantic compression via cache-emergent glossary (provider-selectable).
+    _SYSTEM_PROMPT = (
+        "You are a lossless semantic compressor. "
+        "Compress the input into a dense capsule preserving ALL decisions, "
+        "tasks, context, and next steps. Use consistent abbreviations — "
+        "infer them from prior turns in this conversation if any. "
+        "Output ONLY the compressed capsule. No preamble, no explanation."
+    )
     try:
-        client = anthropic.Anthropic()
-        messages = []
-        if session_context:
-            for ctx in (session_context or [])[-6:]:
-                messages.append({"role": "user", "content": ctx["raw"]})
-                messages.append({"role": "assistant", "content": ctx["compressed"]})
-        messages.append({"role": "user", "content": minified})
-        response = client.messages.create(
-            model=config.HAIKU_MODEL,
-            max_tokens=2048,
-            system=(
-                "You are a lossless semantic compressor. "
-                "Compress the input into a dense capsule preserving ALL decisions, "
-                "tasks, context, and next steps. Use consistent abbreviations — "
-                "infer them from prior turns in this conversation if any. "
-                "Output ONLY the compressed capsule. No preamble, no explanation."
-            ),
-            messages=messages,
-        )
-        compressed = response.content[0].text.strip()
+        enc = encoder or {}
+        provider = (enc.get("provider") or "anthropic").strip()
+        model = (enc.get("model") or config.HAIKU_MODEL)
+        if provider == "ollama-local":
+            ctx_block = ""
+            if session_context:
+                for ctx in (session_context or [])[-6:]:
+                    ctx_block += f"RAW:\n{ctx['raw']}\nCOMPRESSED:\n{ctx['compressed']}\n\n"
+            combined = _SYSTEM_PROMPT + "\n\n" + ctx_block + "INPUT:\n" + minified
+            proc = subprocess.run(
+                ["ollama", "run", model],
+                input=combined,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr[:400] or "ollama failed")
+            compressed = proc.stdout.strip()
+            compressed = re.sub(r"^```[^\n]*\n?", "", compressed)
+            compressed = re.sub(r"\n?```$", "", compressed).strip()
+        else:
+            client = anthropic.Anthropic()
+            messages = []
+            if session_context:
+                for ctx in (session_context or [])[-6:]:
+                    messages.append({"role": "user", "content": ctx["raw"]})
+                    messages.append({"role": "assistant", "content": ctx["compressed"]})
+            messages.append({"role": "user", "content": minified})
+            response = client.messages.create(
+                model=model,
+                max_tokens=2048,
+                system=_SYSTEM_PROMPT,
+                messages=messages,
+            )
+            compressed = response.content[0].text.strip()
         if len(compressed) >= len(minified):
             compressed = minified
     except Exception:
