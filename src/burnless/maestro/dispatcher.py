@@ -187,7 +187,7 @@ def run_delegate(
         return _finalize_error(log_path, spec, f"worker binary not found: {parts[0]}", status="BLK")
 
     user_message = f"del T{spec.id} {tier_key} {spec.action} {spec.target} :: {spec.spec}"
-    from ..cli import _with_runtime_context  # local import; cli imports dispatcher lazily
+    from ..prompt_context import _with_runtime_context  # local import; cli imports dispatcher lazily
     user_message = _with_runtime_context(
         user_message,
         project_root=project_root,
