@@ -692,6 +692,28 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
 
 
 def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None) -> dict:
+    from .ollama_worker import is_ollama_tools_agent, run_ollama_tools
+    if is_ollama_tools_agent(agent_cfg):
+        model = agent_cfg.get("model") or agent_cfg.get("name") or "llama3.1"
+        sysp = ""
+        env = run_ollama_tools(
+            model, prompt, cwd=str(cwd) if cwd else None, system_prompt=sysp, timeout=timeout
+        )
+        import json as _json
+        rc = 0 if env.get("status") == "OK" else 1
+        return {
+            "agent": agent_cfg.get("name"),
+            "provider": _provider_id_from_cfg(agent_cfg),
+            "command": [],
+            "stdout": _json.dumps(env, ensure_ascii=False),
+            "stderr": "",
+            "returncode": rc,
+            "started_at": "",
+            "ended_at": "",
+            "duration_s": 0.0,
+            "timed_out": False,
+            "usage": {},
+        }
     parts = resolve_command(agent_cfg)
     parts, warm_prefix, iso_cwd = _inject_warm_fork_args(parts, cwd)
     if warm_prefix:
