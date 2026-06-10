@@ -22,8 +22,15 @@ Conversation grows ~4500 tok/turn (cached, read 10% in both arms). Work ~2000 ou
 | 10 | 45.0k | 16.5k | 2.7× |
 | 40 | 85.5k | 30.0k | 2.9× |
 
-**~2.7× cheaper, roughly FLAT** (not the growing cold-strawman number) — because the linear cache is equal
-in both arms; the gain is the per-token RATE difference + work isolation, ~constant per turn.
+**The gain GROWS with session length** (an earlier draft wrongly said "~flat 2.7×" — Roberto corrected it):
+the ~2.7× above under-modeled the WORK. The true picture has two parts:
+1. **Conversation carry**: maestro O(t) @ HAIKU rate vs solo O(t) @ SONNET rate → constant **3×** on this term.
+2. **Work**: the burnless WORKER is **O(1) flat** (forks a FIXED warm base + reads only the compact spec —
+   it NEVER carries the conversation) vs Sonnet-solo doing the work INSIDE the growing context = **O(t) per
+   turn → O(T²) per session**. Measured work-cost ratio: 1.0× (t1) → 5.4× (t10) → **19.8× (t40)**, unbounded.
+
+So the total gain is NOT flat — it grows with the session, driven by the work-isolation term. Both arms
+still pay an O(T²) conversation-carry, but burnless's is at haiku rate (3×) AND its work-doer is O(1) not O(t).
 
 ## Where the gain ACTUALLY comes from (NOT the cache)
 1. **Maestro carries the conversation at HAIKU rate (1) vs Sonnet rate (3)** = 3× on the conversation read.
