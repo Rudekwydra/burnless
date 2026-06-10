@@ -324,45 +324,37 @@ def run_with_live_panel(
                    command_head=command[0] if command else "")
     except Exception:
         pass
-    fork_uuid: str | None = None
+    fork_uuid = None
     if "--resume" not in command:
         from .agents import _detect_provider_from_parts, _extract_model_from_parts
         provider = _detect_provider_from_parts(list(command))
         if provider is not None:
-            model = _extract_model_from_parts(list(command))
-            if model is None:
-                from . import config
-                model = config.DEFAULT_PROVIDER_MODELS.get(provider, config.DEFAULT_PROVIDER_MODELS["claude"])
+            from . import config as _cfg
+            model = _extract_model_from_parts(list(command)) or _cfg.DEFAULT_PROVIDER_MODELS.get(
+                provider, _cfg.DEFAULT_PROVIDER_MODELS["claude"])
             try:
-                if provider == "claude":
-                    from . import warm_session as _ws
-                else:
-                    from . import warm_session_codex as _ws
-                warm_args = _ws.fork_args(burnless_root, model)
-                if not warm_args:
-                    try:
+                import importlib
+                from .coreconfig.schema import Agent as _Agent
+                from .coreconfig.resolver import resolve_cache_mode as _rcm
+                _prov = "anthropic" if provider == "claude" else provider  # detect-vocab → Agent-vocab
+                _cmode = _rcm(_Agent(name="_warm", role="execute", provider=_prov, auth="subscription"))
+                if _cmode.warm_module:                      # gemini/ollama → None → silent cold
+                    _ws = importlib.import_module(_cmode.warm_module)
+                    _fn = getattr(_ws, "warm_args", None) or getattr(_ws, "fork_args", None)
+                    warm = list(_fn(burnless_root, model)) if _fn else []
+                    if not warm:
                         _ws.init(burnless_root, model=model)
-                        warm_args = _ws.fork_args(burnless_root, model)
-                    except Exception as _e:
-                        print(
-                            f"[burnless] WARN: live_runner warm init failed for "
-                            f"{provider}/{model} ({_e}); worker COLD.",
-                            file=sys.stderr, flush=True,
-                        )
-                        warm_args = []
-                if warm_args:
-                    command = list(command) + warm_args
-                    fork_uuid = warm_args[1] if len(warm_args) > 1 else None
-                else:
-                    print(
-                        f"[burnless] WARN: no warm fork args available for "
-                        f"{provider}/{model}; worker spawning COLD.",
-                        file=sys.stderr, flush=True,
-                    )
+                        warm = list(_fn(burnless_root, model)) if _fn else []
+                    if warm:
+                        command = list(command) + warm
+                        fork_uuid = warm[1] if len(warm) > 1 else None
+                        _pfn = getattr(_ws, "warm_prefix", None)
+                        _pfx = _pfn(burnless_root, model) if _pfn else ""
+                        if _pfx:
+                            prompt = _pfx + "\n\n" + prompt
             except Exception as _e:
                 print(
-                    f"[burnless] WARN: live_runner warm module unavailable ({_e}); "
-                    f"worker COLD.",
+                    f"[burnless] WARN: live_runner warm init failed for {provider}/{model} ({_e}); worker COLD.",
                     file=sys.stderr, flush=True,
                 )
 
@@ -390,9 +382,6 @@ def run_with_live_panel(
     # worker indefinitely).
     if command and command[0] in ("claude", "claude-cli") and "--permission-mode" not in command:
         command = list(command) + ["--permission-mode", "bypassPermissions"]
-
-    if warm_codex_brief:
-        prompt = warm_codex_brief + prompt
 
     if warm_codex_flags:
         new_cmd: list[str] = []
