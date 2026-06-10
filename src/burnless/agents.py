@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-from . import config
+from . import config, pricing
 
 
 class AgentError(RuntimeError):
@@ -43,6 +43,12 @@ _STOP_TOKENS = {
     "delegation", "delegacao", "burnless", "task", "goal", "report", "kind",
     "output", "final", "json", "block", "schema", "required", "success",
 }
+
+_AB_SUCCESS_W = 0.4
+_AB_LATENCY_W = 0.2
+_AB_COST_W = 0.3
+_AB_ERROR_PENALTY = 0.4
+_AB_HEADROOM_COOLDOWN_S = 300
 
 
 def _parse_worker_usage(stdout: str) -> dict:
@@ -211,11 +217,26 @@ def rank_providers(agent_cfg: dict, *, tier: str) -> list[dict]:
         latencies.append(max(latency, 0.001))
         enriched.append({"cfg": provider_cfg, "health": entry, "key": key})
     min_latency = min(latencies) if latencies else 1.0
-    for item in enriched:
+    costs = [pricing.blended_cost(item["cfg"].get("model") or item["cfg"].get("name") or "") for item in enriched]
+    positive_costs = [c for c in costs if c > 0]
+    min_cost = min(positive_costs) if positive_costs else 1.0
+    for item, cost in zip(enriched, costs):
         latency = max(float(item["health"].get("avg_latency") or 1.0), 0.001)
         avg_latency_norm = max(latency / min_latency, 1.0)
         success_rate = float(item["health"].get("success_rate") or 0.0)
-        score = (success_rate * 0.6) + ((1.0 / avg_latency_norm) * 0.4)
+        cost_score = 1.0 if cost <= 0 else min(min_cost / cost, 1.0)
+        score = success_rate * _AB_SUCCESS_W + (1.0 / avg_latency_norm) * _AB_LATENCY_W + cost_score * _AB_COST_W
+        try:
+            error_at = item["health"].get("last_error_at")
+            if error_at:
+                error_ts = datetime.fromisoformat(error_at)
+                if error_ts.tzinfo is None:
+                    error_ts = error_ts.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                if (now - error_ts).total_seconds() <= _AB_HEADROOM_COOLDOWN_S:
+                    score *= _AB_ERROR_PENALTY
+        except Exception:
+            pass
         item["score"] = score
         item["avg_latency_norm"] = avg_latency_norm
     enriched.sort(
