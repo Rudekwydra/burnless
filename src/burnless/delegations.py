@@ -141,22 +141,37 @@ def _extract_text_from_jsonl_stream(stdout: str) -> str:
 
 def extract_result_json(stdout: str) -> dict | None:
     """Find the last fenced ```json block in stdout and parse it. Best-effort."""
+    import re as _re
     if not stdout:
         return None
     stdout = _extract_text_from_jsonl_stream(stdout)
+    stdout = _re.sub(r"<\|?channel\|?>", "", stdout)
     marker = "```json"
     end_marker = "```"
-    last_open = stdout.rfind(marker)
-    if last_open == -1:
-        # try a bare top-level json object at the end
+    # Collect all ```json block positions (newest-first scan)
+    positions = []
+    search_from = 0
+    while True:
+        pos = stdout.find(marker, search_from)
+        if pos == -1:
+            break
+        positions.append(pos)
+        search_from = pos + len(marker)
+    if not positions:
         return _try_trailing_json(stdout)
-    rest = stdout[last_open + len(marker):]
-    close = rest.find(end_marker)
-    payload = rest[:close] if close != -1 else rest
-    try:
-        return normalize_worker_envelope(json.loads(payload.strip()))
-    except json.JSONDecodeError:
-        return _try_trailing_json(stdout)
+    # Try blocks from last to first; return the first that parses to a dict with "status"
+    for pos in reversed(positions):
+        rest = stdout[pos + len(marker):]
+        close = rest.find(end_marker)
+        payload = rest[:close] if close != -1 else rest
+        try:
+            parsed = json.loads(payload.strip())
+            if isinstance(parsed, dict) and "status" in parsed:
+                return normalize_worker_envelope(parsed)
+        except json.JSONDecodeError:
+            continue
+    # No block with "status" found; try trailing bare json
+    return _try_trailing_json(stdout)
 
 
 def _try_trailing_json(stdout: str) -> dict | None:

@@ -883,6 +883,13 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                 if feedback:
                     head = f"{head}\nReason: {feedback[:180]}"
         print(head)
+    try:
+        from ..integrity import check_run_integrity
+        _gapless_warns = check_run_integrity(did, root.parent)
+        for _w in _gapless_warns:
+            print(f"[gapless] WARN {did}: {_w}", file=sys.stderr)
+    except Exception:
+        pass
     return 0 if status_str == "OK" else 1
 
 def _record_and_bump(
