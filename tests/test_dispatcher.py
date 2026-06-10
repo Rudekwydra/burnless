@@ -228,8 +228,8 @@ def test_run_delegate_extracts_stream_json_capsule(tmp_path, monkeypatch):
     monkeypatch.setattr(_plmod, "load_plugins", lambda *a, **kw: [])
     monkeypatch.setattr(_plmod, "call_all_plugins", lambda *a, **kw: {})
 
-    import burnless.cli as _cli
-    monkeypatch.setattr(_cli, "_with_runtime_context", lambda prompt, **kw: prompt)
+    import burnless.prompt_context as _pc
+    monkeypatch.setattr(_pc, "_with_runtime_context", lambda prompt, **kw: prompt)
 
     capsule_line = dispatcher.run_delegate(
         spec,
@@ -293,8 +293,8 @@ def _make_env(tmp_path, monkeypatch):
     monkeypatch.setattr(_plmod, "load_plugins", lambda *a, **kw: [])
     monkeypatch.setattr(_plmod, "call_all_plugins", lambda *a, **kw: {})
 
-    import burnless.cli as _cli
-    monkeypatch.setattr(_cli, "_with_runtime_context", lambda prompt, **kw: prompt)
+    import burnless.prompt_context as _pc
+    monkeypatch.setattr(_pc, "_with_runtime_context", lambda prompt, **kw: prompt)
 
     return project_root, burnless_root, config
 
