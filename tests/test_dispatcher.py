@@ -216,3 +216,94 @@ def test_run_delegate_extracts_stream_json_capsule(tmp_path, monkeypatch):
         config=config,
     )
     assert "OK" in capsule_line
+
+
+# ── run_all / run_all_detailed ────────────────────────────────────────────────
+
+def _make_env(tmp_path, monkeypatch):
+    """Shared setup for run_all / run_all_detailed tests."""
+    project_root = tmp_path / "proj"
+    burnless_root = project_root / ".burnless"
+    (project_root / "_design" / "maestro_v1").mkdir(parents=True)
+    (project_root / "_design" / "maestro_v1" / "worker_role.md").write_text(
+        "worker role", encoding="utf-8"
+    )
+    burnless_root.mkdir(parents=True)
+
+    config = {
+        "agents": {
+            "bronze": {
+                "name": "bronze",
+                "command": "/usr/bin/fake-agent -p",
+                "provider": "claude",
+            }
+        }
+    }
+
+    result_line = json.dumps(
+        {"type": "result", "result": "brz sum docs/x.md :: OK summarized [ref:exec/T0001]",
+         "usage": {"cache_read_input_tokens": 12345, "output_tokens": 50}}
+    )
+    fake_agent_result = {
+        "stdout": '{"type":"system"}\n' + result_line,
+        "stderr": "",
+        "returncode": 0,
+        "command": ["/usr/bin/fake-agent", "-p"],
+        "timed_out": False,
+        "interrupted": False,
+        "usage": {"cache_read_input_tokens": 12345, "output_tokens": 50},
+    }
+
+    monkeypatch.setattr(dispatcher.agents_mod, "run", lambda *a, **kw: fake_agent_result)
+    monkeypatch.setattr(
+        dispatcher.agents_mod, "resolve_command", lambda cfg: ["/usr/bin/fake-agent", "-p"]
+    )
+    monkeypatch.setattr(dispatcher.shutil, "which", lambda x: "/usr/bin/fake-agent")
+    monkeypatch.setattr(dispatcher, "load_glossary", lambda root: "glossary")
+    monkeypatch.setattr(
+        dispatcher.Path, "home", classmethod(lambda cls: tmp_path / "no-home")
+    )
+    monkeypatch.setattr(
+        dispatcher, "modulate_by_compression", lambda tier, kw, mode: (tier, "")
+    )
+
+    import burnless.plugin_loader as _plmod
+    monkeypatch.setattr(_plmod, "load_plugins", lambda *a, **kw: [])
+    monkeypatch.setattr(_plmod, "call_all_plugins", lambda *a, **kw: {})
+
+    import burnless.cli as _cli
+    monkeypatch.setattr(_cli, "_with_runtime_context", lambda prompt, **kw: prompt)
+
+    return project_root, burnless_root, config
+
+
+def test_run_all_returns_list_of_str(tmp_path, monkeypatch):
+    project_root, burnless_root, config = _make_env(tmp_path, monkeypatch)
+    delegate_lines = ["del T1 bronze sum docs/x.md :: summarize"]
+    result = dispatcher.run_all(
+        delegate_lines,
+        burnless_root=burnless_root,
+        project_root=project_root,
+        config=config,
+    )
+    assert isinstance(result, list)
+    assert all(isinstance(item, str) for item in result)
+    assert "OK" in result[0]
+
+
+def test_run_all_detailed_returns_dicts_with_usage(tmp_path, monkeypatch):
+    project_root, burnless_root, config = _make_env(tmp_path, monkeypatch)
+    delegate_lines = ["del T1 bronze sum docs/x.md :: summarize"]
+    details = dispatcher.run_all_detailed(
+        delegate_lines,
+        burnless_root=burnless_root,
+        project_root=project_root,
+        config=config,
+    )
+    assert isinstance(details, list)
+    assert len(details) == 1
+    d = details[0]
+    assert "capsule" in d
+    assert "usage" in d
+    assert "status" in d
+    assert d["usage"].get("cache_read_input_tokens") == 12345

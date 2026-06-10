@@ -94,22 +94,42 @@ def run_all(
     project_root: Path,
     config: dict,
 ) -> list[str]:
-    capsules: list[str] = []
+    return [
+        d["capsule"]
+        for d in run_all_detailed(
+            delegate_lines,
+            burnless_root=burnless_root,
+            project_root=project_root,
+            config=config,
+        )
+    ]
+
+
+def run_all_detailed(
+    delegate_lines: list[str],
+    *,
+    burnless_root: Path,
+    project_root: Path,
+    config: dict,
+) -> list[dict]:
+    details: list[dict] = []
     chain: list[str] = []
     for spec in parse_delegates(delegate_lines, burnless_root):
+        u: dict = {}
         capsule_line = run_delegate(
             spec,
             burnless_root=burnless_root,
             project_root=project_root,
             config=config,
             chain=chain,
+            usage_out=u,
         )
-        capsules.append(capsule_line)
+        details.append({"capsule": capsule_line, "usage": u, "status": _capsule_status(capsule_line)})
         if _capsule_status(capsule_line) == "OK":
             did = f"d{spec.id}"
             _write_dispatcher_capsule(burnless_root, did, spec, capsule_line)
             chain = [did]
-    return capsules
+    return details
 
 
 def run_delegate(
@@ -119,6 +139,7 @@ def run_delegate(
     project_root: Path,
     config: dict,
     chain: list[str] | None = None,
+    usage_out: dict | None = None,
 ) -> str:
     maestro_tier = _config_tier(spec.tier)
     compression_mode = ((config.get("compression") or {}).get("mode") or "balanced").lower()
@@ -224,6 +245,8 @@ def run_delegate(
             f"worker timed out after {config.get('maestro', {}).get('worker_timeout_s', 900)}s",
             status="ERR",
         )
+    if usage_out is not None:
+        usage_out.update(result.get("usage") or {})
     stdout = result["stdout"] or ""
     stderr = result["stderr"] or ""
     returncode = result["returncode"]
