@@ -610,21 +610,21 @@ def _detect_provider_from_parts(parts: list[str]) -> str | None:
     return None
 
 
-def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str], str]:
-    """Inject warm CLI args and return (parts, warm_prefix) for a worker command.
+def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str], str, str | None]:
+    """Inject warm CLI args and return (parts, warm_prefix, iso_cwd) for a worker command.
 
     Detects (provider, model) from the command parts. If provider has warm
     support (claude/codex), loads the per-model warm pool via the unified
     warm protocol (warm_args + warm_prefix), auto-initializes if missing/expired.
-    If provider has no warm support (gemini, ollama), returns (parts, "") silently.
+    If provider has no warm support (gemini, ollama), returns (parts, "", None) silently.
 
     Per [[rule-worker-never-fresh-2026-05-24]] + per-model refactor.
     """
     if cwd is None:
-        return parts, ""
+        return parts, "", None
     provider = _detect_provider_from_parts(parts)
     if provider is None:
-        return parts, ""  # structurally no warm support — silent skip
+        return parts, "", None  # structurally no warm support — silent skip
     model = _extract_model_from_parts(parts)
     if model is None:
         # Default by provider
@@ -640,7 +640,7 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
         _prov = "anthropic" if provider == "claude" else provider  # detect-vocab → Agent-vocab
         _cmode = _resolve_cache_mode(_Agent(name="_warm", role="execute", provider=_prov, auth="subscription"))
         if not _cmode.warm_module:
-            return parts, ""  # structural cold — silent (gemini/ollama)
+            return parts, "", None  # structural cold — silent (gemini/ollama)
         _ws = importlib.import_module(_cmode.warm_module)
         fn = getattr(_ws, "warm_args", None) or getattr(_ws, "fork_args", None)
         extra = fn(burnless_root, model)
@@ -661,14 +661,14 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
             f"worker will spawn COLD.",
             file=sys.stderr, flush=True,
         )
-        return parts, ""
+        return parts, "", None
     if not extra:
         print(
             f"[burnless] WARN: no warm fork args available for {provider}/{model} "
             f"after init; worker spawning COLD.",
             file=sys.stderr, flush=True,
         )
-        return parts, ""
+        return parts, "", None
     prefix_fn = getattr(_ws, "warm_prefix", None)
     warm_prefix = prefix_fn(burnless_root, model) if prefix_fn else ""
     # Strip --append-system-prompt <text> pair to keep prefix byte-stable
@@ -683,14 +683,20 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
             skip_next = True
             continue
         stripped.append(tok)
-    return stripped + list(extra), warm_prefix
+    iso_cwd = None
+    try:
+        iso_cwd = _ws.worker_cwd(burnless_root, model)
+    except Exception:
+        iso_cwd = None
+    return stripped + list(extra), warm_prefix, iso_cwd
 
 
 def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None) -> dict:
     parts = resolve_command(agent_cfg)
-    parts, warm_prefix = _inject_warm_fork_args(parts, cwd)
+    parts, warm_prefix, iso_cwd = _inject_warm_fork_args(parts, cwd)
     if warm_prefix:
         prompt = warm_prefix + "\n\n" + prompt
+    run_cwd = iso_cwd or (str(cwd) if cwd else None)
     if shutil.which(parts[0]) is None:
         raise AgentError(
             f"agent binary not found in PATH: {parts[0]} (configured for {agent_cfg.get('name')})"
@@ -709,7 +715,7 @@ def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | N
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(cwd) if cwd else None,
+            cwd=run_cwd,
             env=worker_env,
         )
     except subprocess.TimeoutExpired as e:
