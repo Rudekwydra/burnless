@@ -93,6 +93,8 @@ def maybe_compact(
     """If should_compact says it pays, ultra-compact the window into a new
     rolling capsule and REWIND (keeping verbatim tail). Returns True if compacted."""
     cp = (cfg.get("cache_policy") or {})
+    if not cp.get("rolling_compaction_enabled", False):
+        return False   # v1 default: never-compact (rolling is opt-in)
     capsule_budget = int(cp.get("capsule_budget_tokens", 1500))
     keep_tail = int(cp.get("keep_tail_turns", 0))
     decision = cache_policy.should_compact(
