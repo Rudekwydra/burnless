@@ -1,5 +1,11 @@
 # Burnless v1 — measured gain (2026-06-09, CORRECTED)
 
+> AUTHORITATIVE NUMBERS: see `_design/FABLE_COSTMODEL_2026-06-09.md` (Fable diamond, rigorous). This file's
+> ~2.7× / ~flat framing was superseded — the dominant fix is k≈6 agentic calls/turn (each re-reading the full
+> history), not k=1. Corrected same-model gain: T40 ≈ 1.35–2.1× total / 1.55–3.4× input, scaling O(T²) to 4–6×
+> by T100–200; +tier-mobility 2.5–5× at ≤10% escalation (inverts if over-escalated); solo breaches the 200k
+> context window ~T36 (feasibility, not just price). The rest of this file is kept for the mechanism narrative.
+
 > CORRECTION (Roberto caught it): the first version compared v1 against a COLD (no-cache) baseline. That
 > is a STRAWMAN — Sonnet-solo ALSO uses Anthropic's auto-cache (linear, read at 10%), so nobody runs cold.
 > Cache is a COMMODITY; both arms have it. The real gain is NOT "having a cache". This doc is the fair version.
