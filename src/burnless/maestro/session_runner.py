@@ -33,7 +33,12 @@ class MaestroSession:
             msg = f"## State (carry-forward)\n{rewind_capsule}\n\n{user_msg}"
         cmd = [self.claude_bin, "-p", msg, "--model", self.model,
                "--output-format", "json",
-               "--disallowedTools", MAESTRO_DISALLOWED]
+               "--disallowedTools", MAESTRO_DISALLOWED,
+               "--permission-mode", "bypassPermissions",
+               "--strict-mcp-config",
+               "--disable-slash-commands",
+               "--setting-sources", "project,local",
+               "--exclude-dynamic-system-prompt-sections"]
         if self.fork_session_id is None:
             cmd += ["--resume", self.base_uuid, "--fork-session"]
         else:
