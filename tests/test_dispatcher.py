@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from burnless.codec.cipher import encode as cipher_encode
@@ -122,3 +123,96 @@ def test_worker_system_prompt_payload_exposes_cloud_emulator_session_env(tmp_pat
         )
         == payload["prompt"]
     )
+
+
+# ── _last_capsule: stream-json path ──────────────────────────────────────────
+
+def test_last_capsule_stream_json():
+    system_line = json.dumps({"type": "system", "subtype": "init"})
+    result_line = json.dumps(
+        {"type": "result", "result": "brz sum docs/x.md :: OK summarized [ref:exec/T0001]"}
+    )
+    stdout = system_line + "\n" + result_line
+    cap = dispatcher._last_capsule(stdout)
+    assert cap is not None
+    assert cap.startswith("brz sum")
+    assert "OK" in cap
+    assert "T0001" in cap
+
+
+def test_last_capsule_plain_text_fallback():
+    stdout = "brz sum docs/y.md :: OK done [ref:exec/T0002]"
+    cap = dispatcher._last_capsule(stdout)
+    assert cap is not None
+    assert cap.startswith("brz sum")
+    assert "OK" in cap
+
+
+# ── run_delegate: agents_mod.run integration ──────────────────────────────────
+
+def test_run_delegate_extracts_stream_json_capsule(tmp_path, monkeypatch):
+    project_root = tmp_path / "proj"
+    burnless_root = project_root / ".burnless"
+    (project_root / "_design" / "maestro_v1").mkdir(parents=True)
+    (project_root / "_design" / "maestro_v1" / "worker_role.md").write_text(
+        "worker role", encoding="utf-8"
+    )
+    burnless_root.mkdir(parents=True)
+
+    config = {
+        "agents": {
+            "bronze": {
+                "name": "bronze",
+                "command": "/usr/bin/fake-agent -p",
+                "provider": "claude",
+            }
+        }
+    }
+    spec = dispatcher.DelegateSpec(
+        id=1,
+        tier="bronze",
+        action="sum",
+        target="docs/x.md",
+        spec="summarize",
+        raw_line="del T1 bronze sum docs/x.md :: summarize",
+    )
+
+    result_line = json.dumps(
+        {"type": "result", "result": "brz sum docs/x.md :: OK summarized [ref:exec/T0001]"}
+    )
+    fake_agent_result = {
+        "stdout": '{"type":"system"}\n' + result_line,
+        "stderr": "",
+        "returncode": 0,
+        "command": ["/usr/bin/fake-agent", "-p"],
+        "timed_out": False,
+        "interrupted": False,
+    }
+
+    monkeypatch.setattr(dispatcher.agents_mod, "run", lambda *a, **kw: fake_agent_result)
+    monkeypatch.setattr(
+        dispatcher.agents_mod, "resolve_command", lambda cfg: ["/usr/bin/fake-agent", "-p"]
+    )
+    monkeypatch.setattr(dispatcher.shutil, "which", lambda x: "/usr/bin/fake-agent")
+    monkeypatch.setattr(dispatcher, "load_glossary", lambda root: "glossary")
+    monkeypatch.setattr(
+        dispatcher.Path, "home", classmethod(lambda cls: tmp_path / "no-home")
+    )
+    monkeypatch.setattr(
+        dispatcher, "modulate_by_compression", lambda tier, kw, mode: (tier, "")
+    )
+
+    import burnless.plugin_loader as _plmod
+    monkeypatch.setattr(_plmod, "load_plugins", lambda *a, **kw: [])
+    monkeypatch.setattr(_plmod, "call_all_plugins", lambda *a, **kw: {})
+
+    import burnless.cli as _cli
+    monkeypatch.setattr(_cli, "_with_runtime_context", lambda prompt, **kw: prompt)
+
+    capsule_line = dispatcher.run_delegate(
+        spec,
+        burnless_root=burnless_root,
+        project_root=project_root,
+        config=config,
+    )
+    assert "OK" in capsule_line
