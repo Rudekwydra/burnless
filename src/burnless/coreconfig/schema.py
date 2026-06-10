@@ -96,7 +96,8 @@ class Agent:
     provider: str = "anthropic"
     auth: str = "subscription"
     model: str | None = None
-    tools: list[str] = field(default_factory=list)
+    # tools accepts list[str] (e.g. ["delegate"]) or bool (True = native ollama tool-calling loop)
+    tools: object = field(default_factory=list)
     rules: str = ""
 
 
