@@ -2674,10 +2674,11 @@ def cmd_chat(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
+    _maestro_cfg_model = config_mod.resolve_layer_models(cfg).get("maestro")
     model = (
         config_mod.normalize_model(getattr(args, "model", None))
-        or (cfg.get("maestro") or {}).get("model")
-        or config_mod.DEFAULT_TIER_MODELS["gold"]
+        or (_maestro_cfg_model if _maestro_cfg_model and _maestro_cfg_model != "off" else None)
+        or config_mod.DEFAULT_TIER_MODELS["bronze"]
     )
     claude_bin = warm_session._claude_binary()
     if claude_bin is None:
