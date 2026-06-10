@@ -431,6 +431,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     state = state_mod.load(p["state"])
     m = metrics_mod.load(p["metrics"])
     print(dashboard.render_status(state, m))
+    from .integrity import scan_orphans
+    project_root = root.parent
+    orphans = scan_orphans(project_root)
+    if orphans:
+        print(f"⚠ {len(orphans)} delegation(s) ran without a capsule: {', '.join(orphans[:10])}")
     return 0
 
 
