@@ -51,6 +51,22 @@ MODEL_PRICES = {
 BASELINE_MODEL = "opus"
 CHEAP_TIER_MODEL = "haiku"
 
+_PRICING_FAMILIES = ("haiku", "sonnet", "opus", "fable", "gemma", "gpt", "gemini")
+
+
+def blended_cost(model: str) -> float:
+    "Rough $/Mtok cost for ranking: input + output rate of the model's family. 0.0 if unknown/local."
+    try:
+        low = (model or "").lower()
+        if "codex" in low:
+            fam = "gpt"
+        else:
+            fam = next((f for f in _PRICING_FAMILIES if f in low), "")
+        p = MODEL_PRICES.get(fam) or {}
+        return float(p.get("input", 0) or 0) + float(p.get("output", 0) or 0)
+    except Exception:
+        return 0.0
+
 
 def rate(model: str, kind: str) -> float:
     """Return rate in $ per token (price per-MTok ÷ 1M).
