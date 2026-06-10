@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
+import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 LEVEL_PREFIXES = ["", "a", "b", "c", "d", "e", "f", "g", "h"]
@@ -132,3 +136,70 @@ def cleanup_originais(root: Path, chat_id: str) -> int:
     shutil.rmtree(originais_dir)
 
     return count
+
+
+def epoch_summarizer(project_root: Path):
+    """Returns Callable[[str], str|None] that summarizes text into a dense epoch summary via the configured
+    encoder (gemma/anthropic), reusing telegram_compact's transport. Fail-open: returns None on any error."""
+    def _summarize(text: str) -> str | None:
+        try:
+            from . import config, paths
+            try:
+                cfg = config.load(paths.paths_for(project_root)["config"])
+            except Exception:
+                cfg = {}
+            enc = cfg.get("encoder") or {}
+            provider = (enc.get("provider") or "anthropic").strip()
+            model = enc.get("model") or config.DEFAULT_TIER_MODELS["bronze"]
+        except Exception:
+            return None
+
+        if provider == "passthrough" or model == "passthrough":
+            return None
+
+        prompt = (
+            "Resuma o trecho de conversa abaixo num resumo DENSO em português: o que foi PEDIDO, "
+            "o que foi FEITO/DECIDIDO, refs (paths/IDs/commits), e pendências. Sem pensamento/debate. "
+            "Markdown curto.\n\n" + text
+        )
+
+        try:
+            if provider == "ollama-local":
+                data = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
+                req = urllib.request.Request(
+                    "http://localhost:11434/api/generate",
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    body = json.loads(resp.read())
+                out = body["response"]
+                from .compression import _strip_gemma_channels
+                out = _strip_gemma_channels(out)
+            else:
+                try:
+                    from .warm_session import _claude_binary
+                    claude_bin = _claude_binary() or "claude"
+                except Exception:
+                    claude_bin = "claude"
+                result = subprocess.run(
+                    [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
+                     "--allowedTools", "", "--output-format", "json"],
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                )
+                data = json.loads(result.stdout)
+                out = data["result"]
+
+            out = out.strip()
+            if out.startswith("```"):
+                lines = out.split("\n")
+                out = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+
+            return out if out else None
+        except Exception:
+            return None
+
+    return _summarize

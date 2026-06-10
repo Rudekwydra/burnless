@@ -36,6 +36,7 @@ from .report_kind import (
     normalize_report_kind as _normalize_report_kind,
 )
 from . import init_claude_code as _init_claude_code_mod
+from . import epochs as epochs_mod
 from .prompt_context import (_with_runtime_context, _build_cacheable_runtime_prefix, _TELEGRAPHIC_OUTPUT_HINT, _QTP_F_FIXED_SUFFIX)
 
 from .delegation_parse import (
@@ -1168,6 +1169,45 @@ def cmd_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_epoch(args: argparse.Namespace) -> int:
+    import sys as _sys
+    root_path = Path(getattr(args, "root", None) or paths_mod.find_root() or Path.cwd())
+    chat_id = args.chat_id
+    epoch_cmd = getattr(args, "epoch_cmd", None)
+
+    if epoch_cmd == "capture":
+        text = _sys.stdin.read()
+        summarizer = epochs_mod.epoch_summarizer(root_path)
+        s = summarizer(text)
+        if s is None:
+            print("warning: summarizer failed (fail-open, no mutation)", file=_sys.stderr)
+            return 0
+        path = epochs_mod.append_epoch(root_path, chat_id, s)
+        level = 0
+        while epochs_mod.needs_consolidation(root_path, chat_id, level):
+            result = epochs_mod.consolidate_level(root_path, chat_id, level, summarizer)
+            if result is None:
+                break
+            level += 1
+        print(path.name)
+        return 0
+
+    elif epoch_cmd == "read":
+        chain = epochs_mod.active_chain(root_path, chat_id)
+        for f in chain:
+            print(f"# {f.name}\n")
+            print(f.read_text(encoding='utf-8'))
+            print()
+        return 0
+
+    elif epoch_cmd == "cleanup":
+        n = epochs_mod.cleanup_originais(root_path, chat_id)
+        print(f"removed {n}")
+        return 0
+
+    return 2
+
+
 
 
 
@@ -1753,6 +1793,17 @@ def build_parser() -> argparse.ArgumentParser:
     dsp.add_argument("--limit", type=int, default=10, help="max delegations to trace (default 10)")
     dsp.add_argument("--model", default="qwen2.5-coder:7b", help="ollama model to use")
     dsp.set_defaults(func=cmd_debugless_sweep)
+
+    sp = sub.add_parser("epoch", help="rolling-memory epoch engine (capture/read/cleanup)")
+    sp.add_argument("--chat-id", required=True, dest="chat_id", help="chat ID for epoch storage")
+    sp.add_argument("--root", default=None, help="project root (default: find_root())")
+    epoch_sub = sp.add_subparsers(dest="epoch_cmd", required=True)
+    esp = epoch_sub.add_parser("capture", help="read STDIN, summarize, append, consolidate")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="capture")
+    esp = epoch_sub.add_parser("read", help="print active chain to stdout")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="read")
+    esp = epoch_sub.add_parser("cleanup", help="remove originais directory")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="cleanup")
 
     return p
 
