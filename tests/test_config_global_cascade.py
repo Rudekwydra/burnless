@@ -13,6 +13,7 @@ def test_global_layer_applied(tmp_path, monkeypatch):
     _write(home / ".config" / "burnless" / "config.yaml",
            "agents:\n  silver:\n    name: globalworker\n    command: GLOBAL_CMD\n")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("BURNLESS_GLOBAL_CONFIG", str(home / ".config" / "burnless" / "config.yaml"))
     cfg_path = tmp_path / "proj" / ".burnless" / "config.yaml"
     _write(cfg_path, "project_name: ProjX\n")
     cfg = config.load(cfg_path)
@@ -25,6 +26,7 @@ def test_project_overrides_global(tmp_path, monkeypatch):
     _write(home / ".config" / "burnless" / "config.yaml",
            "agents:\n  silver:\n    command: GLOBAL_CMD\n")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("BURNLESS_GLOBAL_CONFIG", str(home / ".config" / "burnless" / "config.yaml"))
     cfg_path = tmp_path / "proj" / ".burnless" / "config.yaml"
     _write(cfg_path, "agents:\n  silver:\n    command: PROJECT_CMD\n")
     cfg = config.load(cfg_path)
