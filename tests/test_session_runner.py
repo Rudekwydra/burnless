@@ -181,6 +181,46 @@ def test_send_preserves_fork_id_if_result_missing_session_id():
     assert s.fork_session_id == "fork1"
 
 
+# --- cache-stabilizing flags ---
+
+def test_cache_flags_cycle_start():
+    """All five cache-stabilizing flags present on cycle start (fork base)."""
+    s = MaestroSession(base_uuid="BASE", model="claude-haiku-4-5")
+    cmd = s.build_command("hi")
+    cache_flags = [
+        "--permission-mode",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--setting-sources",
+        "--exclude-dynamic-system-prompt-sections",
+    ]
+    for flag in cache_flags:
+        assert flag in cmd, f"missing {flag} on cycle-start"
+    # --permission-mode must have value "bypassPermissions"
+    assert flag_value(cmd, "--permission-mode") == "bypassPermissions"
+    # --setting-sources must have value "project,local"
+    assert flag_value(cmd, "--setting-sources") == "project,local"
+
+
+def test_cache_flags_mid_cycle():
+    """All five cache-stabilizing flags present on mid-cycle (continue fork)."""
+    s = MaestroSession(base_uuid="BASE", model="claude-haiku-4-5")
+    s.send("first", runner=mock_runner("fork1"))
+    cmd = s.build_command("second")
+    cache_flags = [
+        "--permission-mode",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--setting-sources",
+        "--exclude-dynamic-system-prompt-sections",
+    ]
+    for flag in cache_flags:
+        assert flag in cmd, f"missing {flag} on mid-cycle"
+    # Verify values
+    assert flag_value(cmd, "--permission-mode") == "bypassPermissions"
+    assert flag_value(cmd, "--setting-sources") == "project,local"
+
+
 # --- MAESTRO_DISALLOWED constant sanity ---
 
 def test_maestro_disallowed_constant():
