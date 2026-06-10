@@ -40,7 +40,7 @@ if [ "${#USER_PROMPT}" -lt 40 ]; then
 fi
 
 # --- compact via provider-aware Python module ---
-TELEGRAM="$(printf '%s' "$USER_PROMPT" | timeout 10 python3 -m burnless.telegram_compact 2>/dev/null)"
+TELEGRAM="$(printf '%s' "$USER_PROMPT" | python3 -m burnless.telegram_compact 2>/dev/null)"
 
 if [ -z "$TELEGRAM" ]; then
   # Compaction failed — no-op (fail-open)
