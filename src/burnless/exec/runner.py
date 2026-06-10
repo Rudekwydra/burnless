@@ -372,7 +372,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
             display_cfg = cfg.get("display", {}).get("progress_detail", "brief")
             run_mode = display_cfg if display_cfg in {"minimal", "brief", "full", "watch", "quiet", "plain"} else "brief"
     from burnless.config import resolve_stale_timeout
-    stale_timeout_s = resolve_stale_timeout(cfg, tier, opts.stale_timeout_s)
+    stale_timeout_s = resolve_stale_timeout(cfg, tier, opts.stale_timeout_s, provider=selected_provider)
 
     # Persist a lightweight run snapshot before handing off to the worker.
     runs_dir = p["runs"]

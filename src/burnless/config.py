@@ -175,16 +175,21 @@ _TIER_STALE_DEFAULTS: dict[str, int] = {
     "platinum": 1800,
 }
 
+_OLLAMA_LOCAL_STALE_FLOOR = 1800   # local models are slow + free; never false-positive stale on them
 
-def resolve_stale_timeout(cfg: dict, tier: str, cli_override: int | None = None) -> int:
+
+def resolve_stale_timeout(cfg: dict, tier: str, cli_override: int | None = None, provider: str | None = None) -> int:
     """Resolve stale_timeout in seconds for the given tier.
 
     Precedence (high → low):
-      1. cli_override (--stale-timeout-s flag)
+      1. cli_override (--stale-timeout-s flag) — respected verbatim, no floor applied
       2. display.tier_stale_timeout_seconds.<tier>
       3. display.stale_timeout_seconds (explicit user override only — not present in DEFAULT_CONFIG)
       4. _TIER_STALE_DEFAULTS[tier]  (bronze=120, silver=600, gold=900, platinum=1800)
       5. 300 (last-resort fallback)
+
+    After resolving via the above chain (steps 2-5 only), if provider=="ollama-local" the
+    result is floored to _OLLAMA_LOCAL_STALE_FLOOR so slow local models never trip stale detection.
     """
     if cli_override is not None and cli_override > 0:
         return int(cli_override)
@@ -194,6 +199,8 @@ def resolve_stale_timeout(cfg: dict, tier: str, cli_override: int | None = None)
         try:
             v = int(tier_map[tier])
             if v > 0:
+                if provider == "ollama-local":
+                    return max(v, _OLLAMA_LOCAL_STALE_FLOOR)
                 return v
         except (TypeError, ValueError):
             pass
@@ -202,10 +209,15 @@ def resolve_stale_timeout(cfg: dict, tier: str, cli_override: int | None = None)
         try:
             v = int(legacy)
             if v > 0:
+                if provider == "ollama-local":
+                    return max(v, _OLLAMA_LOCAL_STALE_FLOOR)
                 return v
         except (TypeError, ValueError):
             pass
-    return _TIER_STALE_DEFAULTS.get(tier, 300)
+    v = _TIER_STALE_DEFAULTS.get(tier, 300)
+    if provider == "ollama-local":
+        return max(v, _OLLAMA_LOCAL_STALE_FLOOR)
+    return v
 
 
 def load(path: Path) -> dict:
