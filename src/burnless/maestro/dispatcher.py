@@ -412,14 +412,14 @@ def _last_capsule(stdout: str) -> str | None:
         if isinstance(obj, dict) and obj.get("type") == "result":
             result_text = obj.get("result") or ""
             for inner in result_text.splitlines():
-                inner = ansi_re.sub("", inner).strip()
+                inner = ansi_re.sub("", inner).replace("`", "").strip()
                 if CAPSULE_RE.match(inner):
                     capsule = inner
     if capsule:
         return capsule
     # Plain-text fallback for non-stream-json workers
     for raw_line in stdout.splitlines():
-        line = ansi_re.sub("", raw_line).strip()
+        line = ansi_re.sub("", raw_line).replace("`", "").strip()
         if CAPSULE_RE.match(line):
             capsule = line
     return capsule

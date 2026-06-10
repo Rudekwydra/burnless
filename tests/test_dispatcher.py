@@ -148,6 +148,28 @@ def test_last_capsule_plain_text_fallback():
     assert "OK" in cap
 
 
+def test_last_capsule_stream_json_backtick_wrapped():
+    """Test that backtick-wrapped capsule headers are extracted correctly."""
+    result_line = json.dumps(
+        {"type": "result", "result": "`brz sum README.md :: OK` — Burnless is a multi-tier orchestration framework. MIT."}
+    )
+    stdout = '{"type":"system"}\n' + result_line
+    cap = dispatcher._last_capsule(stdout)
+    assert cap is not None, "backtick-wrapped capsule not extracted"
+    assert dispatcher._capsule_status(cap) == "OK", f"status mismatch: {cap}, {dispatcher._capsule_status(cap)}"
+    assert cap.startswith("brz sum")
+    assert "README.md" in cap
+
+
+def test_last_capsule_plain_text_backtick_wrapped():
+    """Test backtick-wrapped capsule in plain-text fallback."""
+    stdout = "`brz sum x.md :: OK` done [ref:exec/T1]"
+    cap = dispatcher._last_capsule(stdout)
+    assert cap is not None, "backtick-wrapped plain-text capsule not extracted"
+    assert dispatcher._capsule_status(cap) == "OK"
+    assert cap.startswith("brz sum")
+
+
 # ── run_delegate: agents_mod.run integration ──────────────────────────────────
 
 def test_run_delegate_extracts_stream_json_capsule(tmp_path, monkeypatch):
