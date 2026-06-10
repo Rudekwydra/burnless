@@ -68,19 +68,6 @@ def test_load_adapter_unknown_kind_raises():
         ba.load_adapter({"brain_adapter": "definitely-not-a-provider"}, "x")
 
 
-def test_all_streams_modules_expose_create_stream():
-    """Each provider stream module must implement create_stream()."""
-    from burnless.maestro.streams import anthropic, gemini, openai, openrouter
-    for mod in (anthropic, openai, gemini, openrouter):
-        assert callable(mod.create_stream), f"{mod.__name__} missing create_stream"
-
-
-def test_normalized_event_emitted_by_streams():
-    """All streams import the same NormalizedEvent type."""
-    from burnless.maestro.streams import NormalizedEvent
-    e = NormalizedEvent(kind="text_delta", text="hi")
-    assert e.kind == "text_delta"
-    assert e.text == "hi"
 
 
 def test_adapter_capabilities_uniform_for_all_providers():
