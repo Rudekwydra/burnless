@@ -2622,6 +2622,141 @@ def cmd_economy(args: argparse.Namespace) -> int:
     return 0
 
 
+def _chat_worker_usage_estimate(
+    delegate_line: str,
+    capsule_line: str,
+    burnless_root: Path,
+    cfg: dict,
+) -> dict:
+    """Estimated usage dict for one dispatched worker (floor, not meter):
+    input = delegate line, cache_read = warm worker prefix (measured ~22k,
+    warm_session docstring), output = worker stdout from its exec_log."""
+    from .maestro.dispatcher import TIER_ALIASES
+    from .maestro.engine import estimate_tokens as _est
+
+    out_tokens = _est(capsule_line)
+    m = re.search(r"\[ref:exec/T(\d+)\]", capsule_line)
+    if m:
+        log_path = burnless_root / "exec_log" / f"T{int(m.group(1)):04d}.md"
+        try:
+            body = log_path.read_text(encoding="utf-8")
+            if "## STDOUT" in body:
+                body = body.split("## STDOUT", 1)[1].split("## STDERR", 1)[0]
+            out_tokens = max(out_tokens, _est(body))
+        except OSError:
+            pass
+    tier_short = (capsule_line.split(None, 1) or ["slv"])[0].lstrip("+~").lower()
+    tier = TIER_ALIASES.get(tier_short, "silver")
+    return {
+        "model": config_mod.resolve_model(tier, cfg),
+        "input_tokens": _est(delegate_line),
+        "cache_read_input_tokens": 22000,
+        "cache_creation_input_tokens": 0,
+        "output_tokens": out_tokens,
+    }
+
+
+def cmd_chat(args: argparse.Namespace) -> int:
+    """Partner-maestro REPL on the new core (v1 glue): warm maestro base →
+    MaestroSession/partner_turn_session → dispatcher.run_all → economy footer.
+    Compaction OFF for MVP (rolling_compaction_enabled stays False; the no-op
+    compact_fn below is never invoked because maybe_compact early-returns)."""
+    from functools import partial
+
+    from . import warm_session
+    from .economy import economy_snapshot, render_footer
+    from .maestro import dispatcher as dispatcher_mod
+    from .maestro.base import maestro_base_init, maestro_iso_cwd
+    from .maestro.engine import PartnerState, estimate_tokens, partner_turn_session
+    from .maestro.runners import runner_claude_json
+    from .maestro.session_runner import MaestroSession
+
+    root = paths_mod.require_root()
+    p = paths_mod.paths_for(root)
+    cfg = config_mod.load(p["config"])
+    model = (
+        config_mod.normalize_model(getattr(args, "model", None))
+        or (cfg.get("maestro") or {}).get("model")
+        or config_mod.DEFAULT_TIER_MODELS["gold"]
+    )
+    claude_bin = warm_session._claude_binary()
+    if claude_bin is None:
+        print("claude binary not found in PATH", file=sys.stderr)
+        return 1
+    try:
+        base_uuid = maestro_base_init(root, model)
+    except RuntimeError as e:
+        print(f"maestro base init failed: {e}", file=sys.stderr)
+        return 1
+    # Forks must run from the base's iso-cwd so --resume finds the jsonl.
+    turn_timeout = int((cfg.get("maestro") or {}).get("turn_timeout_s", 600))
+    runner = partial(
+        runner_claude_json,
+        timeout=turn_timeout,
+        cwd=maestro_iso_cwd(root, model),
+    )
+    session = MaestroSession(base_uuid=base_uuid, model=model, claude_bin=claude_bin)
+    state = PartnerState()
+    noop_compact = lambda blob: {}  # compaction OFF for MVP  # noqa: E731
+    worker_usages: list[dict] = []
+    conv_tokens = 0
+
+    def _delegate_lines(text: str) -> list[str]:
+        out = []
+        for raw in text.splitlines():
+            line = raw.strip()
+            if dispatcher_mod.DELEGATE_RE.match(line) or dispatcher_mod.DELEGATE_SHORT_RE.match(line):
+                out.append(line)
+        return out
+
+    print(f"burnless chat — maestro {model} (base {base_uuid[:8]}…) · /exit to quit")
+    while True:
+        try:
+            line = input("you> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not line:
+            continue
+        if line in {"/exit", "/quit", "/q"}:
+            break
+        text = line
+        depth = 0
+        while True:
+            response = partner_turn_session(
+                state, text,
+                cfg=cfg, session=session, runner=runner,
+                compact_fn=noop_compact, burnless_root=root,
+            )
+            conv_tokens += estimate_tokens(text) + estimate_tokens(response or "")
+            if response:
+                print(response)
+            delegates = _delegate_lines(response or "")
+            if not delegates:
+                break
+            if depth >= 3:
+                print("max delegate depth reached; stopping after 3 levels", file=sys.stderr)
+                break
+            for dl in delegates:
+                print(f"  → {dl}")
+            capsules = dispatcher_mod.run_all(
+                delegates,
+                burnless_root=root,
+                project_root=root.parent,
+                config=cfg,
+            )
+            for cap in capsules:
+                print(f"  ✓ {cap}")
+            for dl, cap in zip(delegates, capsules):
+                worker_usages.append(_chat_worker_usage_estimate(dl, cap, root, cfg))
+            text = "\n".join(c for c in capsules if c.strip()) or \
+                "brz :: ERR worker returned empty capsule"
+            depth += 1
+        snap = economy_snapshot(list(session.usages), conv_tokens, model, worker_usages)
+        print(render_footer(snap))
+    return 0
+
+
 def cmd_profile(args: argparse.Namespace) -> int:
     from . import profiles as profiles_mod
     sub = getattr(args, "profile_cmd", None)
@@ -2819,6 +2954,10 @@ def build_parser() -> argparse.ArgumentParser:
     dsp.set_defaults(func=cmd_decisions_list)
     dsp = decisions_sub.add_parser("clear", help="clear cached architectural decisions")
     dsp.set_defaults(func=cmd_decisions_clear)
+
+    sp = sub.add_parser("chat", help="partner-maestro REPL on the new core (warm base + workers + economy footer)")
+    sp.add_argument("--model", default=None, help="maestro model (default: maestro.model in config, else gold tier model)")
+    sp.set_defaults(func=cmd_chat)
 
     sp = sub.add_parser("brain", help="enter Maestro chat (model configurable in .burnless/config.yaml)")
     sp.add_argument("--message", "-m", help="single-shot mode")
