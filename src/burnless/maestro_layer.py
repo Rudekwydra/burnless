@@ -91,6 +91,13 @@ def process_envelope(
             "decoder_hint": "Tell the user the Maestro is unavailable.",
         }
 
+    try:
+        _cfg = _config.load(_paths.paths_for(burnless_root)["config"])
+    except Exception:
+        _cfg = {}
+    _epochs_enabled = bool((_cfg.get("epochs") or {}).get("enabled", False))
+    _chat_id = f"maestro-{model}"
+
     session = MaestroSession(
         base_uuid=base_uuid,
         model=model,
@@ -103,8 +110,16 @@ def process_envelope(
         cwd=maestro_iso_cwd(burnless_root, model),
     )
 
-    text, _ = session.send(envelope, runner=runner)
-    _save_fork(burnless_root, model, session.fork_session_id)
+    _reseed = None
+    if _epochs_enabled and session.fork_session_id is None:
+        try:
+            from . import epochs as _ep
+            _chain = _ep.active_chain(project_root, _chat_id)
+            if _chain:
+                _reseed = "\n\n".join(p.read_text(encoding="utf-8") for p in _chain)
+        except Exception:
+            _reseed = None
+    text, _ = session.send(envelope, runner=runner, rewind_capsule=_reseed)
 
     lines = text.splitlines()
     has_delegates = any(
@@ -125,8 +140,27 @@ def process_envelope(
         )
         if capsules:
             text2, _ = session.send("\n".join(capsules), runner=runner)
-            _save_fork(burnless_root, model, session.fork_session_id)
             final_text = text2 or text
+
+    if _epochs_enabled:
+        try:
+            from . import epochs as _ep
+            _summ = _ep.epoch_summarizer(project_root)
+            _s = _summ(f"PERGUNTA:\n{envelope}\n\nRESPOSTA:\n{final_text}")
+            if _s:
+                _ep.append_epoch(project_root, _chat_id, _s)
+                _rotated = False
+                for _lvl in range(0, len(_ep.LEVEL_PREFIXES) - 1):
+                    if _ep.needs_consolidation(project_root, _chat_id, _lvl):
+                        if _ep.consolidate_level(project_root, _chat_id, _lvl, _summ) and _lvl == 0:
+                            _rotated = True
+                if _rotated:
+                    session.rewind()
+                    (burnless_root / "maestro" / "mcp_fork.json").unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    _save_fork(burnless_root, model, session.fork_session_id)
 
     response_envelope_json = _try_extract_envelope_json(final_text)
 
