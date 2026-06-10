@@ -166,14 +166,13 @@ def run_delegate(
         return _finalize_error(log_path, spec, f"worker binary not found: {parts[0]}", status="BLK")
 
     user_message = f"del T{spec.id} {tier_key} {spec.action} {spec.target} :: {spec.spec}"
-    if chain:
-        from ..cli import _with_runtime_context  # local import; cli imports dispatcher lazily
-        user_message = _with_runtime_context(
-            user_message,
-            project_root=project_root,
-            burnless_root=burnless_root,
-            chain=chain,
-        )
+    from ..cli import _with_runtime_context  # local import; cli imports dispatcher lazily
+    user_message = _with_runtime_context(
+        user_message,
+        project_root=project_root,
+        burnless_root=burnless_root,
+        chain=chain or None,
+    )
     prompt_payload = _worker_system_prompt_payload(project_root)
     system_prompt = prompt_payload["prompt"]
 
@@ -211,38 +210,23 @@ def run_delegate(
         )
         return _ensure_exec_ref(capsule, spec.id)
 
-    # Force Claude Code OAuth/subscription auth on the subprocess by
-    # stripping ANTHROPIC_API_KEY from the inherited env. SDK paths still
-    # read the key directly via _load_anthropic_key.
-    worker_env = os.environ.copy()
-    # Allow local PreToolUse guards (e.g. Claude Code hooks) to detect that
-    # this process is a Burnless worker invocation and not an interactive
-    # human session.
-    worker_env["BURNLESS_TASK_ID"] = str(spec.id)
-    worker_env.pop("ANTHROPIC_API_KEY", None)
-    worker_env.update(prompt_payload["session_env"])
-    try:
-        proc = subprocess.run(
-            run_parts,
-            input=stdin,
-            capture_output=True,
-            text=True,
-            timeout=int(config.get("maestro", {}).get("worker_timeout_s", 900)),
-            cwd=str(project_root),
-            env=worker_env,
-        )
-    except subprocess.TimeoutExpired as e:
+    result = agents_mod.run(
+        agent_cfg,
+        stdin,
+        timeout=int(config.get("maestro", {}).get("worker_timeout_s", 900)),
+        cwd=project_root,
+        tier=tier_key,
+    )
+    if result.get("timed_out") or result.get("interrupted"):
         return _finalize_error(
             log_path,
             spec,
-            f"worker timed out after {e.timeout}s",
+            f"worker timed out after {config.get('maestro', {}).get('worker_timeout_s', 900)}s",
             status="ERR",
         )
-    except OSError as e:
-        return _finalize_error(log_path, spec, str(e), status="ERR")
-
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
+    stdout = result["stdout"] or ""
+    stderr = result["stderr"] or ""
+    returncode = result["returncode"]
 
     # H2: post_worker_output — plugins may transform capsule/stdout
     _h2 = _pl.call_all_plugins(
@@ -257,19 +241,19 @@ def run_delegate(
             stdout = stdout + "\n" + _injected_capsule if stdout else _injected_capsule
 
     capsule = _last_capsule(stdout)
-    status = _capsule_status(capsule) if capsule else ("ERR" if proc.returncode else "PART")
+    status = _capsule_status(capsule) if capsule else ("ERR" if returncode else "PART")
     if not capsule:
         capsule = (
             f"{spec.tier} {spec.action} {spec.target} :: {status} "
             f"missing worker capsule [ref:exec/T{spec.id:04d}]"
         )
-    transcript = _transcript(run_parts, user_message, stdout, stderr, proc.returncode)
+    transcript = _transcript(result.get("command") or run_parts, user_message, stdout, stderr, returncode)
     exec_log.finalize(
         log_path,
         status=status,
         files_touched=[],
         validations=[],
-        issues=[] if status == "OK" else [f"returncode={proc.returncode}"],
+        issues=[] if status == "OK" else [f"returncode={returncode}"],
         transcript=transcript,
         ended=datetime.now(timezone.utc),
     )
@@ -396,6 +380,21 @@ def _load_cloud_emulator_prompt_payload(
 def _last_capsule(stdout: str) -> str | None:
     capsule = None
     ansi_re = re.compile(r"\x1b\[[0-9;]*m")
+    # Stream-json path: extract capsule from {type: "result"} events
+    for raw_line in stdout.splitlines():
+        try:
+            obj = json.loads(raw_line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "result":
+            result_text = obj.get("result") or ""
+            for inner in result_text.splitlines():
+                inner = ansi_re.sub("", inner).strip()
+                if CAPSULE_RE.match(inner):
+                    capsule = inner
+    if capsule:
+        return capsule
+    # Plain-text fallback for non-stream-json workers
     for raw_line in stdout.splitlines():
         line = ansi_re.sub("", raw_line).strip()
         if CAPSULE_RE.match(line):
