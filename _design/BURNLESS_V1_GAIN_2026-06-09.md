@@ -1,50 +1,55 @@
-# Burnless v1 — measured gain (2026-06-09)
+# Burnless v1 — measured gain (2026-06-09, CORRECTED)
 
-The consolidated v1 maestro = **never-compact + conversation-native cached** (rolling-recompact built,
-validated, default OFF — see cost model below). This documents the GAIN, measured from a live full-loop
-run (haiku maestro, real CLI, via partner_turn_session + MaestroSession), then the next step.
+> CORRECTION (Roberto caught it): the first version compared v1 against a COLD (no-cache) baseline. That
+> is a STRAWMAN — Sonnet-solo ALSO uses Anthropic's auto-cache (linear, read at 10%), so nobody runs cold.
+> Cache is a COMMODITY; both arms have it. The real gain is NOT "having a cache". This doc is the fair version.
+> Fair-baseline rule: [[feedback-fair-baseline-sonnet-with-cache]].
 
-## Method
-Effective input-token cost model (Anthropic monthly-plan, w=2.0 measured = ephemeral_1h):
-`eff = input*1.0 + cache_creation*2.0 + cache_read*0.10`.
-- **v1 (cached, conversation-native):** per turn `in + cr*2.0 + rd*0.10` — from measured cr/rd.
-- **cold baseline (no cache, re-send full context each turn):** `(cr+rd)*1.0`.
+## How Anthropic auto-cache works (monthly plan, both models)
+Caches the prefix (system + tool defs + conversation), reads the cached prefix at ~10% of input price,
+writes new tokens at the TTL rate (measured w=2.0 = ephemeral_1h). SAME mechanism for haiku/sonnet/opus.
+So Sonnet-solo's conversation cache is ALSO linear. The cache is not where burnless wins.
 
-Measured cr/rd per turn (12-turn verbose session): rd climbs 11k→64k, cr stays ~3k (delta-only writes).
+## Fair comparison: burnless vs Sonnet-solo, BOTH cached (cost model, $/Mtok haiku 1/5, sonnet 3/15)
+Conversation grows ~4500 tok/turn (cached, read 10% in both arms). Work ~2000 out tok/turn.
+- **Sonnet-solo:** sonnet reads the whole cached conversation (sonnet rate ×0.10) AND does the work in-context.
+- **Burnless:** haiku-maestro reads the cached conversation (HAIKU rate ×0.10) to decide+delegate; the worker
+  does the work on its OWN warm base, seeing only the compact spec (it does NOT carry the conversation).
 
-## Result
-| turn | v1 cached (eff) | cold (eff) | gain |
+| turn | sonnet-solo | burnless | gain |
 |---|---|---|---|
-| 1 | 42,745 | 31,891 | 0.7× (write-tax, no read yet) |
-| 2 | 9,764 | 35,174 | 3.6× |
-| 6 | 10,937 | 48,249 | 4.4× |
-| 12 | 12,439 | 67,146 | **5.4×** (and rising) |
+| 1 | 32.9k | 12.5k | 2.6× |
+| 10 | 45.0k | 16.5k | 2.7× |
+| 40 | 85.5k | 30.0k | 2.9× |
 
-**Cumulative over 12 turns: 3.59× cheaper (166.3k vs 597.0k eff-tokens).**
+**~2.7× cheaper, roughly FLAT** (not the growing cold-strawman number) — because the linear cache is equal
+in both arms; the gain is the per-token RATE difference + work isolation, ~constant per turn.
 
-## Reading
-- **Break-even at turn 2.** Turn 1 pays the cache_creation write tax (cr×2.0) with no read yet → 0.7×.
-  From turn 2 the cache read (10%) dominates and the gain compounds.
-- **Gain GROWS with session length:** cold re-sends the whole growing context every turn (quadratic);
-  v1 reads it at 10% + writes only the delta (linear). At turn 12 it's 5.4×/turn and still climbing.
-- This is the burnless thesis quantified: the value is in the conversation cache across a session, and it
-  is real and growing — for the COMMON case (never-compact), no exotic machinery needed.
+## Where the gain ACTUALLY comes from (NOT the cache)
+1. **Maestro carries the conversation at HAIKU rate (1) vs Sonnet rate (3)** = 3× on the conversation read.
+2. **Work runs in a worker that does NOT re-read the conversation** (compact spec only). Sonnet-solo
+   re-reads the whole growing conversation every time it acts.
+3. **Tier routing**: simple work → haiku worker (out 5) instead of sonnet (out 15).
 
-## Why never-compact is the v1 default (cost model, measured constants)
-base~28k, delta~4500/turn, rewind re-warm~25k, w=2.0. Sweeping cycle-length L × session-length T:
-- Eager rolling (default K=8 ≈ L~5) LOSES at every T (re-warm dominates).
-- never-compact WINS up to ~T30–50 (carrying the cached history at 10% beats paying 25k re-warm).
-- Rolling beats never-compact only past ~T50 AND only with a FAT window (L≈15); at T120, L15 ≈ 2× cheaper
-  than never-compact.
-→ v1 default = never-compact (optimal for normal sessions); rolling-recompact = built+validated, toggle OFF,
-  opt-in for very long sessions.
+This is the burnless thesis correctly stated: cache = commodity; the moat = cheap-model orchestration +
+work isolation + tier routing ([[strategic-pivot-to-synapsis-2026-05-07]]).
 
-## Next (Roberto's sequence: measure+document gain → implement → measure again)
-1. ✅ Gain measured + documented (this file).
-2. Implement: `cache_policy.rolling_compaction_enabled: false` toggle (consolidates option 1).
-3. Implement IN-FORK compaction (Fable §2.3): compact as the dying fork's last turn, reading the window at
-   10% instead of re-creating ~25k base on re-fork. Open mechanism Q first: does `--resume BASE
-   --fork-session` re-READ base (cheap) or re-CREATE it (live showed cr~25k = re-create)? If re-read is
-   achievable, the re-warm collapses and rolling wins far earlier.
-4. **Measure again** after in-fork: re-run the cost model with the new re-warm constant → new crossover.
-   Document the improvement (the "implement and measure again" loop).
+## Honest caveats (the ~2.7× is ILLUSTRATIVE, not measured end-to-end)
+- Depends on work-per-turn, worker tier mix, and the maestro routing WELL on a cheap model. The bench
+  [[burnless-maestro-bench-opus-beats-haiku-2026-05-28]] showed haiku over-escalating (routing badly) →
+  if the cheap maestro mis-routes, the gain erodes. Maestro model is an open A/B question.
+- Burnless adds a maestro→worker round-trip per work turn (2 calls vs sonnet-solo's 1); for trivial single
+  tasks that overhead can erase the gain (but per Roberto, real work is always contextual/multi-step).
+- The REAL number requires the proper A/B: burnless (haiku-maestro + tiered workers, cached) vs Sonnet-solo
+  (cached), on a realistic VERBOSE multi-turn session. That measurement is still owed.
+
+## v1 maestro default (cost model, separate from the above)
+v1 default = never-compact (rolling-recompact built+validated, toggle OFF). Rolling only beats never-compact
+past ~50 turns and only with a fat window (L≈15); the 25k re-warm/rewind dominates. IN-FORK compaction
+(Fable §2.3) is the lever to make rolling win earlier — implement + re-measure.
+
+## Next (Roberto: measure+document → implement → measure again)
+1. ✅ Gain reframed against the FAIR baseline (Sonnet-solo cached); ~2.7× illustrative; attributed to
+   model-tier + work-isolation + routing, NOT cache.
+2. Owed: the REAL A/B (burnless vs sonnet-solo, both cached, verbose multi-turn) for the true number.
+3. Implement rolling toggle (default off) + IN-FORK compaction; re-measure the cost model with new re-warm.

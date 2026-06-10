@@ -30,6 +30,7 @@ CFG = {
         "min_hot_tail_tokens": 1500,
         "capsule_budget_tokens": 150,   # constant S=150 → B*=525 < min_hot_tail
         "compaction_cost_tokens": 0,    # M=0: fires as soon as window >= min_hot_tail
+        "rolling_compaction_enabled": True,   # explicit opt-in for these unit tests
     }
 }
 
@@ -129,6 +130,20 @@ def test_tiny_turns_never_compact():
     assert window_tokens(state) < 1500
 
 
+def test_rolling_compaction_disabled_by_default():
+    """Default cfg (rolling_compaction_enabled absent/False): huge window must NOT compact.
+
+    Proves the v1 never-compact default: even a window far above B* returns False
+    and cycle stays at 0 when the toggle is off.
+    """
+    from burnless.config import DEFAULT_CONFIG
+    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    big = PartnerState(window=[Turn("user", "x", 500000)])
+    result = maybe_compact(big, cfg, lambda b: {"decisions": [], "constraints": [], "open_threads": [], "summary": "s"})
+    assert result is False, "default must be never-compact (rolling_compaction_enabled=False)"
+    assert big.cycle == 0, "cycle must stay 0 when compaction is disabled"
+
+
 def test_assemble_prompt_user_seen_exactly_once():
     state = PartnerState(rolling_capsule=RollingCapsule(summary="CAPX"))
     state.window.append(Turn("user", "earlier", 2))
@@ -193,8 +208,11 @@ def test_trigger_is_size_driven():
     This was broken before the fix: proportional S cancelled B in the formula,
     making the decision independent of window size.
     """
+    import copy
     from burnless.config import DEFAULT_CONFIG
-    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    cp = copy.deepcopy(DEFAULT_CONFIG["cache_policy"])
+    cp["rolling_compaction_enabled"] = True
+    cfg = {"cache_policy": cp}
     cp = cfg["cache_policy"]
     S = cp["capsule_budget_tokens"]   # 1500
     M = cp["compaction_cost_tokens"]  # 4000
@@ -219,8 +237,11 @@ def test_trigger_is_size_driven():
 
 def test_verbatim_tail_kept_after_compact():
     """After compaction, window retains exactly keep_tail_turns most-recent turns."""
+    import copy
     from burnless.config import DEFAULT_CONFIG
-    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    cp = copy.deepcopy(DEFAULT_CONFIG["cache_policy"])
+    cp["rolling_compaction_enabled"] = True
+    cfg = {"cache_policy": cp}
     keep = cfg["cache_policy"]["keep_tail_turns"]  # 4
     turns = [Turn("user" if i % 2 == 0 else "maestro", f"t{i}", 30000) for i in range(10)]
     state = PartnerState(window=turns)
@@ -232,8 +253,11 @@ def test_verbatim_tail_kept_after_compact():
 
 def test_decisions_and_constraints_accumulate_across_two_cycles():
     """Decisions/constraints carry VERBATIM across cycles (append-only); summary is replaced."""
+    import copy
     from burnless.config import DEFAULT_CONFIG
-    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    cp = copy.deepcopy(DEFAULT_CONFIG["cache_policy"])
+    cp["rolling_compaction_enabled"] = True
+    cfg = {"cache_policy": cp}
     state = PartnerState(window=[Turn("user", "x", 30000) for _ in range(10)])
 
     def cf1(blob: str) -> dict:
@@ -260,8 +284,11 @@ def test_decisions_and_constraints_accumulate_across_two_cycles():
 
 def test_compact_blob_excludes_kept_tail():
     """The blob passed to compact_fn must not contain the tail turns (no double-count)."""
+    import copy
     from burnless.config import DEFAULT_CONFIG
-    cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    cp = copy.deepcopy(DEFAULT_CONFIG["cache_policy"])
+    cp["rolling_compaction_enabled"] = True
+    cfg = {"cache_policy": cp}
     keep = cfg["cache_policy"]["keep_tail_turns"]  # 4
     n = keep + 4  # 8 turns total
     state = PartnerState(window=[Turn("user", f"t{i}", 30000) for i in range(n)])
@@ -304,8 +331,11 @@ class FakeSession:
 
 
 def _default_cfg():
+    import copy
     from burnless.config import DEFAULT_CONFIG
-    return {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
+    cp = copy.deepcopy(DEFAULT_CONFIG["cache_policy"])
+    cp["rolling_compaction_enabled"] = True
+    return {"cache_policy": cp}
 
 
 def _seed_compact_fn(blob: str) -> dict:
