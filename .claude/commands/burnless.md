@@ -1,57 +1,20 @@
-# /burnless
+---
+description: Set the Burnless engagement mode for this session (off | partner | on)
+---
 
-Activate Burnless compression for this Claude Code session.
+`/burnless [off|partner|on]` — choose how much Burnless takes over this session.
 
-Compresses recent conversation into a capsule and anchors future responses to it.
-Cache-warm: the glossary block is byte-identical every call — providers cache it
-automatically. From turn 2 onward, prefix costs drop ~90-99%.
+- **off** — raw chat, zero Burnless.
+- **partner** — assistant keeps full reasoning and delegates execution to Burnless tiers
+  (`burnless do/delegate`) where it makes sense. No role injection.
+- **on** — assistant is pinned to the Maestro role: compress intent and *only* delegate
+  (no direct code/edits/deep planning); read only the compact capsule, never the raw log.
 
-## Steps
+`/burnless` with no argument shows the menu and the current mode. The choice is stored per
+session (`~/.burnless/state/session-<id>.mode`) and takes effect from the next turn. See the
+"Engagement modes" section of the README.
 
-1. Check burnless is installed: `burnless --version`. If missing: `pip install burnless` and stop.
+This command emits the mode sentinel below; a `UserPromptSubmit` hook resolves it and shapes
+behavior for the rest of the session (see `docs/USING_BURNLESS_FROM_YOUR_LLM.md` to install the hook).
 
-2. Write the last 20 turns to a temp file:
-   ```
-   /tmp/burnless_<timestamp>.txt
-   ```
-   Format:
-   ```
-   [user]: <message>
-   [assistant]: <response>
-   ```
-
-3. Compress:
-   ```
-   burnless compress --file /tmp/burnless_<timestamp>.txt
-   ```
-   Capture the capsule ID, chars, ratio, and saved path.
-
-4. Display the capsule:
-   ```
-   Burnless capsule — <capsule_id> — <orig>c → <compressed>c (<ratio>%)
-   ```
-
-5. Tell the user:
-   > Capsule active. Anchoring to capsule above — not the full history.
-   > Type anything to continue.
-
-6. **From this turn forward**: treat the capsule as authoritative context.
-   If something isn't in the capsule, ask for clarification — do not hallucinate.
-
-7. Every 10 turns, auto-update:
-   ```
-   burnless compress --file /tmp/burnless_update_<timestamp>.txt
-   ```
-   Notify: `[burnless] capsule updated — <new_id> (<ratio>%)`
-
-## Resume in new session
-
-```
-burnless brain --capsule <path>
-```
-
-## See all capsules
-
-```
-ls .burnless/sessions/
-```
+__BURNLESS_MODE_CMD__ $ARGUMENTS
