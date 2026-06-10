@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Burnless layer-1 semantic compactor — Claude Code UserPromptSubmit hook.
 #
-# Reads hook input JSON from stdin, extracts user prompt, calls Haiku via
-# `claude -p` to compact into a JSON telegram envelope {i, r, m}, returns
-# Claude Code hook output JSON with additionalContext.
+# Reads hook input JSON from stdin, extracts user prompt, delegates compaction
+# to burnless.telegram_compact (provider-aware: ollama-local / anthropic).
+# Returns Claude Code hook output JSON with additionalContext.
 #
 # Fail-open: any error in compaction → return empty additionalContext (no-op).
-# Timeout: 4 seconds total.
+# Timeout: 10 seconds total.
 
 set -u
 set -o pipefail
@@ -33,55 +33,14 @@ if [ ! -f "$HOME/.burnless/compactor_enabled" ] && [ "${BURNLESS_COMPACTOR:-0}" 
   exit 0
 fi
 
-# --- resolve encoder model from burnless config (fail-open to haiku) ---
-ENCODER_MODEL="$(python3 -c "
-try:
-    from burnless import config, paths
-    root = paths.require_root()
-    cfg = config.load(paths.paths_for(root)['config'])
-    print(config.resolve_layer_models(cfg)['encoder'])
-except Exception:
-    print('claude-haiku-4-5-20251001')
-" 2>/dev/null)"
-[ -z "$ENCODER_MODEL" ] && ENCODER_MODEL="claude-haiku-4-5-20251001"
-
-# passthrough → encoder disabled, no compaction (no-op, fail-open)
-if [ "$ENCODER_MODEL" = "passthrough" ]; then
-  echo '{}'
-  exit 0
-fi
-
 # --- guard: skip very short prompts (compaction overhead > gain) ---
 if [ "${#USER_PROMPT}" -lt 40 ]; then
   echo '{}'
   exit 0
 fi
 
-# --- compact via Haiku one-shot ---
-COMPACT_PROMPT="Você é compactador telegrafo. Reescreva o input do user em JSON puro com chaves: i (intent verbo imperativo), r (refs: paths/IDs/nomes), m (markers: URG|DEC|HYPE|PERS se aplicável, senão omita). MÁX 30 tokens. Output JSON apenas, sem prosa, sem markdown fence.
-
-[USER INPUT]
-$USER_PROMPT"
-
-TELEGRAM="$(printf '%s' "$COMPACT_PROMPT" | timeout 4 /opt/homebrew/bin/claude -p \
-  --model "$ENCODER_MODEL" \
-  --permission-mode bypassPermissions \
-  --allowedTools '' \
-  --output-format json 2>/dev/null \
-  | python3 -c "import sys, json
-try:
-    d = json.load(sys.stdin)
-    result = (d.get('result') or '').strip()
-    # Strip possible markdown fences
-    if result.startswith('\`\`\`'):
-        lines = result.split('\n')
-        result = '\n'.join(lines[1:-1] if lines[-1].startswith('\`\`\`') else lines[1:])
-    # Validate JSON
-    json.loads(result)
-    print(result)
-except Exception:
-    print('')
-" 2>/dev/null)"
+# --- compact via provider-aware Python module ---
+TELEGRAM="$(printf '%s' "$USER_PROMPT" | timeout 10 python3 -m burnless.telegram_compact 2>/dev/null)"
 
 if [ -z "$TELEGRAM" ]; then
   # Compaction failed — no-op (fail-open)
