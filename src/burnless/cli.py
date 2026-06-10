@@ -2647,6 +2647,7 @@ def _chat_worker_usage_estimate(
             pass
     tier_short = (capsule_line.split(None, 1) or ["slv"])[0].lstrip("+~").lower()
     tier = TIER_ALIASES.get(tier_short, "silver")
+    # fallback estimate — used only when the worker emitted no usage in its output
     return {
         "model": config_mod.resolve_model(tier, cfg),
         "input_tokens": _est(delegate_line),
@@ -2740,16 +2741,27 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 break
             for dl in delegates:
                 print(f"  → {dl}")
-            capsules = dispatcher_mod.run_all(
+            details = dispatcher_mod.run_all_detailed(
                 delegates,
                 burnless_root=root,
                 project_root=root.parent,
                 config=cfg,
             )
+            capsules = [d["capsule"] for d in details]
             for cap in capsules:
                 print(f"  ✓ {cap}")
-            for dl, cap in zip(delegates, capsules):
-                worker_usages.append(_chat_worker_usage_estimate(dl, cap, root, cfg))
+            for dl, d in zip(delegates, details):
+                if d["usage"]:
+                    tier_short = (d["capsule"].split(None, 1) or ["slv"])[0].lstrip("+~").lower()
+                    worker_usages.append({
+                        "model": config_mod.resolve_model(dispatcher_mod.TIER_ALIASES.get(tier_short, "silver"), cfg),
+                        "input_tokens": int(d["usage"].get("input_tokens", 0) or 0),
+                        "cache_read_input_tokens": int(d["usage"].get("cache_read_input_tokens", 0) or 0),
+                        "cache_creation_input_tokens": int(d["usage"].get("cache_creation_input_tokens", 0) or 0),
+                        "output_tokens": int(d["usage"].get("output_tokens", 0) or 0),
+                    })
+                else:
+                    worker_usages.append(_chat_worker_usage_estimate(dl, d["capsule"], root, cfg))
             text = "\n".join(c for c in capsules if c.strip()) or \
                 "brz :: ERR worker returned empty capsule"
             depth += 1

@@ -45,6 +45,32 @@ _STOP_TOKENS = {
 }
 
 
+def _parse_worker_usage(stdout: str) -> dict:
+    """Best-effort extract the worker's cumulative usage from --output-format json or stream-json."""
+    if not stdout:
+        return {}
+    # plain json: a single object with "usage"
+    try:
+        obj = json.loads(stdout)
+        if isinstance(obj, dict) and isinstance(obj.get("usage"), dict):
+            return obj["usage"]
+    except Exception:
+        pass
+    # stream-json: last line whose event is type=="result" with a usage dict
+    last = {}
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "result" and isinstance(ev.get("usage"), dict):
+            last = ev["usage"]
+    return last
+
+
 def _decisions_cache_path() -> Path:
     override = os.environ.get(_DECISIONS_CACHE_ENV)
     if override:
@@ -722,6 +748,7 @@ def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | N
         "started_at": started.isoformat(),
         "ended_at": ended.isoformat(),
         "duration_s": (ended - started).total_seconds(),
+        "usage": _parse_worker_usage(proc.stdout),
     }
 
 
