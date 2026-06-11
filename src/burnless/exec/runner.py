@@ -19,6 +19,7 @@ from .. import lifetime as lifetime_mod
 from .. import agents as agents_mod
 from .. import live_runner
 from .. import dashboard
+from .. import savings_footer as savings_footer_mod
 from ..estimator import estimate_tokens
 from ..codec.decoder import normalize_worker_envelope
 from ..report_kind import (
@@ -859,6 +860,8 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     state["last_capsule"] = did
     state["last_capsule_mode"] = mode
     state["next"] = capsule.next or None
+    # Increment turn counter for savings footer tracking
+    state["turn_counter"] = int(state.get("turn_counter", 0) or 0) + 1
     state_mod.save(p["state"], state)
 
     # Short output — details via `burnless read/log/capsule/metrics`
@@ -883,6 +886,26 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                 if feedback:
                     head = f"{head}\nReason: {feedback[:180]}"
         print(head)
+
+        # Savings footer: display token counts and cost breakdown
+        if cfg.get("display", {}).get("display_savings_footer", False):
+            try:
+                turn_num = int(state.get("turn_counter", 1) or 1)
+                # Map tier to pricing family (e.g., gold → opus, silver → sonnet, bronze → haiku)
+                tier_to_family = {"gold": "opus", "silver": "sonnet", "bronze": "haiku"}
+                pricing_model = tier_to_family.get(tier, "opus")
+                metrics_obj = savings_footer_mod.calculate_turn_metrics(
+                    human_prompt=deleg_text,
+                    compressed_prompt=prompt,
+                    model=pricing_model,
+                    turn_num=turn_num,
+                )
+                footer_text = savings_footer_mod.render_footer(metrics_obj)
+                print(f"⚡ {footer_text}")
+                savings_footer_mod.log_turn_metrics(metrics_obj, burnless_root=root)
+            except Exception as e:
+                if verbose:
+                    print(f"[savings-footer] error: {e}", file=sys.stderr)
     try:
         from ..integrity import check_run_integrity
         _gapless_warns = check_run_integrity(did, root.parent)

@@ -28,6 +28,7 @@ dependencies = [
     "PyYAML>=6.0",
     "rich>=13.0",
     "ptyprocess>=0.7",
+    "tiktoken>=0.5.0",
 ]
 
 [project.optional-dependencies]
