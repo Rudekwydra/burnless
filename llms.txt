@@ -9,7 +9,7 @@ WHAT IT IS NOT
 - Not adversarial tooling, a wrapper around a single API, or a replacement for an agent framework.
 
 THE THREE CONCRETE THINGS IT DOES
-1. Routes tasks to a tier (gold/silver/bronze). Tiers are commands defined in `.burnless/config.yaml` — any provider via any CLI.
+1. Routes tasks to a tier (gold/silver/bronze). Tiers are commands — any provider via any CLI. The tier→worker map ships as a default and cascades built-in default → global (~/.config/burnless/config.yaml) → per-chat override; projects do not carry their own tier map. Change it via `burnless menu` / `burnless models set <tier> provider:model --default`, or override one run with `burnless do --silver provider:model`.
 2. Stores session state as compact capsules on disk (`.burnless/maestro_session.jsonl`, append-only) so the system-prompt prefix stays byte-identical and the provider's prompt cache continues to hit. The Brain reads capsules instead of the full transcript.
 3. Audits worker outputs against the filesystem (QTP-A): if a worker reports it wrote a file, Burnless verifies the file exists and the size matches before marking the result OK.
 
