@@ -249,6 +249,14 @@ def load(path: Path) -> dict:
     return data
 
 
+def global_config_path() -> Path:
+    """Path to the global config (BURNLESS_GLOBAL_CONFIG env wins, else ~/.config/burnless/config.yaml)."""
+    env = os.environ.get("BURNLESS_GLOBAL_CONFIG")
+    if env:
+        return Path(env)
+    return Path.home() / ".config" / "burnless" / "config.yaml"
+
+
 def parse_worker_spec(spec: str) -> tuple[str, str]:
     """'ollama:gemma4-e4b' -> ('ollama','gemma4-e4b'). No colon -> provider 'anthropic'.
     e.g. 'sonnet' -> ('anthropic','sonnet'). Strips whitespace."""
