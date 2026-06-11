@@ -521,10 +521,25 @@ def cmd_models(args: argparse.Namespace) -> int:
 
 def cmd_menu(args: argparse.Namespace) -> int:
     from . import menu as menu_mod
-    from .config import DEFAULT_CONFIG
+    from .config import DEFAULT_CONFIG, build_worker_agent, parse_worker_spec, global_config_path
+    import yaml as _yaml
     root = paths_mod.require_root()
     cfg = config_mod.load(paths_mod.paths_for(root)["config"])
     providers = menu_mod.detect_providers()
+    import sys as _sys
+    if _sys.stdin.isatty() and not getattr(args, "view", False):
+        def _persist(tier, spec):
+            prov, model = parse_worker_spec(spec)
+            agent = build_worker_agent(prov, model)
+            gp = global_config_path()
+            existing = {}
+            if gp.exists():
+                existing = _yaml.safe_load(gp.read_text()) or {}
+            existing.setdefault("agents", {})[tier] = agent
+            gp.parent.mkdir(parents=True, exist_ok=True)
+            gp.write_text(_yaml.safe_dump(existing, sort_keys=False, allow_unicode=True))
+        menu_mod.run_interactive(cfg, DEFAULT_CONFIG, providers, persist_fn=_persist)
+        return 0
     print(menu_mod.build_menu_view(cfg, DEFAULT_CONFIG, providers))
     return 0
 
@@ -1705,6 +1720,7 @@ def build_parser() -> argparse.ArgumentParser:
     msp.set_defaults(func=cmd_models)
 
     sp = sub.add_parser("menu", help="show the tier->worker config view (table + providers + hints)")
+    sp.add_argument("--view", action="store_true", help="print the table non-interactively (no prompts)")
     sp.set_defaults(func=cmd_menu)
 
     sp = sub.add_parser("provider", help="inspect or reset multi-provider health stats")

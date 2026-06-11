@@ -75,3 +75,65 @@ def build_menu_view(cfg: dict, default_cfg: dict, providers: dict, session_overr
         "persist as default : burnless models set <tier> provider:model --default"
     )
     return f"burnless . models\n\n{table}\n\nproviders: {prov}\n\n{hints}"
+
+
+def worker_menu_options(providers: dict) -> list:
+    """Pickable worker options with availability, given detected providers."""
+    opts = []
+    for model in ("opus", "sonnet", "haiku"):
+        opts.append({"provider": "anthropic", "model": model, "spec": f"anthropic:{model}",
+                     "available": bool(providers.get("anthropic")), "custom": False})
+    opts.append({"provider": "codex", "model": "gpt-5.2", "spec": "codex:gpt-5.2",
+                 "available": bool(providers.get("codex")), "custom": False})
+    opts.append({"provider": "gemini", "model": "gemini-2.5-pro", "spec": "gemini:gemini-2.5-pro",
+                 "available": bool(providers.get("gemini")), "custom": False})
+    opts.append({"provider": "ollama", "model": "(type a model)", "spec": "ollama:",
+                 "available": bool(providers.get("ollama")), "custom": True})
+    return opts
+
+
+def run_interactive(cfg: dict, default_cfg: dict, providers: dict, *,
+                    input_fn=input, output_fn=print, persist_fn=None) -> dict | None:
+    """Numbered picker: choose tier -> choose worker -> this-run vs make-default.
+    I/O is injected for testability. persist_fn(tier, spec) is called on make-default.
+    Returns a dict describing the action, or None if cancelled."""
+    output_fn(render_models_table(cfg, default_cfg))
+    tiers = ["diamond", "gold", "silver", "bronze"]
+    output_fn("\nPick a tier to change:")
+    for i, t in enumerate(tiers, 1):
+        output_fn(f"  {i}) {t}")
+    raw = (input_fn("tier [1-4, q]: ") or "").strip().lower()
+    if raw in ("q", ""):
+        return None
+    try:
+        tier = tiers[int(raw) - 1]
+    except (ValueError, IndexError):
+        output_fn("invalid choice"); return None
+    opts = worker_menu_options(providers)
+    output_fn(f"\nPick a worker for {tier}:")
+    for i, o in enumerate(opts, 1):
+        flag = "" if o["available"] else "  (not installed)"
+        output_fn(f"  {i}) {o['provider']}:{o['model']}{flag}")
+    raw = (input_fn(f"worker [1-{len(opts)}, q]: ") or "").strip().lower()
+    if raw in ("q", ""):
+        return None
+    try:
+        chosen = opts[int(raw) - 1]
+    except (ValueError, IndexError):
+        output_fn("invalid choice"); return None
+    spec = chosen["spec"]
+    if chosen["custom"]:
+        model = (input_fn("ollama model name: ") or "").strip()
+        if not model:
+            return None
+        spec = "ollama:" + model
+    scope = (input_fn("apply: [1] this run  [2] make default  [q]: ") or "").strip().lower()
+    if scope == "2":
+        if persist_fn:
+            persist_fn(tier, spec)
+        output_fn(f"default updated: {tier} = {spec}")
+        return {"action": "default", "tier": tier, "spec": spec}
+    if scope == "1":
+        output_fn(f"for one run: burnless do --{tier} {spec} \"<task>\"")
+        return {"action": "oneshot", "tier": tier, "spec": spec}
+    return None
