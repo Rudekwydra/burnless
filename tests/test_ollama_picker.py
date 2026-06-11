@@ -7,8 +7,9 @@ class TestOllamaNumberedPicker:
     """Test the ollama model sub-picker (numbered list of installed models)."""
 
     def test_ollama_numbered_path(self):
-        """Select ollama and pick model #2 from list via numbered picker."""
-        inputs = iter(["3", "7", "2", "1"])
+        """Select ollama (provider #3) and pick model #2 from list via numbered picker."""
+        # tier=silver(3), provider=ollama(3), model=2, scope=this run(1)
+        inputs = iter(["3", "3", "2", "1"])
         outputs = []
 
         def input_fn(prompt):
@@ -20,7 +21,7 @@ class TestOllamaNumberedPicker:
         models = ["gemma4:e2b", "hf.co/unsloth/gemma-4-12b-it-GGUF:Q4_K_M", "qwen2.5-coder:7b"]
         cfg = {"agents": {"silver": {"name": "haiku"}}}
         default_cfg = {"agents": {"silver": {"name": "sonnet"}}}
-        providers = {"anthropic": True, "codex": True, "gemini": True, "ollama": True}
+        providers = {"anthropic": True, "codex": True, "ollama": True}
 
         result = run_interactive(
             cfg,
@@ -35,12 +36,12 @@ class TestOllamaNumberedPicker:
         assert result is not None
         assert result["action"] == "oneshot"
         assert result["spec"] == "ollama:hf.co/unsloth/gemma-4-12b-it-GGUF:Q4_K_M"
-        # Verify model list was printed (updated to reflect new prompt)
-        assert any("Available ollama models:" in str(o) for o in outputs)
+        assert any("ollama models:" in str(o) for o in outputs)
 
     def test_empty_list_fallback(self):
-        """When ollama has no models, fallback to typing model name."""
-        inputs = iter(["3", "7", "typed-model", "2"])
+        """When ollama has no models, type_idx=1 is the type-a-model escape."""
+        # tier=silver(3), provider=ollama(3), type_idx=1(no models), type "typed-model", scope=make default(2)
+        inputs = iter(["3", "3", "1", "typed-model", "2"])
         outputs = []
         persist_calls = []
 
@@ -55,7 +56,7 @@ class TestOllamaNumberedPicker:
 
         cfg = {"agents": {"silver": {"name": "haiku"}}}
         default_cfg = {"agents": {"silver": {"name": "sonnet"}}}
-        providers = {"anthropic": True, "codex": True, "gemini": True, "ollama": True}
+        providers = {"anthropic": True, "codex": True, "ollama": True}
 
         result = run_interactive(
             cfg,

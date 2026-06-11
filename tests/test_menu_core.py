@@ -23,7 +23,7 @@ class TestDetectProviders:
     def test_detect_providers_structure(self):
         result = detect_providers()
         assert isinstance(result, dict)
-        assert set(result.keys()) == {"anthropic", "codex", "gemini", "ollama"}
+        assert set(result.keys()) == {"anthropic", "codex", "ollama"}
         for key, value in result.items():
             assert isinstance(value, bool)
 

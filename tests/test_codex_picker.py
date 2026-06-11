@@ -3,41 +3,24 @@ import pytest
 from burnless.menu import list_codex_models, worker_menu_options, run_interactive
 
 def test_list_codex_models():
-    # Since it shells out to codex debug models, we just assert it returns a list.
     assert isinstance(list_codex_models(), list)
 
-def test_worker_menu_options_codex_custom():
-    providers = {"codex": True}
+def test_worker_menu_options_codex_entry():
+    providers = {"anthropic": False, "codex": True, "ollama": False}
     opts = worker_menu_options(providers)
-    # Find the codex entry (it was appended in a specific order but let's check for 'codex')
     codex_opt = next((o for o in opts if o["provider"] == "codex"), None)
     assert codex_opt is not None
-    assert codex_opt["custom"] is True
-    assert codex_opt["model"] == "(pick installed)"
+    assert codex_opt["available"] is True
 
 def test_run_interactive_codex_numbered():
     providers = {
-        "anthropic": True, 
-        "codex": True, 
-        "gemini": True, 
-        "ollama": True
+        "anthropic": True,
+        "codex": True,
+        "ollama": True,
     }
-    # Order in worker_menu_options:
-    # 0: anthropic:fable
-    # 1: anthropic:opus
-    # 2: anthropic:sonnet
-    # 3: anthropic:haiku
-    # 4: codex:(pick installed)  <-- index 5 (worker selection input "5")
-    # 5: gemini:gemini-2.5-pro
-    # 6: ollama:(type a model)
-    
-    # inputs iter ["3","5","1","1"]
-    # 1. Tier [1-4, q]: "3" -> silver
-    # 2. Worker [1-7, q]: "5" -> codex (custom=True)
-    # 3. Model [1-2, q]: "1" -> gpt-5.5
-    # 4. Apply: [1] this run [2] make default [q]: "1" -> oneshot
-    
-    inputs = iter(["3", "5", "1", "1"])
+    # Provider order: 1=anthropic, 2=codex, 3=ollama
+    # inputs: tier=silver(3), provider=codex(2), model=1(gpt-5.5), scope=this run(1)
+    inputs = iter(["3", "2", "1", "1"])
     def input_fn(prompt):
         return next(inputs)
 
@@ -47,13 +30,12 @@ def test_run_interactive_codex_numbered():
 
     cfg = {"agents": {"silver": {"name": "haiku"}}}
     default_cfg = {"agents": {"silver": {"name": "sonnet"}}}
-    
-    # codex_models_fn=lambda: ["gpt-5.5","o3"]
+
     result = run_interactive(
         cfg, default_cfg, providers,
         input_fn=input_fn,
         output_fn=output_fn,
-        codex_models_fn=lambda: ["gpt-5.5", "o3"]
+        codex_models_fn=lambda: ["gpt-5.5", "o3"],
     )
 
     assert result["action"] == "oneshot"

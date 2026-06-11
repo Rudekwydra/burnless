@@ -59,12 +59,33 @@ def list_codex_models() -> list:
         return []
 
 
+def anthropic_models() -> list:
+    """Anthropic model ids: live from /v1/models when ANTHROPIC_API_KEY is set,
+    else a curated alias fallback. [] is never returned (always has the fallback)."""
+    import os
+    import json as _json
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if key:
+        try:
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as r:
+                data = _json.loads(r.read().decode("utf-8"))
+            ids = [m.get("id") for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
+            if ids:
+                return ids
+        except Exception:
+            pass
+    return ["opus", "fable", "sonnet", "haiku"]
+
+
 def detect_providers() -> dict:
     """Which provider backends are usable on this machine right now."""
     return {
         "anthropic": shutil.which("claude") is not None,
         "codex": shutil.which("codex") is not None,
-        "gemini": shutil.which("gemini") is not None,
         "ollama": _ollama_up(),
     }
 
@@ -107,29 +128,25 @@ def build_menu_view(cfg: dict, default_cfg: dict, providers: dict, session_overr
 
 
 def worker_menu_options(providers: dict) -> list:
-    """Pickable worker options with availability, given detected providers."""
-    opts = []
-    for model in ("fable", "opus", "sonnet", "haiku"):
-        opts.append({"provider": "anthropic", "model": model, "spec": f"anthropic:{model}",
-                     "available": bool(providers.get("anthropic")), "custom": False})
-    opts.append({"provider": "codex", "model": "(pick installed)", "spec": "codex:",
-                 "available": bool(providers.get("codex")), "custom": True})
-    opts.append({"provider": "gemini", "model": "gemini-2.5-pro", "spec": "gemini:gemini-2.5-pro",
-                 "available": bool(providers.get("gemini")), "custom": False})
-    opts.append({"provider": "ollama", "model": "(type a model)", "spec": "ollama:",
-                 "available": bool(providers.get("ollama")), "custom": True})
-    return opts
+    """One entry per provider; the model is chosen in a second step."""
+    return [
+        {"provider": "anthropic", "available": bool(providers.get("anthropic"))},
+        {"provider": "codex", "available": bool(providers.get("codex"))},
+        {"provider": "ollama", "available": bool(providers.get("ollama"))},
+    ]
 
 
 def run_interactive(cfg: dict, default_cfg: dict, providers: dict, *,
-                    input_fn=input, output_fn=print, persist_fn=None, ollama_models_fn=None, codex_models_fn=None) -> dict | None:
-    """Numbered picker: choose tier -> choose worker -> this-run vs make-default.
+                    input_fn=input, output_fn=print, persist_fn=None, ollama_models_fn=None, codex_models_fn=None, anthropic_models_fn=None) -> dict | None:
+    """Numbered picker: choose tier -> choose provider -> choose model -> this-run vs make-default.
     I/O is injected for testability. persist_fn(tier, spec) is called on make-default.
     Returns a dict describing the action, or None if cancelled."""
     if ollama_models_fn is None:
         ollama_models_fn = list_ollama_models
     if codex_models_fn is None:
         codex_models_fn = list_codex_models
+    if anthropic_models_fn is None:
+        anthropic_models_fn = anthropic_models
     output_fn(render_models_table(cfg, default_cfg))
     tiers = ["diamond", "gold", "silver", "bronze"]
     output_fn("\nPick a tier to change:")
@@ -143,37 +160,43 @@ def run_interactive(cfg: dict, default_cfg: dict, providers: dict, *,
     except (ValueError, IndexError):
         output_fn("invalid choice"); return None
     opts = worker_menu_options(providers)
-    output_fn(f"\nPick a worker for {tier}:")
+    output_fn(f"\nPick a provider for {tier}:")
     for i, o in enumerate(opts, 1):
         flag = "" if o["available"] else "  (not installed)"
-        output_fn(f"  {i}) {o['provider']}:{o['model']}{flag}")
-    raw = (input_fn(f"worker [1-{len(opts)}, q]: ") or "").strip().lower()
+        output_fn(f"  {i}) {o['provider']}{flag}")
+    raw = (input_fn(f"provider [1-{len(opts)}, q]: ") or "").strip().lower()
     if raw in ("q", ""):
         return None
     try:
-        chosen = opts[int(raw) - 1]
+        prov = opts[int(raw) - 1]["provider"]
     except (ValueError, IndexError):
         output_fn("invalid choice"); return None
-    spec = chosen["spec"]
-    if chosen["custom"]:
-        prov = chosen["provider"]
-        models = ollama_models_fn() if prov == "ollama" else codex_models_fn() if prov == "codex" else []
-        if models:
-            output_fn(f"\nAvailable {prov} models:")
-            for i, m in enumerate(models, 1):
-                output_fn(f"  {i}) {m}")
-            raw = (input_fn(f"model [1-{len(models)}, q]: ") or "").strip().lower()
-            if raw in ("q", ""):
-                return None
-            try:
-                model = models[int(raw) - 1]
-            except (ValueError, IndexError):
-                output_fn("invalid choice"); return None
-        else:
-            model = (input_fn(f"{prov} model name (none found): ") or "").strip()
-            if not model:
-                return None
-        spec = f"{prov}:{model}"
+    if prov == "ollama":
+        models = ollama_models_fn()
+    elif prov == "codex":
+        models = codex_models_fn()
+    elif prov == "anthropic":
+        models = anthropic_models_fn()
+    else:
+        models = []
+    output_fn(f"\n{prov} models:")
+    for i, m in enumerate(models, 1):
+        output_fn(f"  {i}) {m}")
+    type_idx = len(models) + 1
+    output_fn(f"  {type_idx}) (type a specific model id)")
+    raw = (input_fn(f"model [1-{type_idx}, q]: ") or "").strip().lower()
+    if raw in ("q", ""):
+        return None
+    if raw == str(type_idx):
+        model = (input_fn("model id: ") or "").strip()
+        if not model:
+            return None
+    else:
+        try:
+            model = models[int(raw) - 1]
+        except (ValueError, IndexError):
+            output_fn("invalid choice"); return None
+    spec = f"{prov}:{model}"
     scope = (input_fn("apply: [1] this run  [2] make default  [q]: ") or "").strip().lower()
     if scope == "2":
         if persist_fn:
