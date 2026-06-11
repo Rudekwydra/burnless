@@ -26,6 +26,8 @@ _PATH_RE = re.compile(
     r"\b"
 )
 
+_VERIFY_SECTION_RE = re.compile(r'^##+\s*Verify\b', re.IGNORECASE | re.MULTILINE)
+
 
 @dataclass
 class SpecValidation:
@@ -43,6 +45,29 @@ def validate_spec_paths(text: str) -> SpecValidation:
         seen.add(core)
         offending.append(core)
     return SpecValidation(ok=not offending, offending=offending)
+
+
+def verify_block_is_silent_noop(text: str) -> bool:
+    """True when a ## Verify section is present but yields no fenced commands,
+    so the honest-exit-code gate will silently no-op (footgun)."""
+    if not _VERIFY_SECTION_RE.search(text):
+        return False
+    from .delegation_parse import extract_verify_block
+    return not extract_verify_block(text)
+
+
+def format_verify_warning(lang: str = "pt-BR") -> str:
+    if lang.startswith("pt"):
+        return (
+            "\n[WARN] burnless: secao ## Verify presente mas SEM bloco de codigo cercado (```).\n"
+            "   extract_verify_block retorna [] -> o gate honest-exit-code NAO vai rodar.\n"
+            "   Cerque os comandos de verificacao em ```sh ... ``` para ativar o gate.\n"
+        )
+    return (
+        "\n[WARN] burnless: ## Verify section present but NO fenced code block (```).\n"
+        "   extract_verify_block returns [] -> the honest-exit-code gate will NOT run.\n"
+        "   Wrap the verify commands in ```sh ... ``` to enable the gate.\n"
+    )
 
 
 def format_rejection(v: SpecValidation, project_root: Path, lang: str = "pt-BR") -> str:
