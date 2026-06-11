@@ -222,7 +222,7 @@ if mode == "rollover":
                 rotation_marker.write_text(str(turns), encoding="utf-8")
             except OSError:
                 pass
-        rotation_msg = f"\n\n[BURNLESS ROTATION] ponto de rotacao atingido (turn {turns}). Capsule consolidada pronta para re-seed."
+        rotation_msg = f"\n\n[BURNLESS ROTATION] turn {turns}: rotation point. To actually reset context, open a fresh session (bash ~/antigravity/burnless/restart_rollover.sh) — auto-respawn not yet wired."
     else:
         # Remove marker if present and not at rotation point.
         try:
@@ -231,7 +231,7 @@ if mode == "rollover":
             pass
 
     context = (
-        f"[BURNLESS ROLLOVER] cycle={meta['cycle']} window={meta['limit']} turns={meta['turns']}\n"
+        f"[BURNLESS ROLLOVER] (experimental: rolling focus; does NOT reduce native context until the session-respawn consumer lands) cycle={meta['cycle']} window={meta['limit']} turns={meta['turns']}\n"
         f"Use the capsule below as the working state. Prefer it over older transcript details.\n\n"
         f"{capsule}"
         f"{rotation_msg}"
