@@ -147,6 +147,19 @@ try:
             arg = raw[1].strip()
         arg = arg.replace("__BURNLESS_MODE_CMD__", "").strip()
         chosen = "".join(ch for ch in arg.lower() if ch.isalpha())
+        if chosen in {"menu", "models"}:
+            import subprocess
+            try:
+                _out = subprocess.run(["burnless", "menu"], capture_output=True, text=True, timeout=10).stdout
+            except Exception as _e:
+                _out = f"(burnless menu unavailable: {_e})"
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": "Burnless config (show this table verbatim to the user, do nothing else):\n\n" + _out,
+                }
+            }, ensure_ascii=False))
+            raise SystemExit(0)
         if chosen in {"on", "partner", "off", "rollover"}:
             write_mode(chosen)
             print(json.dumps({
@@ -165,7 +178,7 @@ try:
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
-                "additionalContext": f"Show the Burnless mode menu: /burnless on|partner|rollover|off. Current: {current}.",
+                "additionalContext": f"Show the Burnless mode menu: /burnless on|partner|rollover|off|menu. Current: {current}.",
             }
         }, ensure_ascii=False))
         raise SystemExit(0)
