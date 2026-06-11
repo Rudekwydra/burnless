@@ -302,6 +302,18 @@ def _apply_verify_gate(
     summary["validated"] = validated
     return summary
 
+def _verify_badge(summary: dict) -> str:
+    """Distinguish a runner-verified OK from a worker-claimed OK using the
+    deterministic 'verify: N/N checks passed' marker in summary['validated']."""
+    if str(summary.get("status") or "").upper() != "OK":
+        return ""
+    import re as _re
+    for item in (summary.get("validated") or []):
+        m = _re.search(r"verify:\s*(\d+)\s*/\s*(\d+)\s*checks passed", str(item))
+        if m:
+            return f"✓ runner-verified ({m.group(1)}/{m.group(2)})"
+    return "⚠ unverified — no ## Verify gate ran (worker-claimed OK)"
+
 def execute_delegation(opts: RunOpts, root=None) -> int:
     root = root or paths_mod.require_root()
     p = paths_mod.paths_for(root)
@@ -885,6 +897,9 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                 feedback = str(summary.get("next") or "").strip()
                 if feedback:
                     head = f"{head}\nReason: {feedback[:180]}"
+            _badge = _verify_badge(summary)
+            if _badge:
+                head = f"{head}\n{_badge}"
         print(head)
 
         # Savings footer: display token counts and cost breakdown
