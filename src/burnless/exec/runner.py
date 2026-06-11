@@ -440,6 +440,17 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
             print(f"CachedWorker failed ({e}); falling back to subprocess.", file=sys.stderr)
 
     if result is None:
+        from ..ollama_worker import is_ollama_tools_agent as _is_ollama_agent
+        if _is_ollama_agent(selected_agent_cfg):
+            # Ollama tool-workers have no CLI command, so the live-panel runner
+            # cannot drive them. Use the plain agent runner (it dispatches the
+            # ollama HTTP tool loop). Avoids a noisy AgentError + false escalation.
+            if sys.stdout.isatty() or opts.verbose:
+                print(f"Running {did} with {tier}/{selected_agent_cfg['name']}...")
+            result = agents_mod.run(selected_agent_cfg, prompt, timeout=opts.timeout, cwd=root.parent)
+            deleg_mod.write_log(log_path, result)
+
+    if result is None:
         try:
             result_obj = live_runner.run_with_overflow_retries(
                 delegation_id=did,
