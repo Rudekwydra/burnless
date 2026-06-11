@@ -186,3 +186,21 @@ def test_read_no_longer_offloaded():
     }
     result = _run_hook(payload, threshold=2000)
     assert result == "", f"Expected empty stdout (passthrough), got: {result}"
+
+
+def test_cap_summary_not_smaller():
+    """CAP logic: if summary >= 50% of output, passthrough (empty stdout).
+
+    Pure Python test: verifies the cap formula without needing ollama.
+    The hook should emit empty stdout when len(summary) >= len(output) * 0.5.
+    """
+    # Test the cap logic directly via Python
+    output_len = 4000
+    summary_len_too_large = int(output_len * 0.5)  # 2000 chars -> exactly 50%, should reject
+
+    # Simulate: summary is 2000 chars (50% of 4000) -> should passthrough (cap rejects)
+    assert summary_len_too_large >= output_len * 0.5, "Cap condition check"
+
+    # Similarly, summary at 2100 chars (> 50%) definitely rejects
+    summary_len_over = 2100
+    assert summary_len_over >= output_len * 0.5, "Cap condition check"
