@@ -718,7 +718,8 @@ def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | N
         model = agent_cfg.get("model") or agent_cfg.get("name") or "llama3.1"
         sysp = ""
         env = run_ollama_tools(
-            model, prompt, cwd=str(cwd) if cwd else None, system_prompt=sysp, timeout=timeout
+            model, prompt, cwd=str(cwd) if cwd else None, system_prompt=sysp, timeout=timeout,
+            shell_timeout=int(agent_cfg.get("shell_timeout_s", 600))
         )
         import json as _json
         rc = 0 if env.get("status") == "OK" else 1

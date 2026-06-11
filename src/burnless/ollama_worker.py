@@ -74,6 +74,7 @@ def run_ollama_tools(
     system_prompt: str = "",
     timeout: int = 300,
     max_iters: int = 25,
+    shell_timeout: int = 600,
     host: str = "http://localhost:11434",
 ) -> dict:
     """Run the agentic tool-calling loop against a local ollama model; return worker envelope dict."""
@@ -104,11 +105,11 @@ def run_ollama_tools(
                 cwd=effective_cwd,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=shell_timeout,
             )
             return f"rc={r.returncode}\nSTDOUT:\n{r.stdout[:4000]}\nSTDERR:\n{r.stderr[:2000]}"
         except subprocess.TimeoutExpired:
-            return "rc=124\nSTDOUT:\n\nSTDERR:\ntimeout after 120s"
+            return f"rc=124\nSTDOUT:\n\nSTDERR:\ntimeout after {shell_timeout}s"
         except Exception as e:
             return f"rc=-1\nSTDOUT:\n\nSTDERR:\n{e}"
 
