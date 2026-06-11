@@ -80,7 +80,7 @@ def build_menu_view(cfg: dict, default_cfg: dict, providers: dict, session_overr
 def worker_menu_options(providers: dict) -> list:
     """Pickable worker options with availability, given detected providers."""
     opts = []
-    for model in ("opus", "sonnet", "haiku"):
+    for model in ("fable", "opus", "sonnet", "haiku"):
         opts.append({"provider": "anthropic", "model": model, "spec": f"anthropic:{model}",
                      "available": bool(providers.get("anthropic")), "custom": False})
     opts.append({"provider": "codex", "model": "gpt-5.2", "spec": "codex:gpt-5.2",
