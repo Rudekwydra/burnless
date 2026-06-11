@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import stat
 import sys
@@ -12,6 +13,7 @@ _MANAGED = [
     ("agents/burnless-planner.md",   ".claude/agents/burnless-planner.md"),
     ("agents/burnless-worker.md",    ".claude/agents/burnless-worker.md"),
     ("hooks/burnless_compact_haiku.sh", ".claude/hooks/burnless_compact_haiku.sh"),
+    ("scripts/burnless_mode_hook.sh", ".claude/scripts/burnless_mode_hook.sh"),
 ]
 
 _NEXT_STEPS = """\
@@ -19,8 +21,9 @@ Next steps (opt-in, manual):
   1. Test agent: claude --agent burnless-planner "smoke test"
   2. To make burnless-planner the DEFAULT agent for all new sessions:
      edit ~/.claude/settings.json and add "agent": "burnless-planner"
-  3. To enable layer-1 haiku compactor: touch ~/.burnless/compactor_enabled
-     and add the hook entry in settings.json hooks.UserPromptSubmit
+  3. To enable the Claude Code engagement hook:
+     add the hook entry in settings.json hooks.UserPromptSubmit
+     and use /burnless off|partner|on|rollover in-session
 """
 
 
@@ -41,6 +44,36 @@ def _resolve_templates_dir() -> Path | None:
     except Exception:
         pass
     return None
+
+
+def wire_settings_hook(home: Path) -> str:
+    try:
+        settings_path = home / ".claude" / "settings.json"
+        if settings_path.exists():
+            data = json.load(open(settings_path))
+        else:
+            data = {}
+        hooks = data.setdefault("hooks", {})
+        ups = hooks.setdefault("UserPromptSubmit", [])
+        CMD = "bash ~/.claude/scripts/burnless_mode_hook.sh"
+        already = any(
+            CMD in h.get("command", "")
+            for grp in ups
+            for h in grp.get("hooks", [])
+        )
+        if already:
+            return "already-wired"
+        ups.append({"hooks": [{"type": "command", "command": CMD, "timeout": 3}]})
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        if settings_path.exists():
+            bak_path = settings_path.parent / (settings_path.name + ".bak-burnless")
+            shutil.copy2(settings_path, bak_path)
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        return "wired"
+    except Exception as e:
+        return f"skip:{e}"
 
 
 def run(args: argparse.Namespace) -> int:
@@ -109,6 +142,9 @@ def run(args: argparse.Namespace) -> int:
         print(f"\nburnless init --claude-code: {len(results)} file(s) processed")
         for action, path in non_skipped:
             print(f"  {action}: {path}")
+        if not getattr(args, "no_wire", False):
+            status = wire_settings_hook(home)
+            print(f"  hook wiring: {status}")
         print()
         print(_NEXT_STEPS, end="")
 

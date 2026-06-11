@@ -240,15 +240,16 @@ The assistant plans and delegates; Workers execute via your configured tiers. To
 
 > **Honest caveat:** the protocol layer (capsules, delegation, plugins, audit) is stable. The interactive `burnless` chat shell still changes between minor versions. If something feels rough, that's where contributions are most welcome.
 
-### Engagement modes — `off` / `partner` / `on`
+### Engagement modes — `off` / `partner` / `on` / `rollover`
 
-How much Burnless takes over your assistant is a **per-session choice**, not all-or-nothing. The reference integration for Claude Code ships a `/burnless` slash command (`.claude/commands/burnless.md`) plus a `UserPromptSubmit` hook that resolves the active mode and shapes the assistant's behavior. Three modes:
+How much Burnless takes over your assistant is a **per-session choice**, not all-or-nothing. The reference integration for Claude Code ships a `/burnless` slash command (`.claude/commands/burnless.md`) plus a `UserPromptSubmit` hook that resolves the active mode and shapes the assistant's behavior. Four modes:
 
 | Mode | What the assistant does | Use when |
 |------|-------------------------|----------|
 | **off** | Raw chat. The hook is a no-op, zero Burnless involvement. | You just want the model. |
 | **partner** | The assistant keeps full reasoning and conversation, and **delegates execution** to Burnless tiers (`burnless do/delegate`) where it makes sense. No role injection — it stays itself, with Burnless as its execution boundary. | Day-to-day work where you want both judgment and cheap, audited execution. |
 | **on** | The assistant is pinned to the **Maestro** role: it compresses intent and *only* delegates — it does not write code, edit disk, or plan deeply itself. Everything goes through `burnless do`; it reads only the compact capsule, never the raw log. | Long autonomous burn-downs where you want maximal cost discipline. |
+| **rollover** | Experimental native-chat mode. The hook keeps the chat looking normal, but injects a rolling capsule derived from the transcript path on every turn. | You want the Claude terminal UX to stay native while memory stays compact. |
 
 Switch at any time:
 
@@ -256,12 +257,13 @@ Switch at any time:
 /burnless off       # raw chat
 /burnless partner   # assistant + Burnless execution boundary
 /burnless on        # assistant pinned to Maestro (delegate-only)
+/burnless rollover  # native chat with rolling capsule injection
 /burnless           # show the menu + current mode
 ```
 
 The choice is stored per session (`~/.burnless/state/session-<id>.mode`) and takes effect from the next turn. Precedence: the env var `BURNLESS_OFF=1` overrides everything → per-session file → a global `~/.burnless/state/global.on` → default **off**. To start raw from the very first token in a terminal, launch with `claude-off [haiku|opus]` instead of toggling mid-session.
 
-> **What ships vs. what you wire:** the `/burnless` slash command ships in `.claude/commands/`. The mode-resolving `UserPromptSubmit` hook is Claude-Code-specific glue — see [`docs/USING_BURNLESS_FROM_YOUR_LLM.md`](docs/USING_BURNLESS_FROM_YOUR_LLM.md) for the hook and how to register it in your `settings.json`. Without the hook installed, `off`/`partner`/`on` are a documented convention your assistant can follow manually, not an enforced switch. Burnless does not require any of this — `burnless do/delegate/run` work from any assistant or plain shell.
+> **What ships vs. what you wire:** the `/burnless` slash command ships in `.claude/commands/`. The mode-resolving `UserPromptSubmit` hook is Claude-Code-specific glue — see [`docs/USING_BURNLESS_FROM_YOUR_LLM.md`](docs/USING_BURNLESS_FROM_YOUR_LLM.md) for the hook and how to register it in your `settings.json`. Without the hook installed, `off`/`partner`/`on`/`rollover` are a documented convention your assistant can follow manually, not an enforced switch. Burnless does not require any of this — `burnless do/delegate/run` work from any assistant or plain shell.
 
 ## Plugin example: local compression filter
 
