@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Burnless Claude Code SessionStart hook.
-# Reads stdin JSON, finds most recent rollover capsule, emits seed JSON.
+# Reads stdin JSON, checks pending_seed.md pointer, emits seed JSON if fresh.
 # FAIL-OPEN on all errors; emits nothing on failure.
 set -uo pipefail
 
-INPUT="$(cat)"
+INPUT="$(cat)" 2>/dev/null || exit 0
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-STATE_DIR="$HOME/.burnless/state"
+POINTER_FILE="$HOME/.burnless/state/pending_seed.md"
 
-# Parse input JSON defensively and emit seed if capsule exists.
-INPUT_JSON="$INPUT" "$PYTHON_BIN" - <<'PY'
+# Check pointer, staleness, and emit seed if valid.
+INPUT_JSON="$INPUT" POINTER_FILE="$POINTER_FILE" "$PYTHON_BIN" - <<'PY'
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -20,51 +21,56 @@ try:
 except json.JSONDecodeError:
     sys.exit(0)
 
-state_dir = Path(os.path.expanduser("~")) / ".burnless" / "state"
+pointer_file = os.environ.get("POINTER_FILE", "")
+if not pointer_file:
+    sys.exit(0)
 
-# Find most recent consolidated rollover capsule.
-consolidated = state_dir / "rollover-consolidated.md"
-capsule_file = None
-capsule_content = ""
+p = Path(pointer_file)
 
-if consolidated.exists():
-    try:
-        capsule_content = consolidated.read_text(encoding="utf-8")
-        if capsule_content.strip():
-            capsule_file = consolidated
-    except OSError:
-        pass
+# If pointer doesn't exist, emit nothing.
+if not p.exists():
+    sys.exit(0)
 
-# If consolidated doesn't exist or is empty, find newest session-*.rollover.md
-if not capsule_file:
-    try:
-        candidates = list(state_dir.glob("session-*.rollover.md"))
-        if candidates:
-            newest = max(candidates, key=lambda p: p.stat().st_mtime)
-            try:
-                content = newest.read_text(encoding="utf-8")
-                if content.strip():
-                    capsule_file = newest
-                    capsule_content = content
-            except OSError:
-                pass
-    except (OSError, ValueError):
-        pass
-
-# If we have a capsule, emit JSON with seed message prepended.
-if capsule_file and capsule_content.strip():
-    try:
-        seed_msg = "[BURNLESS SEED] sessao iniciada leve a partir da capsule rolante.\n\n"
-        final_content = seed_msg + capsule_content
-        output = json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": final_content,
-            }
-        }, ensure_ascii=False)
-        print(output)
-    except Exception:
+# Check staleness: if mtime > 24h (86400s), remove and exit.
+try:
+    mtime = os.path.getmtime(str(p))
+    now = time.time()
+    age_secs = now - mtime
+    if age_secs > 86400:
+        try:
+            p.unlink()
+        except OSError:
+            pass
         sys.exit(0)
-else:
+except (OSError, ValueError):
+    sys.exit(0)
+
+# If pointer exists and is fresh, read content.
+try:
+    content = p.read_text(encoding="utf-8").strip()
+except OSError:
+    sys.exit(0)
+
+# If empty, emit nothing.
+if not content:
+    sys.exit(0)
+
+# Emit seed JSON with prefix, capped at ~4000 chars.
+try:
+    seed_msg = "[BURNLESS SEED] sessao iniciada leve a partir da capsule rolante.\n\n"
+    final_content = seed_msg + content
+
+    # Cap at ~4000 chars.
+    if len(final_content) > 4000:
+        final_content = final_content[:3950] + "\n…[truncated]"
+
+    output = json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": final_content,
+        }
+    }, ensure_ascii=False)
+    print(output)
+except Exception:
     sys.exit(0)
 PY

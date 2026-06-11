@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -25,10 +26,12 @@ def _run_seed_hook(home: Path, payload: dict) -> str:
     return proc.stdout
 
 
-def test_session_seed_hook_no_capsule(tmp_path):
-    """Test: no capsule on disk -> hook emits nothing."""
+def test_session_seed_hook_no_pointer(tmp_path):
+    """Test: no pending_seed.md pointer -> hook emits nothing."""
     home = tmp_path / "home"
     home.mkdir()
+    state_dir = home / ".burnless" / "state"
+    state_dir.mkdir(parents=True)
 
     stdout = _run_seed_hook(
         home,
@@ -39,21 +42,20 @@ def test_session_seed_hook_no_capsule(tmp_path):
         },
     )
 
-    # Empty stdout means FAIL-OPEN (no capsule found).
+    # Empty stdout means FAIL-OPEN (no pointer found).
     assert stdout.strip() == ""
 
 
-def test_session_seed_hook_with_consolidated_capsule(tmp_path):
-    """Test: consolidated rollover capsule exists -> hook emits JSON with seed message."""
+def test_session_seed_hook_fresh_pointer(tmp_path):
+    """Test: fresh pending_seed.md pointer -> hook emits JSON with content."""
     home = tmp_path / "home"
     home.mkdir()
     state_dir = home / ".burnless" / "state"
     state_dir.mkdir(parents=True)
 
-    # Write a fake consolidated capsule.
-    capsule_file = state_dir / "rollover-consolidated.md"
-    capsule_content = "ESTADO X\nPedido: test\nResposta: ok"
-    capsule_file.write_text(capsule_content, encoding="utf-8")
+    # Write pending_seed.md with fresh mtime.
+    pointer_file = state_dir / "pending_seed.md"
+    pointer_file.write_text("ESTADO X\nPedido: test", encoding="utf-8")
 
     stdout = _run_seed_hook(
         home,
@@ -74,17 +76,20 @@ def test_session_seed_hook_with_consolidated_capsule(tmp_path):
     assert "ESTADO X" in ctx
 
 
-def test_session_seed_hook_with_session_rollover_capsule(tmp_path):
-    """Test: session-*.rollover.md exists -> hook finds and emits it."""
+def test_session_seed_hook_stale_pointer(tmp_path):
+    """Test: stale pending_seed.md (>24h old) -> hook emits nothing and removes file."""
     home = tmp_path / "home"
     home.mkdir()
     state_dir = home / ".burnless" / "state"
     state_dir.mkdir(parents=True)
 
-    # Write a fake session rollover capsule.
-    capsule_file = state_dir / "session-sess-test.rollover.md"
-    capsule_content = "Pedido anterior: tarefa 1\nResposta: completo"
-    capsule_file.write_text(capsule_content, encoding="utf-8")
+    # Write pending_seed.md with stale mtime (2 days ago).
+    pointer_file = state_dir / "pending_seed.md"
+    pointer_file.write_text("STALE ESTADO", encoding="utf-8")
+
+    # Set mtime to 2 days ago.
+    two_days_ago = time.time() - (2 * 86400)
+    os.utime(str(pointer_file), (two_days_ago, two_days_ago))
 
     stdout = _run_seed_hook(
         home,
@@ -95,42 +100,8 @@ def test_session_seed_hook_with_session_rollover_capsule(tmp_path):
         },
     )
 
-    assert stdout.strip(), "Expected JSON output"
-    output = json.loads(stdout)
-    ctx = output["hookSpecificOutput"]["additionalContext"]
+    # Should emit nothing.
+    assert stdout.strip() == ""
 
-    # Check seed message and content are present.
-    assert "[BURNLESS SEED]" in ctx
-    assert "Pedido anterior: tarefa 1" in ctx
-
-
-def test_session_seed_hook_prefers_consolidated(tmp_path):
-    """Test: consolidated exists and is non-empty -> prefer it over session-*.rollover.md."""
-    home = tmp_path / "home"
-    home.mkdir()
-    state_dir = home / ".burnless" / "state"
-    state_dir.mkdir(parents=True)
-
-    # Write both consolidated and session rollover.
-    consolidated = state_dir / "rollover-consolidated.md"
-    consolidated.write_text("CONSOLIDATED ESTADO", encoding="utf-8")
-
-    session_rollover = state_dir / "session-sess-test.rollover.md"
-    session_rollover.write_text("SESSION ESTADO", encoding="utf-8")
-
-    stdout = _run_seed_hook(
-        home,
-        {
-            "session_id": "sess-test",
-            "cwd": str(tmp_path),
-            "source": "direct",
-        },
-    )
-
-    assert stdout.strip(), "Expected JSON output"
-    output = json.loads(stdout)
-    ctx = output["hookSpecificOutput"]["additionalContext"]
-
-    # Should use consolidated, not session rollover.
-    assert "CONSOLIDATED ESTADO" in ctx
-    assert "SESSION ESTADO" not in ctx
+    # File should be removed.
+    assert not pointer_file.exists(), "Stale pointer file should be removed"
