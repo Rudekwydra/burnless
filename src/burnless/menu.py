@@ -64,3 +64,14 @@ def render_models_table(cfg: dict, default_cfg: dict, session_overrides: dict | 
         marker = source_marker(tier, cfg, default_cfg, session_overrides)
         lines.append(f"{tier:<9}{prov:<16}{model:<28}{marker}")
     return "\n".join(lines)
+
+
+def build_menu_view(cfg: dict, default_cfg: dict, providers: dict, session_overrides: dict | None = None) -> str:
+    """Full non-interactive menu text: table + provider status + change hints."""
+    table = render_models_table(cfg, default_cfg, session_overrides)
+    prov = "  ".join(f"{name} {'OK' if ok else 'x'}" for name, ok in providers.items())
+    hints = (
+        "change for one run : burnless do --<tier> provider:model   (e.g. --silver ollama:gemma4-e4b)\n"
+        "persist as default : burnless models set <tier> provider:model --default"
+    )
+    return f"burnless . models\n\n{table}\n\nproviders: {prov}\n\n{hints}"

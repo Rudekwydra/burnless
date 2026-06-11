@@ -519,6 +519,16 @@ def cmd_models(args: argparse.Namespace) -> int:
         return 0
 
 
+def cmd_menu(args: argparse.Namespace) -> int:
+    from . import menu as menu_mod
+    from .config import DEFAULT_CONFIG
+    root = paths_mod.require_root()
+    cfg = config_mod.load(paths_mod.paths_for(root)["config"])
+    providers = menu_mod.detect_providers()
+    print(menu_mod.build_menu_view(cfg, DEFAULT_CONFIG, providers))
+    return 0
+
+
 def cmd_decisions_list(args: argparse.Namespace) -> int:
     entries = agents_mod.list_decisions()
     if getattr(args, "json", False):
@@ -1693,6 +1703,9 @@ def build_parser() -> argparse.ArgumentParser:
     msp.add_argument("spec", help="provider:model, e.g. ollama:gemma4-e4b or sonnet")
     msp.add_argument("--default", dest="make_default", action="store_true", help="persist as the new global default")
     msp.set_defaults(func=cmd_models)
+
+    sp = sub.add_parser("menu", help="show the tier->worker config view (table + providers + hints)")
+    sp.set_defaults(func=cmd_menu)
 
     sp = sub.add_parser("provider", help="inspect or reset multi-provider health stats")
     provider_sub = sp.add_subparsers(dest="provider_cmd")
