@@ -108,6 +108,7 @@ def render_models_table(cfg: dict, default_cfg: dict, session_overrides: dict | 
     for tier in ("diamond", "gold", "silver", "bronze"):
         a = agents.get(tier)
         if not a:
+            lines.append(f"{tier:<9}{'-':<16}{'(not set)':<28}")
             continue
         prov = provider_of(a)
         model = a.get("name", "?")
