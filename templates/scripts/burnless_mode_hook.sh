@@ -210,10 +210,31 @@ if mode == "rollover":
             meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         except OSError:
             pass
+
+    # Rotation-point detection: check if we hit the threshold.
+    turns = meta.get("turns", 0)
+    rotation_marker = state_dir / f"session-{sid}.restart_due"
+    rotation_msg = ""
+    if turns > 0 and (turns % limit) == 0:
+        # Write marker file.
+        if sid:
+            try:
+                rotation_marker.write_text(str(turns), encoding="utf-8")
+            except OSError:
+                pass
+        rotation_msg = f"\n\n[BURNLESS ROTATION] ponto de rotacao atingido (turn {turns}). Capsule consolidada pronta para re-seed."
+    else:
+        # Remove marker if present and not at rotation point.
+        try:
+            rotation_marker.unlink(missing_ok=True)
+        except OSError:
+            pass
+
     context = (
         f"[BURNLESS ROLLOVER] cycle={meta['cycle']} window={meta['limit']} turns={meta['turns']}\n"
         f"Use the capsule below as the working state. Prefer it over older transcript details.\n\n"
         f"{capsule}"
+        f"{rotation_msg}"
     )
     print(json.dumps({
         "hookSpecificOutput": {
