@@ -111,8 +111,8 @@ try:
     payload = json.loads(os.environ["INPUT_JSON"])
     tool_name = payload.get("tool_name", "").strip()
 
-    # Only process these tools
-    if tool_name not in {"Read", "Bash", "Grep", "Glob"}:
+    # P0(d579): only Bash — offloading Read/Grep breaks Read->Edit and precise line refs
+    if tool_name not in {"Bash"}:
         sys.exit(0)
 
     output = extract_output(payload)
