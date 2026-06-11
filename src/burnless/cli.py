@@ -1129,6 +1129,11 @@ def cmd_maestro(args: argparse.Namespace) -> int:
     return 0
 
 
+def _worker_overrides_from_args(args) -> dict:
+    """Collect per-call tier worker overrides from --diamond/--gold/--silver/--bronze."""
+    return {t: getattr(args, t) for t in ("diamond", "gold", "silver", "bronze") if getattr(args, t, None)}
+
+
 def cmd_do(args: argparse.Namespace) -> int:
     """Atomic delegate + run in a single command. Equivalent to `burnless do "prompt"`."""
     root = paths_mod.require_root()
@@ -1167,6 +1172,17 @@ def cmd_do(args: argparse.Namespace) -> int:
             cfg.setdefault("compression", {})["mode"] = _mode_override
             config_mod.save(p["config"], cfg)
             _config_patched = True
+
+    # Per-call worker overrides (--diamond/--gold/--silver/--bronze PROVIDER:MODEL),
+    # temp-patched into the project config and restored in the finally below.
+    _worker_overrides = _worker_overrides_from_args(args)
+    if _worker_overrides:
+        if _orig_config_text is None:
+            _orig_config_text = p["config"].read_text(encoding="utf-8")
+        _cfg_w = config_mod.load(p["config"])
+        _cfg_w = config_mod.apply_worker_overrides(_cfg_w, _worker_overrides)
+        config_mod.save(p["config"], _cfg_w)
+        _config_patched = True
 
     run_args = argparse.Namespace(
         id=did,
@@ -1858,6 +1874,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="allow_relative_paths",
         help="skip the absolute-path guard (workers run in isolated cwd; relative paths may fail)",
     )
+    for _t in ("diamond", "gold", "silver", "bronze"):
+        sp.add_argument(
+            f"--{_t}",
+            default=None,
+            metavar="PROVIDER:MODEL",
+            help=f"override the {_t} worker for this run only (e.g. --{_t} ollama:gemma4-e4b). Pair with --tier {_t} to also force routing.",
+        )
     sp.set_defaults(func=cmd_do)
 
     sp = sub.add_parser(
