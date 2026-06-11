@@ -14,6 +14,8 @@ _MANAGED = [
     ("agents/burnless-worker.md",    ".claude/agents/burnless-worker.md"),
     ("hooks/burnless_compact_haiku.sh", ".claude/hooks/burnless_compact_haiku.sh"),
     ("scripts/burnless_mode_hook.sh", ".claude/scripts/burnless_mode_hook.sh"),
+    ("scripts/burnless_session_seed.sh", ".claude/scripts/burnless_session_seed.sh"),
+    ("scripts/burnless_offload_hook.sh", ".claude/scripts/burnless_offload_hook.sh"),
 ]
 
 _NEXT_STEPS = """\
@@ -76,6 +78,52 @@ def wire_settings_hook(home: Path) -> str:
         return f"skip:{e}"
 
 
+def unwire_settings_hook(home: Path) -> str:
+    try:
+        settings_path = home / ".claude" / "settings.json"
+        if not settings_path.exists():
+            return "not-wired"
+
+        data = json.load(open(settings_path))
+        hooks = data.setdefault("hooks", {})
+        ups = hooks.setdefault("UserPromptSubmit", [])
+
+        original_len = len(ups)
+        new_ups = []
+        changed = False
+
+        for grp in ups:
+            new_hooks = []
+            for h in grp.get("hooks", []):
+                if "burnless_mode_hook.sh" not in h.get("command", ""):
+                    new_hooks.append(h)
+                else:
+                    changed = True
+            
+            if new_hooks:
+                grp["hooks"] = new_hooks
+                new_ups.append(grp)
+
+        if not changed:
+            return "not-wired"
+
+        ups[:] = new_ups
+        # Drop now-empty hook groups (where hooks list is empty or group itself is empty)
+        ups = [grp for grp in ups if grp.get("hooks")]
+
+        if settings_path.exists():
+            bak_path = settings_path.parent / (settings_path.name + ".bak-burnless")
+            shutil.copy2(settings_path, bak_path)
+
+        with open(settings_path, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+
+        return "unwired"
+    except Exception as e:
+        return f"skip:{e}"
+
+
 def run(args: argparse.Namespace) -> int:
     home = Path.home()
     templates_dir = _resolve_templates_dir()
@@ -90,6 +138,9 @@ def run(args: argparse.Namespace) -> int:
                 print(f"  removed: {tilde_dst}")
             else:
                 print(f"  not present: {tilde_dst}")
+        
+        status = unwire_settings_hook(home)
+        print(f"  hook unwiring: {status}")
         return 0
 
     if templates_dir is None:
