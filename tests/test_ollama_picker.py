@@ -35,8 +35,8 @@ class TestOllamaNumberedPicker:
         assert result is not None
         assert result["action"] == "oneshot"
         assert result["spec"] == "ollama:hf.co/unsloth/gemma-4-12b-it-GGUF:Q4_K_M"
-        # Verify model list was printed
-        assert any("Installed ollama models:" in str(o) for o in outputs)
+        # Verify model list was printed (updated to reflect new prompt)
+        assert any("Available ollama models:" in str(o) for o in outputs)
 
     def test_empty_list_fallback(self):
         """When ollama has no models, fallback to typing model name."""
