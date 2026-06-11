@@ -41,6 +41,34 @@ def list_ollama_models(host: str = "http://localhost:11434") -> list:
         return []
 
 
+def list_codex_models(config_path: str = "") -> list:
+    """Codex models known on this machine, read from ~/.codex/config.toml:
+    the configured `model` plus keys under [tui.model_availability_nux]. [] on failure."""
+    import os
+    from pathlib import Path
+    try:
+        import tomllib
+    except Exception:
+        return []
+    try:
+        p = Path(config_path) if config_path else Path.home() / ".codex" / "config.toml"
+        if not p.exists():
+            return []
+        data = tomllib.loads(p.read_text(encoding="utf-8"))
+        models = []
+        m = data.get("model")
+        if isinstance(m, str) and m:
+            models.append(m)
+        nux = data.get("tui", {}).get("model_availability_nux", {})
+        if isinstance(nux, dict):
+            for k in nux.keys():
+                if k not in models:
+                    models.append(k)
+        return models
+    except Exception:
+        return []
+
+
 def detect_providers() -> dict:
     """Which provider backends are usable on this machine right now."""
     return {
@@ -94,8 +122,8 @@ def worker_menu_options(providers: dict) -> list:
     for model in ("fable", "opus", "sonnet", "haiku"):
         opts.append({"provider": "anthropic", "model": model, "spec": f"anthropic:{model}",
                      "available": bool(providers.get("anthropic")), "custom": False})
-    opts.append({"provider": "codex", "model": "gpt-5.2", "spec": "codex:gpt-5.2",
-                 "available": bool(providers.get("codex")), "custom": False})
+    opts.append({"provider": "codex", "model": "(pick installed)", "spec": "codex:",
+                 "available": bool(providers.get("codex")), "custom": True})
     opts.append({"provider": "gemini", "model": "gemini-2.5-pro", "spec": "gemini:gemini-2.5-pro",
                  "available": bool(providers.get("gemini")), "custom": False})
     opts.append({"provider": "ollama", "model": "(type a model)", "spec": "ollama:",
@@ -104,12 +132,14 @@ def worker_menu_options(providers: dict) -> list:
 
 
 def run_interactive(cfg: dict, default_cfg: dict, providers: dict, *,
-                    input_fn=input, output_fn=print, persist_fn=None, ollama_models_fn=None) -> dict | None:
+                    input_fn=input, output_fn=print, persist_fn=None, ollama_models_fn=None, codex_models_fn=None) -> dict | None:
     """Numbered picker: choose tier -> choose worker -> this-run vs make-default.
     I/O is injected for testability. persist_fn(tier, spec) is called on make-default.
     Returns a dict describing the action, or None if cancelled."""
     if ollama_models_fn is None:
         ollama_models_fn = list_ollama_models
+    if codex_models_fn is None:
+        codex_models_fn = list_codex_models
     output_fn(render_models_table(cfg, default_cfg))
     tiers = ["diamond", "gold", "silver", "bronze"]
     output_fn("\nPick a tier to change:")
@@ -136,9 +166,10 @@ def run_interactive(cfg: dict, default_cfg: dict, providers: dict, *,
         output_fn("invalid choice"); return None
     spec = chosen["spec"]
     if chosen["custom"]:
-        models = ollama_models_fn()
+        prov = chosen["provider"]
+        models = ollama_models_fn() if prov == "ollama" else codex_models_fn() if prov == "codex" else []
         if models:
-            output_fn("\nInstalled ollama models:")
+            output_fn(f"\nAvailable {prov} models:")
             for i, m in enumerate(models, 1):
                 output_fn(f"  {i}) {m}")
             raw = (input_fn(f"model [1-{len(models)}, q]: ") or "").strip().lower()
@@ -149,10 +180,10 @@ def run_interactive(cfg: dict, default_cfg: dict, providers: dict, *,
             except (ValueError, IndexError):
                 output_fn("invalid choice"); return None
         else:
-            model = (input_fn("ollama model name (none installed found): ") or "").strip()
+            model = (input_fn(f"{prov} model name (none found): ") or "").strip()
             if not model:
                 return None
-        spec = "ollama:" + model
+        spec = f"{prov}:{model}"
     scope = (input_fn("apply: [1] this run  [2] make default  [q]: ") or "").strip().lower()
     if scope == "2":
         if persist_fn:
