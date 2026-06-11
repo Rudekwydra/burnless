@@ -481,6 +481,44 @@ def cmd_provider_reset(args: argparse.Namespace) -> int:
     return cmd_providers_reset(args)
 
 
+def cmd_models(args: argparse.Namespace) -> int:
+    """View resolved tier→worker table or set a tier worker as the new global default."""
+    import yaml
+
+    if getattr(args, "models_action", None) != "set":
+        # VIEW mode: print tier→worker mapping
+        root = paths_mod.require_root()
+        cfg = config_mod.load(paths_mod.paths_for(root)["config"])
+        print("tier      provider        model            source")
+        for tier in ("diamond", "gold", "silver", "bronze"):
+            if tier in cfg.get("agents", {}):
+                a = cfg["agents"][tier]
+                name = a.get("name", "?")
+                prov = a.get("provider", "anthropic")
+                default_name = config_mod.DEFAULT_CONFIG.get("agents", {}).get(tier, {}).get("name")
+                marker = "(default)" if name == default_name else "(custom)"
+                print(f"{tier:<9} {prov:<15} {name:<16} {marker}")
+        return 0
+
+    # SET mode: parse spec, build agent, optionally persist
+    provider, model = config_mod.parse_worker_spec(args.spec)
+    agent = config_mod.build_worker_agent(provider, model)
+
+    if getattr(args, "make_default", False):
+        gp = config_mod.global_config_path()
+        existing = {}
+        if gp.exists():
+            existing = yaml.safe_load(gp.read_text(encoding="utf-8")) or {}
+        existing.setdefault("agents", {})[args.tier] = agent
+        gp.parent.mkdir(parents=True, exist_ok=True)
+        gp.write_text(yaml.safe_dump(existing, sort_keys=False, allow_unicode=True))
+        print(f"✓ default updated: {args.tier} = {provider}:{model} (written to {gp})")
+        return 0
+    else:
+        print(f"{args.tier} = {provider}:{model} (not persisted). Per-call: burnless do --{args.tier} {provider}:{model}  |  persist: add --default  |  per-chat: /burnless in chat")
+        return 0
+
+
 def cmd_decisions_list(args: argparse.Namespace) -> int:
     entries = agents_mod.list_decisions()
     if getattr(args, "json", False):
@@ -1630,6 +1668,15 @@ def build_parser() -> argparse.ArgumentParser:
     psp.set_defaults(func=cmd_providers_stats)
     psp = providers_sub.add_parser("reset", help="clear provider health stats")
     psp.set_defaults(func=cmd_providers_reset)
+
+    sp = sub.add_parser("models", help="view or set the tier→worker mapping")
+    models_sub = sp.add_subparsers(dest="models_action")
+    sp.set_defaults(func=cmd_models)
+    msp = models_sub.add_parser("set", help="set a tier worker (add --default to persist to global)")
+    msp.add_argument("tier", choices=["diamond", "gold", "silver", "bronze"])
+    msp.add_argument("spec", help="provider:model, e.g. ollama:gemma4-e4b or sonnet")
+    msp.add_argument("--default", dest="make_default", action="store_true", help="persist as the new global default")
+    msp.set_defaults(func=cmd_models)
 
     sp = sub.add_parser("provider", help="inspect or reset multi-provider health stats")
     provider_sub = sp.add_subparsers(dest="provider_cmd")
