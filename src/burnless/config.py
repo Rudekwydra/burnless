@@ -12,6 +12,12 @@ DEFAULT_CONFIG: dict = {
         # Tiers are quality/cost bands, not vendors. Map any provider/CLI here:
         # Claude gold, Codex silver, Ollama bronze; or GPT gold/silver/bronze;
         # or any other mix the user wants.
+        "diamond": {
+            "name": "fable",
+            "command": "claude --model fable -p --setting-sources project,local --output-format stream-json --verbose --include-partial-messages",
+            "role": "hardest_irreversible",
+            "use_for": ["hardest_engineering", "irreversible_decisions", "second_opinion"],
+        },
         "gold": {
             "name": "opus",
             "command": "claude --model opus -p --setting-sources project,local --output-format stream-json --verbose --include-partial-messages",
