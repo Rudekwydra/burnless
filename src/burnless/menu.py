@@ -30,6 +30,17 @@ def _ollama_up(host: str = "http://localhost:11434") -> bool:
         return False
 
 
+def list_ollama_models(host: str = "http://localhost:11434") -> list:
+    """Names of installed ollama models, live from /api/tags. [] on any failure."""
+    import json as _json
+    try:
+        with urllib.request.urlopen(host.rstrip("/") + "/api/tags", timeout=2) as r:
+            data = _json.loads(r.read().decode("utf-8"))
+        return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+    except Exception:
+        return []
+
+
 def detect_providers() -> dict:
     """Which provider backends are usable on this machine right now."""
     return {
@@ -93,10 +104,12 @@ def worker_menu_options(providers: dict) -> list:
 
 
 def run_interactive(cfg: dict, default_cfg: dict, providers: dict, *,
-                    input_fn=input, output_fn=print, persist_fn=None) -> dict | None:
+                    input_fn=input, output_fn=print, persist_fn=None, ollama_models_fn=None) -> dict | None:
     """Numbered picker: choose tier -> choose worker -> this-run vs make-default.
     I/O is injected for testability. persist_fn(tier, spec) is called on make-default.
     Returns a dict describing the action, or None if cancelled."""
+    if ollama_models_fn is None:
+        ollama_models_fn = list_ollama_models
     output_fn(render_models_table(cfg, default_cfg))
     tiers = ["diamond", "gold", "silver", "bronze"]
     output_fn("\nPick a tier to change:")
@@ -123,9 +136,22 @@ def run_interactive(cfg: dict, default_cfg: dict, providers: dict, *,
         output_fn("invalid choice"); return None
     spec = chosen["spec"]
     if chosen["custom"]:
-        model = (input_fn("ollama model name: ") or "").strip()
-        if not model:
-            return None
+        models = ollama_models_fn()
+        if models:
+            output_fn("\nInstalled ollama models:")
+            for i, m in enumerate(models, 1):
+                output_fn(f"  {i}) {m}")
+            raw = (input_fn(f"model [1-{len(models)}, q]: ") or "").strip().lower()
+            if raw in ("q", ""):
+                return None
+            try:
+                model = models[int(raw) - 1]
+            except (ValueError, IndexError):
+                output_fn("invalid choice"); return None
+        else:
+            model = (input_fn("ollama model name (none installed found): ") or "").strip()
+            if not model:
+                return None
         spec = "ollama:" + model
     scope = (input_fn("apply: [1] this run  [2] make default  [q]: ") or "").strip().lower()
     if scope == "2":
