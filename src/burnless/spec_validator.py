@@ -43,6 +43,11 @@ def validate_spec_paths(text: str) -> SpecValidation:
         if core in seen:
             continue
         seen.add(core)
+        # Not an offense if the SAME path also appears in absolute/rooted form
+        # somewhere in the spec — the relative hit is just a prose echo of a
+        # path the worker was already given absolutely.
+        if re.search(r"(?<![.\w/~])[/~][\w./~\-]*" + re.escape(core), text):
+            continue
         offending.append(core)
     return SpecValidation(ok=not offending, offending=offending)
 
