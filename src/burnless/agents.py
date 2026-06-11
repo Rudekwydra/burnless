@@ -596,6 +596,9 @@ def _resolve_rtk_in_parts(parts: list[str]) -> list[str]:
 
 
 def is_available(agent_cfg: dict) -> bool:
+    from .ollama_worker import is_ollama_tools_agent
+    if is_ollama_tools_agent(agent_cfg):
+        return True
     parts = resolve_command(agent_cfg)
     return shutil.which(parts[0]) is not None
 
