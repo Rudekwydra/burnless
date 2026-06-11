@@ -276,6 +276,10 @@ def cmd_delegate(args: argparse.Namespace) -> int:
             print(spec_validator.format_rejection(sv, root.parent, lang), file=sys.stderr)
             return 6
 
+    from . import spec_validator as _spec_validator
+    if _spec_validator.verify_block_is_silent_noop(text):
+        print(_spec_validator.format_verify_warning(cfg.get("language", "pt-BR")), file=sys.stderr)
+
     is_blocked, natural_tier, matched_kw = _hardcore_blocked(cfg, text, tier_override, args)
     if is_blocked:
         lang = cfg.get("language", "pt-BR")
