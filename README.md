@@ -10,7 +10,7 @@ A multi-tier LLM orchestration layer with capsule-based session state, prefix-ca
 
 Burnless is a small Python framework that sits between your AI assistant (or your own code) and the model providers. It does three concrete things:
 
-1. **Routes tasks to a model tier** (`gold` / `silver` / `bronze`) defined by you in `.burnless/config.yaml`. Tiers are commands, not hardcoded models — any provider via any CLI.
+1. **Routes tasks to a model tier** (`gold` / `silver` / `bronze`). Tiers are commands, not hardcoded models — any provider via any CLI. They start from a shipped default and are changed per-chat or globally via `burnless menu` / `burnless models set` (projects don't carry their own tier map).
 2. **Stores session state as compact capsules on disk** (`.burnless/`) instead of replaying the full transcript on every turn, and keeps the system-prompt prefix byte-identical so the provider's prompt cache stays warm.
 3. **Audits worker outputs against the filesystem** (QTP-A): if a worker says it wrote a file, Burnless checks the file exists and the size is consistent before reporting success.
 
@@ -139,10 +139,19 @@ To remove from a project: `rm -rf .burnless/`.
 
 ## Configuration
 
-Tiers are commands. Any model, any provider:
+Burnless ships a clean default tier map (`gold=opus`, `silver=sonnet`, `bronze=haiku`) so a fresh install works with no config. You change tiers through commands — **projects do not carry their own tier definitions**; the map cascades `built-in default → global (~/.config/burnless/config.yaml) → per-chat override`:
+
+```bash
+burnless menu                                    # show the tier→worker table + provider status
+burnless do --silver ollama:gemma4-e4b "task"    # override one tier for this run only
+burnless models set silver ollama:gemma4-e4b --default   # persist as the new global default
+```
+
+`provider:model` is the worker spec (`anthropic:sonnet`, `codex:gpt-5.2`, `ollama:<model>`, `gemini:<model>`). A bare `model` defaults to `anthropic`. `burnless menu` (and `/burnless menu` inside a session) marks each tier `(default)` / `(global)` / `(session)` so you always know where its worker came from.
+
+Under the hood a worker is just a command — any model, any provider. The persisted global config (`~/.config/burnless/config.yaml`, written by `models set --default`) looks like:
 
 ```yaml
-# .burnless/config.yaml
 agents:
   gold:    { command: "claude --model claude-sonnet-4-6 -p" }   # Maestro
   silver:  { command: "codex exec --sandbox workspace-write" }
@@ -258,6 +267,7 @@ Switch at any time:
 /burnless partner   # assistant + Burnless execution boundary
 /burnless on        # assistant pinned to Maestro (delegate-only)
 /burnless rollover  # native chat with rolling capsule injection
+/burnless menu      # show the tier→worker config table + provider status
 /burnless           # show the menu + current mode
 ```
 
