@@ -29,7 +29,7 @@ def _run_hook(payload: dict, *, threshold: int = 2000) -> str:
 def test_passthrough_small_output():
     """Small output (< threshold) should emit empty stdout (passthrough)."""
     payload = {
-        "tool_name": "Read",
+        "tool_name": "Bash",
         "tool_response": {"stdout": "hi there"},
     }
     result = _run_hook(payload, threshold=2000)
@@ -50,7 +50,7 @@ def test_probe_output_fields():
     """Test field probing: tool_response.stdout, tool_output, output, etc."""
     # Test 1: tool_response as dict with stdout key
     payload = {
-        "tool_name": "Read",
+        "tool_name": "Bash",
         "tool_response": {"stdout": "x" * 3000},
     }
     result = _run_hook(payload, threshold=2000)
@@ -67,7 +67,7 @@ def test_probe_output_fields():
 
     # Test 3: tool_response as string
     payload = {
-        "tool_name": "Grep",
+        "tool_name": "Bash",
         "tool_response": "z" * 3000,
     }
     result = _run_hook(payload, threshold=2000)
@@ -142,7 +142,7 @@ def test_offload_json_format():
     # For now, we verify the JSON structure would be correct if ollama responded.
 
     payload_large = {
-        "tool_name": "Read",
+        "tool_name": "Bash",
         "tool_response": {"stdout": "x" * 5000},
     }
 
@@ -163,7 +163,7 @@ def test_fail_open_ollama_unreachable():
     """Ollama unreachable should result in empty stdout (passthrough), no crash."""
     # Force a large output with a "bad" threshold or small ollama port that's unreachable
     payload = {
-        "tool_name": "Read",
+        "tool_name": "Bash",
         "tool_response": {"stdout": "x" * 5000},
     }
     result = _run_hook(payload, threshold=2000)
@@ -176,3 +176,13 @@ def test_fail_open_ollama_unreachable():
         assert "hookSpecificOutput" in data
         assert "updatedToolOutput" in data["hookSpecificOutput"]
         assert "[burnless offload:" in data["hookSpecificOutput"]["updatedToolOutput"]
+
+
+def test_read_no_longer_offloaded():
+    """Read with big output must now passthrough (empty), proving Read is excluded from offload."""
+    payload = {
+        "tool_name": "Read",
+        "tool_response": {"stdout": "x" * 3000},
+    }
+    result = _run_hook(payload, threshold=2000)
+    assert result == "", f"Expected empty stdout (passthrough), got: {result}"
