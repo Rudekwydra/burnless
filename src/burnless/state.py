@@ -10,6 +10,7 @@ DEFAULT_STATE: dict = {
     "last_delegation": None,
     "next": None,
     "delegation_counter": 0,
+    "turn_counter": 0,  # For savings footer per-turn tracking
     "active_tier": None,  # None = auto routing; "gold"|"silver"|"bronze" = sticky
     "brain_model": None,  # legacy persisted key name (kept for on-disk back-compat); represents the Maestro layer
     "updated_at": None,
