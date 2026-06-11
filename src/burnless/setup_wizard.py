@@ -372,9 +372,30 @@ def run(*, non_interactive: bool = False, accept_all: bool = False, project: str
         )
         p["history"].write_text("# Burnless Chat History\n", encoding="utf-8")
 
-    cfg = config_mod.load(p["config"])
-    cfg["agents"] = rec
-    config_mod.save(p["config"], cfg)
+    # Tiers are global, never per-project. Seed the global tier map from the
+    # detected recommendation only when the global has none yet (never clobber an
+    # existing global). The project config carries no agents block; it cascades.
+    import yaml as _yaml
+    gp = config_mod.global_config_path()
+    gdata = {}
+    if gp.exists():
+        try:
+            gdata = _yaml.safe_load(gp.read_text(encoding="utf-8")) or {}
+        except Exception:
+            gdata = {}
+    if not gdata.get("agents"):
+        gdata["agents"] = rec
+        gp.parent.mkdir(parents=True, exist_ok=True)
+        gp.write_text(_yaml.safe_dump(gdata, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    _pcfg = {}
+    try:
+        _pcfg = _yaml.safe_load(p["config"].read_text(encoding="utf-8")) or {}
+    except Exception:
+        _pcfg = {}
+    if "agents" in _pcfg:
+        _pcfg.pop("agents", None)
+        p["config"].write_text(_yaml.safe_dump(_pcfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
     if not fresh_project:
         current_state = state_mod.load(p["state"])
         if default_tier is not None or not (non_interactive or accept_all or not sys.stdin.isatty()):
