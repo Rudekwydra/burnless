@@ -78,6 +78,33 @@ def calculate_turn_metrics(
     )
 
 
+def metrics_from_savings(savings: dict, model: str, turn_num: int) -> "TurnMetrics":
+    """Footer metrics from the capsule compression (raw worker output tokens kept
+    in context without burnless, vs the compact capsule burnless keeps)."""
+    original_tokens = int(savings.get("raw_tokens", 0) or 0)
+    compressed_tokens = int(savings.get("capsule_tokens", 0) or 0)
+    saved_tokens = max(0, original_tokens - compressed_tokens)
+    saved_pct = (saved_tokens / original_tokens * 100) if original_tokens > 0 else 0.0
+
+    rate_in = P(model, "input")
+
+    real_usd = original_tokens * rate_in
+    burnless_usd = compressed_tokens * rate_in
+    saved_usd = real_usd - burnless_usd
+
+    return TurnMetrics(
+        turn_num=turn_num,
+        original_tokens=original_tokens,
+        compressed_tokens=compressed_tokens,
+        saved_tokens=saved_tokens,
+        saved_pct=saved_pct,
+        real_usd=real_usd,
+        burnless_usd=burnless_usd,
+        saved_usd=saved_usd,
+        model=model,
+    )
+
+
 def render_footer(metrics: TurnMetrics) -> str:
     """Render single-line footer: 'Real: 50k tokens ($2.50) | Burnless: 12k tokens ($0.60) | Saved: 38k (76%)'"""
     def format_tokens(count: int) -> str:

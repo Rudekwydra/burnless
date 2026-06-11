@@ -920,11 +920,8 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                 # Map tier to pricing family (e.g., gold → opus, silver → sonnet, bronze → haiku)
                 tier_to_family = {"gold": "opus", "silver": "sonnet", "bronze": "haiku"}
                 pricing_model = tier_to_family.get(tier, "opus")
-                metrics_obj = savings_footer_mod.calculate_turn_metrics(
-                    human_prompt=deleg_text,
-                    compressed_prompt=prompt,
-                    model=pricing_model,
-                    turn_num=turn_num,
+                metrics_obj = savings_footer_mod.metrics_from_savings(
+                    savings, pricing_model, turn_num
                 )
                 footer_text = savings_footer_mod.render_footer(metrics_obj)
                 print(f"⚡ {footer_text}")
