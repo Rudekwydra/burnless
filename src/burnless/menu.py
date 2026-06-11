@@ -41,30 +41,20 @@ def list_ollama_models(host: str = "http://localhost:11434") -> list:
         return []
 
 
-def list_codex_models(config_path: str = "") -> list:
-    """Codex models known on this machine, read from ~/.codex/config.toml:
-    the configured `model` plus keys under [tui.model_availability_nux]. [] on failure."""
-    import os
-    from pathlib import Path
+def list_codex_models() -> list:
+    """Codex model slugs via `codex debug models` (same source as the installer). [] on any failure."""
+    import subprocess
+    import json as _json
     try:
-        import tomllib
-    except Exception:
-        return []
-    try:
-        p = Path(config_path) if config_path else Path.home() / ".codex" / "config.toml"
-        if not p.exists():
+        r = subprocess.run(["codex", "debug", "models"], capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
             return []
-        data = tomllib.loads(p.read_text(encoding="utf-8"))
-        models = []
-        m = data.get("model")
-        if isinstance(m, str) and m:
-            models.append(m)
-        nux = data.get("tui", {}).get("model_availability_nux", {})
-        if isinstance(nux, dict):
-            for k in nux.keys():
-                if k not in models:
-                    models.append(k)
-        return models
+        data = _json.loads(r.stdout or "{}")
+        out = []
+        for m in data.get("models", []):
+            if isinstance(m, dict) and isinstance(m.get("slug"), str) and m["slug"]:
+                out.append(m["slug"])
+        return out
     except Exception:
         return []
 
