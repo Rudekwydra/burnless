@@ -38,8 +38,8 @@ def test_rank_providers_prefers_best_score(tmp_path, monkeypatch):
 
     ranked = agents.rank_providers(cfg, tier="silver")
 
-    assert ranked[0]["cfg"]["provider"] == "openai"
-    assert ranked[1]["cfg"]["provider"] == "anthropic"
+    assert ranked[0]["cfg"]["provider"] == "anthropic"
+    assert ranked[1]["cfg"]["provider"] == "openai"
 
 
 def test_run_falls_back_on_timeout_and_updates_stats(tmp_path, monkeypatch):

@@ -97,15 +97,17 @@ Otherwise: act, then report briefly.
 ## Engagement modes (Claude Code integration)
 
 Burnless itself works from any assistant or plain shell — `burnless do/delegate/run` need no hook.
-The `off`/`partner`/`on` modes (see the README "Engagement modes" section) are an *optional* Claude Code
-convenience: a `/burnless` slash command sets a per-session mode, and a `UserPromptSubmit` hook reads it
-and shapes the assistant's behavior each turn.
+The `off`/`partner`/`on`/`rollover` modes (see the README "Engagement modes" section) are an *optional*
+Claude Code convenience: a `/burnless` slash command sets a per-session mode, and a `UserPromptSubmit`
+hook reads it and shapes the assistant's behavior each turn.
 
 **1. Slash command** — ships at [`.claude/commands/burnless.md`](../.claude/commands/burnless.md). It emits
 a sentinel `__BURNLESS_MODE_CMD__ <arg>`.
 
 **2. Mode state** — stored per session at `~/.burnless/state/session-<id>.mode`. Precedence:
 `BURNLESS_OFF=1` (env) → per-session file → `~/.burnless/state/global.on` → default `off`.
+`rollover` is the experimental native-chat mode: it keeps `claude` looking like a single chat while
+the hook injects a rolling capsule derived from `transcript_path`.
 
 **3. UserPromptSubmit hook** — register in `~/.claude/settings.json`:
 
@@ -123,24 +125,29 @@ set -uo pipefail
 IN=$(cat); P=$(jq -r '.prompt // empty' <<<"$IN"); SID=$(jq -r '.session_id // empty' <<<"$IN")
 ST="$HOME/.burnless/state"; mkdir -p "$ST"
 emit(){ jq -n --arg c "$1" '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$c}}'; }
-# /burnless [on|partner|off] sets the mode
+# /burnless [on|partner|rollover|off] sets the mode
 if grep -qiE '^[[:space:]]*(/burnless|__BURNLESS_MODE_CMD__)' <<<"$P"; then
   a=$(sed -E 's#^[[:space:]]*(/burnless|__BURNLESS_MODE_CMD__)[: ]*##i' <<<"$P" | tr -dc 'a-z')
-  case "$a" in on|partner|off) [ -n "$SID" ] && echo "$a" > "$ST/session-$SID.mode";
+  case "$a" in on|partner|rollover|off) [ -n "$SID" ] && echo "$a" > "$ST/session-$SID.mode";
     emit "Burnless mode -> $a (next turn). Confirm to the user, do nothing else.";; 
-  *) emit "Show the Burnless mode menu: /burnless on|partner|off. Current: $(cat "$ST/session-$SID.mode" 2>/dev/null || echo off).";; esac
+  *) emit "Show the Burnless mode menu: /burnless on|partner|rollover|off. Current: $(cat "$ST/session-$SID.mode" 2>/dev/null || echo off).";; esac
   exit 0
 fi
 [ "${BURNLESS_OFF:-}" = "1" ] && exit 0
 M=off; [ -n "$SID" ] && [ -f "$ST/session-$SID.mode" ] && M=$(cat "$ST/session-$SID.mode")
 [ "$M" = off ] && { [ -f "$ST/global.on" ] && M=on; }
 [ "$M" = on ] && emit "[BURNLESS ON] You are the Maestro. Compress intent and ONLY delegate via burnless do/delegate (--tier bronze|silver|gold) with a tight spec + a ## Verify block. Do not write code or edit disk yourself. Read only the capsule (burnless read dXXX), never the raw log. Answer from the capsule, briefly."
-# partner = no injection (you keep reasoning + delegate where it helps); off = no-op
+# partner = no injection (you keep reasoning + delegate where it helps); rollover = rolling capsule injection;
+# off = no-op
 exit 0
 ```
 
 `partner` deliberately injects nothing — the assistant stays itself and delegates at its own discretion;
-`on` pins it to the Maestro role; `off` is a pure no-op. Adjust the `on` text to taste.
+`on` pins it to the Maestro role; `rollover` keeps the native chat but feeds a rolling capsule from the
+transcript into each turn; `off` is a pure no-op. Adjust the `on` text to taste.
+
+The shipped template at [`templates/scripts/burnless_mode_hook.sh`](../templates/scripts/burnless_mode_hook.sh)
+contains the full `rollover` helper.
 
 ## Reference
 

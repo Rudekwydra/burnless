@@ -1176,7 +1176,12 @@ def cmd_route(args: argparse.Namespace) -> int:
 
 def cmd_epoch(args: argparse.Namespace) -> int:
     import sys as _sys
-    root_path = Path(getattr(args, "root", None) or paths_mod.find_root() or Path.cwd())
+    _explicit = getattr(args, "root", None)
+    if _explicit:
+        root_path = Path(_explicit)
+    else:
+        _fr = paths_mod.find_root()
+        root_path = (_fr.parent if _fr else Path.cwd())
     chat_id = getattr(args, "chat_id", None)
     epoch_cmd = getattr(args, "epoch_cmd", None)
 
@@ -1309,13 +1314,16 @@ def _chat_worker_usage_estimate(
 def cmd_chat(args: argparse.Namespace) -> int:
     """Partner-maestro REPL on the new core (v1 glue): warm maestro base →
     MaestroSession/partner_turn_session → dispatcher.run_all → economy footer.
-    Compaction OFF for MVP (rolling_compaction_enabled stays False; the no-op
-    compact_fn below is never invoked because maybe_compact early-returns)."""
+    Compaction OFF by default. An opt-in rollover mode can force a cycle
+    boundary every N user turns and seed the next fork from the resulting
+    capsule."""
     from functools import partial
 
     from . import warm_session
+    from . import epochs as epochs_mod
     from .economy import economy_snapshot, render_footer
     from .maestro import dispatcher as dispatcher_mod
+    from .maestro import engine as maestro_engine
     from .maestro.base import maestro_base_init, maestro_iso_cwd
     from .maestro.engine import PartnerState, estimate_tokens, partner_turn_session
     from .maestro.runners import runner_claude_json
@@ -1348,9 +1356,21 @@ def cmd_chat(args: argparse.Namespace) -> int:
     )
     session = MaestroSession(base_uuid=base_uuid, model=model, claude_bin=claude_bin)
     state = PartnerState()
-    noop_compact = lambda blob: {}  # compaction OFF for MVP  # noqa: E731
+    rollover_turns = max(0, int(getattr(args, "rollover_turns", 0) or 0))
+    keep_tail_turns = int((cfg.get("cache_policy") or {}).get("keep_tail_turns", 0))
+    if rollover_turns > 0:
+        summarizer = epochs_mod.epoch_summarizer(root)
+
+        def compact_fn(blob: str) -> dict:
+            summary = summarizer(blob) if summarizer else None
+            if not summary or not summary.strip():
+                summary = "\n".join(line for line in blob.splitlines() if line.strip())[:2000]
+            return {"decisions": [], "constraints": [], "open_threads": [], "summary": summary}
+    else:
+        compact_fn = lambda blob: {}  # compaction OFF for MVP  # noqa: E731
     worker_usages: list[dict] = []
     conv_tokens = 0
+    turns_since_rollover = 0
 
     def _delegate_lines(text: str) -> list[str]:
         out = []
@@ -1377,7 +1397,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
             response = partner_turn_session(
                 state, text,
                 cfg=cfg, session=session, runner=runner,
-                compact_fn=noop_compact, burnless_root=root,
+                compact_fn=compact_fn, burnless_root=root,
             )
             conv_tokens += estimate_tokens(text) + estimate_tokens(response or "")
             if response:
@@ -1414,6 +1434,17 @@ def cmd_chat(args: argparse.Namespace) -> int:
             text = "\n".join(c for c in capsules if c.strip()) or \
                 "brz :: ERR worker returned empty capsule"
             depth += 1
+        turns_since_rollover += 1
+        if rollover_turns > 0 and turns_since_rollover >= rollover_turns:
+            if maestro_engine.force_compact(
+                state,
+                compact_fn,
+                burnless_root=root,
+                keep_tail_turns=keep_tail_turns,
+            ):
+                session.rewind()
+                turns_since_rollover = 0
+                print(f"  ↻ rollover capsule {state.cycle} saved", file=sys.stderr)
         snap = economy_snapshot(list(session.usages), conv_tokens, model, worker_usages)
         print(render_footer(snap))
     return 0
@@ -1471,6 +1502,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="(with --claude-code) show what would be installed without writing files")
     sp.add_argument("--uninstall", action="store_true", dest="uninstall",
                     help="(with --claude-code) remove installed burnless files from ~/.claude/")
+    sp.add_argument("--no-wire", action="store_true", dest="no_wire",
+                    help="(with --claude-code) skip auto-wiring of the UserPromptSubmit hook")
     sp.set_defaults(func=cmd_init)
 
     sp = sub.add_parser("rtk", help="toggle the RTK wrapper (token-saving CLI proxy) for tier commands")
@@ -1619,6 +1652,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("chat", help="partner-maestro REPL on the new core (warm base + workers + economy footer)")
     sp.add_argument("--model", default=None, help="maestro model (default: maestro.model in config, else gold tier model)")
+    sp.add_argument(
+        "--rollover-turns",
+        type=int,
+        default=0,
+        help="experimental: force a capsule cycle every N user turns and re-seed the next fork",
+    )
     sp.set_defaults(func=cmd_chat)
 
     sp = sub.add_parser("brain", help="enter Maestro chat (model configurable in .burnless/config.yaml)")
@@ -1822,20 +1861,21 @@ def build_parser() -> argparse.ArgumentParser:
     dsp.set_defaults(func=cmd_debugless_sweep)
 
     sp = sub.add_parser("epoch", help="rolling-memory epoch engine (capture/read/cleanup/on/off/status)")
-    sp.add_argument("--chat-id", required=False, default=None, dest="chat_id", help="chat ID for epoch storage (required for capture/read/cleanup)")
-    sp.add_argument("--root", default=None, help="project root (default: find_root())")
+    epoch_common = argparse.ArgumentParser(add_help=False)
+    epoch_common.add_argument("--chat-id", required=False, default=None, dest="chat_id", help="chat ID for epoch storage (required for capture/read/cleanup)")
+    epoch_common.add_argument("--root", default=None, help="project root (default: find_root())")
     epoch_sub = sp.add_subparsers(dest="epoch_cmd", required=True)
-    esp = epoch_sub.add_parser("capture", help="read STDIN, summarize, append, consolidate")
+    esp = epoch_sub.add_parser("capture", parents=[epoch_common], help="read STDIN, summarize, append, consolidate")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="capture")
-    esp = epoch_sub.add_parser("read", help="print active chain to stdout")
+    esp = epoch_sub.add_parser("read", parents=[epoch_common], help="print active chain to stdout")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="read")
-    esp = epoch_sub.add_parser("cleanup", help="remove originais directory")
+    esp = epoch_sub.add_parser("cleanup", parents=[epoch_common], help="remove originais directory")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="cleanup")
-    esp = epoch_sub.add_parser("on", help="enable rolling memory (create marker file)")
+    esp = epoch_sub.add_parser("on", parents=[epoch_common], help="enable rolling memory (create marker file)")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="on")
-    esp = epoch_sub.add_parser("off", help="disable rolling memory (remove marker file)")
+    esp = epoch_sub.add_parser("off", parents=[epoch_common], help="disable rolling memory (remove marker file)")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="off")
-    esp = epoch_sub.add_parser("status", help="show ON/OFF state + chat/summary count")
+    esp = epoch_sub.add_parser("status", parents=[epoch_common], help="show ON/OFF state + chat/summary count")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="status")
 
     return p

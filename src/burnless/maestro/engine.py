@@ -108,19 +108,22 @@ def maybe_compact(
     )
     if not decision.should_compact:
         return False
-    # Nothing to compact if the entire window would be kept as tail
-    if keep_tail > 0 and len(state.window) <= keep_tail:
-        return False
-    if keep_tail > 0:
-        to_compact = state.window[:-keep_tail]
-        tail = state.window[-keep_tail:]
-    else:
-        to_compact = state.window
-        tail = []
-    prior_render = state.rolling_capsule.render()
-    blob = (prior_render + "\n\n" if prior_render else "") + \
-        "\n".join(f"{t.role}: {t.text}" for t in to_compact)
-    result = compact_fn(blob)
+    return force_compact(state, compact_fn, burnless_root=burnless_root, keep_tail_turns=keep_tail)
+
+
+def build_pending_seed(state: PartnerState) -> str:
+    tail = _render_tail(state)
+    cap = state.rolling_capsule.render()
+    return cap + (("\n\n## Recent\n" + tail) if tail else "")
+
+
+def _apply_compaction_result(
+    state: PartnerState,
+    result: dict,
+    *,
+    tail: list[Turn],
+    burnless_root: Optional[Path] = None,
+) -> None:
     # decisions/constraints: append-only, dedup exact dups
     for d in (result.get("decisions") or []):
         if d not in state.rolling_capsule.decisions:
@@ -133,6 +136,7 @@ def maybe_compact(
     state.rolling_capsule.summary = result.get("summary") or ""
     state.window = tail                      # REWIND keeping verbatim tail
     state.cycle += 1
+    state.pending_seed = build_pending_seed(state)
     if burnless_root is not None:
         d = Path(burnless_root) / "maestro" / "rolling"
         d.mkdir(parents=True, exist_ok=True)
@@ -155,6 +159,36 @@ def maybe_compact(
             encoding="utf-8",
         )
         state.capsule_paths.append(str(p))
+
+
+def force_compact(
+    state: PartnerState,
+    compact_fn: CompactFn,
+    burnless_root: Optional[Path] = None,
+    *,
+    keep_tail_turns: int = 0,
+) -> bool:
+    """Unconditionally compact the current window and prepare the next fork seed.
+
+    Used by opt-in chat rollover flows that want a hard cycle boundary after X turns,
+    regardless of the ROI heuristic.
+    """
+    if not state.window:
+        return False
+    if keep_tail_turns > 0 and len(state.window) <= keep_tail_turns:
+        return False
+    if keep_tail_turns > 0:
+        to_compact = state.window[:-keep_tail_turns]
+        tail = state.window[-keep_tail_turns:]
+    else:
+        to_compact = state.window
+        tail = []
+    prior_render = state.rolling_capsule.render()
+    blob = (prior_render + "\n\n" if prior_render else "") + "\n".join(
+        f"{t.role}: {t.text}" for t in to_compact
+    )
+    result = compact_fn(blob)
+    _apply_compaction_result(state, result, tail=tail, burnless_root=burnless_root)
     return True
 
 
@@ -214,7 +248,5 @@ def partner_turn_session(
     state.window.append(Turn("maestro", response, rtoks))
     if maybe_compact(state, cfg, compact_fn, burnless_root):  # rewinds window to verbatim tail
         session.rewind()                                      # next send will fork BASE
-        tail = _render_tail(state)                            # the kept verbatim tail
-        cap = state.rolling_capsule.render()
-        state.pending_seed = cap + (("\n\n## Recent\n" + tail) if tail else "")
+        # seed already prepared by maybe_compact/force_compact
     return response
