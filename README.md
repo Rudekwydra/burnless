@@ -142,7 +142,7 @@ To remove from a project: `rm -rf .burnless/`.
 Burnless ships a clean default tier map (`gold=opus`, `silver=sonnet`, `bronze=haiku`) so a fresh install works with no config. You change tiers through commands — **projects do not carry their own tier definitions**; the map cascades `built-in default → global (~/.config/burnless/config.yaml) → per-chat override`:
 
 ```bash
-burnless menu                                    # show the tier→worker table + provider status
+burnless menu                                    # tier→worker table + provider status (interactive picker on a TTY; --view to force the plain table)
 burnless do --silver ollama:gemma4-e4b "task"    # override one tier for this run only
 burnless models set silver ollama:gemma4-e4b --default   # persist as the new global default
 ```
