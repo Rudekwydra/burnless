@@ -249,6 +249,68 @@ def load(path: Path) -> dict:
     return data
 
 
+def parse_worker_spec(spec: str) -> tuple[str, str]:
+    """'ollama:gemma4-e4b' -> ('ollama','gemma4-e4b'). No colon -> provider 'anthropic'.
+    e.g. 'sonnet' -> ('anthropic','sonnet'). Strips whitespace."""
+    s = (spec or "").strip()
+    if ":" in s:
+        provider, _, model = s.partition(":")
+        return provider.strip().lower(), model.strip()
+    return "anthropic", s
+
+
+def build_worker_agent(provider: str, model: str) -> dict:
+    """Build agent dict for given provider and model.
+
+    Supported providers: anthropic, codex, ollama, gemini.
+    Returns dict with keys: name, command, provider (plus model/tools for ollama).
+    """
+    provider = (provider or "").strip().lower()
+    model = (model or "").strip()
+
+    if provider == "anthropic":
+        return {
+            "name": model,
+            "command": f"claude -p --model {model} --permission-mode bypassPermissions --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS --output-format stream-json --verbose --include-partial-messages",
+            "provider": "anthropic",
+        }
+    elif provider == "codex":
+        return {
+            "name": model,
+            "command": "codex exec --skip-git-repo-check --sandbox danger-full-access",
+            "provider": "codex",
+        }
+    elif provider == "ollama":
+        return {
+            "name": model,
+            "provider": "ollama-local",
+            "tools": True,
+            "model": model,
+            "command": "",
+        }
+    elif provider == "gemini":
+        return {
+            "name": model,
+            "command": f"gemini -p --model {model}",
+            "provider": "gemini",
+        }
+    else:
+        raise ValueError(f"unknown provider: {provider}")
+
+
+def apply_worker_overrides(cfg: dict, overrides: dict) -> dict:
+    """Return a deep copy of cfg with cfg['agents'][tier] replaced for each
+    tier->spec in overrides. Input cfg is NOT mutated. spec is a 'provider:model'
+    string parsed via parse_worker_spec."""
+    import copy
+    out = copy.deepcopy(cfg)
+    agents = out.setdefault("agents", {})
+    for tier, spec in (overrides or {}).items():
+        provider, model = parse_worker_spec(spec)
+        agents[tier] = build_worker_agent(provider, model)
+    return out
+
+
 def write_default(path: Path, agents_override: dict | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cfg = dict(DEFAULT_CONFIG)
