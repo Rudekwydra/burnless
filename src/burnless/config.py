@@ -389,8 +389,10 @@ def _normalize_legacy_tiers(data: dict, *, prefer_diamond: bool = False) -> None
     diamond_cmd = diamond.get("command", "")
     silver_cmd = silver.get("command", "") if isinstance(silver, dict) else ""
 
-    # Different commands → real opt-in tier, preserve diamond untouched
-    if diamond_cmd and silver_cmd and diamond_cmd.strip() != silver_cmd.strip():
+    # Keep diamond as a real opt-in tier UNLESS it is literally the same agent as
+    # silver (same non-empty command). An empty silver command (e.g. an ollama
+    # worker) means they are different agents, so diamond is kept.
+    if not (diamond_cmd and silver_cmd and diamond_cmd.strip() == silver_cmd.strip()):
         return
 
     # Same command → legacy alias, collapse into silver
