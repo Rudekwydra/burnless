@@ -1456,6 +1456,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         else bool((cfg.get("chat") or {}).get("expand_display", False))
     )
     _ollama_fn = None
+    from .maestro.turn_router import parse_chat_command as _parse_chat_command
     if router_enabled:
         from .maestro.turn_router import classify_turn as _classify_turn, local_answer as _local_answer
     if router_enabled or expand_enabled:
@@ -1501,6 +1502,52 @@ def cmd_chat(args: argparse.Namespace) -> int:
             continue
         if line in {"/exit", "/quit", "/q"}:
             break
+
+        _cmd = _parse_chat_command(line)
+        if _cmd is not None:
+            _kind, _val = _cmd
+            if _kind == "router":
+                router_enabled = _val
+                print(f"router {'on' if router_enabled else 'off'}")
+            elif _kind == "expand":
+                expand_enabled = _val
+                print(f"expand {'on' if expand_enabled else 'off'}")
+            elif _kind == "rollover":
+                rollover_turns = _val
+                if rollover_turns > 0:
+                    import functools as _functools
+                    _is_noop_compact = not callable(compact_fn) or (
+                        hasattr(compact_fn, "__code__") and compact_fn.__code__.co_consts == ({},)
+                    )
+                    _summarizer = epochs_mod.epoch_summarizer(root)
+
+                    def compact_fn(blob: str, _s=_summarizer) -> dict:
+                        summary = _s(blob) if _s else None
+                        if not summary or not summary.strip():
+                            summary = "\n".join(ln for ln in blob.splitlines() if ln.strip())[:2000]
+                        return {"decisions": [], "constraints": [], "open_threads": [], "summary": summary}
+                else:
+                    compact_fn = lambda blob: {}  # noqa: E731
+                print(f"rollover {rollover_turns}")
+            elif _kind == "status":
+                print(
+                    f"router={'on' if router_enabled else 'off'} "
+                    f"expand={'on' if expand_enabled else 'off'} "
+                    f"rollover={rollover_turns} "
+                    f"cycle={state.cycle} "
+                    f"window={len(state.window) // 2}"
+                )
+            elif _kind == "help":
+                print(
+                    "/router on|off  /expand on|off  /rollover N  "
+                    "/status  /help  /exit"
+                )
+            elif _kind == "error":
+                print(_val)
+            else:
+                print("comando desconhecido; /help")
+            continue
+
         text = line
         depth = 0
         # Per-turn router: attempt local ollama for trivial turns (fail-open).
