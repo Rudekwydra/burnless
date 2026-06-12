@@ -58,14 +58,24 @@ def wire_settings_hook(home: Path) -> str:
         hooks = data.setdefault("hooks", {})
         ups = hooks.setdefault("UserPromptSubmit", [])
         CMD = "bash ~/.claude/scripts/burnless_mode_hook.sh"
-        already = any(
+        already_mode = any(
             CMD in h.get("command", "")
             for grp in ups
             for h in grp.get("hooks", [])
         )
-        if already:
+        ss = hooks.setdefault("SessionStart", [])
+        CMD2 = "bash ~/.claude/scripts/burnless_session_seed.sh"
+        already_seed = any(
+            CMD2 in h.get("command", "")
+            for grp in ss
+            for h in grp.get("hooks", [])
+        )
+        if already_mode and already_seed:
             return "already-wired"
-        ups.append({"hooks": [{"type": "command", "command": CMD, "timeout": 3}]})
+        if not already_mode:
+            ups.append({"hooks": [{"type": "command", "command": CMD, "timeout": 3}]})
+        if not already_seed:
+            ss.append({"hooks": [{"type": "command", "command": CMD2, "timeout": 10}]})
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         if settings_path.exists():
             bak_path = settings_path.parent / (settings_path.name + ".bak-burnless")
@@ -88,7 +98,6 @@ def unwire_settings_hook(home: Path) -> str:
         hooks = data.setdefault("hooks", {})
         ups = hooks.setdefault("UserPromptSubmit", [])
 
-        original_len = len(ups)
         new_ups = []
         changed = False
 
@@ -99,17 +108,29 @@ def unwire_settings_hook(home: Path) -> str:
                     new_hooks.append(h)
                 else:
                     changed = True
-            
             if new_hooks:
                 grp["hooks"] = new_hooks
                 new_ups.append(grp)
 
+        ups[:] = new_ups
+        ups = [grp for grp in ups if grp.get("hooks")]
+
+        ss = hooks.setdefault("SessionStart", [])
+        new_ss = []
+        for grp in ss:
+            new_hooks = []
+            for h in grp.get("hooks", []):
+                if "burnless_session_seed.sh" not in h.get("command", ""):
+                    new_hooks.append(h)
+                else:
+                    changed = True
+            if new_hooks:
+                grp["hooks"] = new_hooks
+                new_ss.append(grp)
+        ss[:] = new_ss
+
         if not changed:
             return "not-wired"
-
-        ups[:] = new_ups
-        # Drop now-empty hook groups (where hooks list is empty or group itself is empty)
-        ups = [grp for grp in ups if grp.get("hooks")]
 
         if settings_path.exists():
             bak_path = settings_path.parent / (settings_path.name + ".bak-burnless")
