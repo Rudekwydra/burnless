@@ -1402,6 +1402,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
     capsule."""
     from functools import partial
 
+    from . import chat_history
     from . import warm_session
     from . import epochs as epochs_mod
     from .economy import economy_snapshot, render_footer
@@ -1448,9 +1449,16 @@ def cmd_chat(args: argparse.Namespace) -> int:
         if _cli_router is not None
         else bool((cfg.get("chat") or {}).get("router_enabled", False))
     )
+    _cli_expand = getattr(args, "expand", None)
+    expand_enabled = (
+        _cli_expand
+        if _cli_expand is not None
+        else bool((cfg.get("chat") or {}).get("expand_display", False))
+    )
     _ollama_fn = None
     if router_enabled:
         from .maestro.turn_router import classify_turn as _classify_turn, local_answer as _local_answer
+    if router_enabled or expand_enabled:
         enc = (cfg.get("encoder") or {})
         _enc_provider = (enc.get("provider") or "").strip()
         _enc_model = enc.get("model") or ""
@@ -1521,9 +1529,11 @@ def cmd_chat(args: argparse.Namespace) -> int:
                         session.rewind()
                         turns_since_rollover = 0
                         print(f"  ↻ rollover capsule {state.cycle} saved", file=sys.stderr)
+                chat_history.append(p["chat"] / "history.md", user=line, burnless=local_resp)
                 snap = economy_snapshot(list(session.usages), conv_tokens, model, worker_usages)
                 print(render_footer(snap))
                 continue
+        _terse_for_history = None
         while True:
             response = partner_turn_session(
                 state, text,
@@ -1531,8 +1541,14 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 compact_fn=compact_fn, burnless_root=root,
             )
             conv_tokens += estimate_tokens(text) + estimate_tokens(response or "")
+            if depth == 0:
+                _terse_for_history = response or ""
             if response:
-                print(response)
+                if depth == 0 and expand_enabled:
+                    from .maestro.display import expand_for_display as _expand_fn
+                    print(_expand_fn(response, _ollama_fn))
+                else:
+                    print(response)
             delegates = _delegate_lines(response or "")
             if not delegates:
                 break
@@ -1565,6 +1581,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
             text = "\n".join(c for c in capsules if c.strip()) or \
                 "brz :: ERR worker returned empty capsule"
             depth += 1
+        chat_history.append(p["chat"] / "history.md", user=line, burnless=(_terse_for_history or ""))
         turns_since_rollover += 1
         if rollover_turns > 0 and turns_since_rollover >= rollover_turns:
             if maestro_engine.force_compact(
@@ -1807,6 +1824,12 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="route trivial turns to local ollama (overrides config chat.router_enabled)",
+    )
+    sp.add_argument(
+        "--expand",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="expand maestro responses via local ollama for display (overrides config chat.expand_display)",
     )
     sp.set_defaults(func=cmd_chat)
 
