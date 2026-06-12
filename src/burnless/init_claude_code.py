@@ -29,6 +29,67 @@ Next steps (opt-in, manual):
 """
 
 
+def is_wired(home: Path, templates_dir: Path | None = None) -> dict:
+    """Read-only inspection of Claude Code hook wiring and managed file state."""
+    settings_path = home / ".claude" / "settings.json"
+    settings_exists = settings_path.exists()
+    settings_parses = False
+    sessionstart = False
+    userprompt = False
+    data: dict = {}
+
+    if settings_exists:
+        try:
+            data = json.load(open(settings_path))
+            settings_parses = True
+        except Exception:
+            pass
+
+    if settings_parses:
+        hooks = data.get("hooks", {})
+        CMD = "bash ~/.claude/scripts/burnless_mode_hook.sh"
+        ups = hooks.get("UserPromptSubmit", [])
+        userprompt = any(
+            CMD in h.get("command", "")
+            for grp in ups
+            for h in grp.get("hooks", [])
+        )
+        CMD2 = "bash ~/.claude/scripts/burnless_session_seed.sh"
+        ss = hooks.get("SessionStart", [])
+        sessionstart = any(
+            CMD2 in h.get("command", "")
+            for grp in ss
+            for h in grp.get("hooks", [])
+        )
+
+    if templates_dir is None:
+        templates_dir = _resolve_templates_dir()
+
+    managed = []
+    for src_rel, dst_rel in _MANAGED:
+        dst = home / dst_rel
+        if not dst.exists():
+            state = "missing"
+        elif templates_dir is not None:
+            src = templates_dir / src_rel
+            try:
+                state = "match" if (src.exists() and dst.read_bytes() == src.read_bytes()) else "differs"
+            except Exception:
+                state = "differs"
+        else:
+            state = "differs"
+        managed.append({"rel": dst_rel, "path": str(dst), "state": state})
+
+    return {
+        "settings_exists": settings_exists,
+        "settings_parses": settings_parses,
+        "sessionstart": sessionstart,
+        "userprompt": userprompt,
+        "managed": managed,
+        "templates_dir": str(templates_dir) if templates_dir else None,
+    }
+
+
 def _resolve_templates_dir() -> Path | None:
     pkg_dir = Path(__file__).resolve().parent
     candidate = pkg_dir.parent.parent / "templates"
@@ -50,6 +111,12 @@ def _resolve_templates_dir() -> Path | None:
 
 def wire_settings_hook(home: Path) -> str:
     try:
+        wired_info = is_wired(home)
+        already_mode = wired_info["userprompt"]
+        already_seed = wired_info["sessionstart"]
+        if already_mode and already_seed:
+            return "already-wired"
+
         settings_path = home / ".claude" / "settings.json"
         if settings_path.exists():
             data = json.load(open(settings_path))
@@ -57,21 +124,10 @@ def wire_settings_hook(home: Path) -> str:
             data = {}
         hooks = data.setdefault("hooks", {})
         ups = hooks.setdefault("UserPromptSubmit", [])
-        CMD = "bash ~/.claude/scripts/burnless_mode_hook.sh"
-        already_mode = any(
-            CMD in h.get("command", "")
-            for grp in ups
-            for h in grp.get("hooks", [])
-        )
         ss = hooks.setdefault("SessionStart", [])
+        CMD = "bash ~/.claude/scripts/burnless_mode_hook.sh"
         CMD2 = "bash ~/.claude/scripts/burnless_session_seed.sh"
-        already_seed = any(
-            CMD2 in h.get("command", "")
-            for grp in ss
-            for h in grp.get("hooks", [])
-        )
-        if already_mode and already_seed:
-            return "already-wired"
+
         if not already_mode:
             ups.append({"hooks": [{"type": "command", "command": CMD, "timeout": 3}]})
         if not already_seed:

@@ -420,6 +420,26 @@ def run(*, non_interactive: bool = False, accept_all: bool = False, project: str
         else:
             print("  skipped — you can run `burnless setup` again later.")
 
+    from datetime import datetime as _dt
+    from . import SETUP_VERSION as _SETUP_VERSION, __version__ as _bv
+    _meta_path = config_mod.global_config_path().parent / "setup_meta.json"
+    _existing: dict = {}
+    if _meta_path.exists():
+        try:
+            _existing = json.loads(_meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            _existing = {}
+    if _existing.get("setup_version") != _SETUP_VERSION or _existing.get("burnless_version") != _bv:
+        setup_meta = {
+            "setup_version": _SETUP_VERSION,
+            "burnless_version": _bv,
+            "wired_at": _dt.utcnow().isoformat(),
+            "mcp_registered": False,
+        }
+        _meta_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(_meta_path, "w", encoding="utf-8") as _f:
+            json.dump(setup_meta, _f, indent=2)
+
     print()
     print("Done. Try:  burnless")
     return 0
@@ -487,6 +507,44 @@ def _index_memories(roots: Iterable[Path], paths: dict) -> int:
         "files": targets,
     }, indent=2, ensure_ascii=False), encoding="utf-8")
     return len(targets)
+
+
+def _register_mcp(meta_path: Path) -> bool:
+    """Register burnless MCP server with Claude Code. Fail-open."""
+    def _save_flag(registered: bool) -> None:
+        existing: dict = {}
+        if meta_path.exists():
+            try:
+                existing = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {}
+        existing["mcp_registered"] = registered
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    if not shutil.which("claude"):
+        _save_flag(False)
+        print("  MCP not registered; run: claude mcp add burnless -- python -m burnless.mcp_server")
+        return False
+
+    try:
+        proc = subprocess.run(
+            ["claude", "mcp", "add", "burnless", "--", sys.executable, "-m", "burnless.mcp_server"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        stderr = proc.stderr or ""
+        if proc.returncode == 0 or "already exists" in stderr:
+            _save_flag(True)
+            return True
+        _save_flag(False)
+        print("  MCP not registered; run: claude mcp add burnless -- python -m burnless.mcp_server")
+        return False
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        _save_flag(False)
+        print("  MCP not registered; run: claude mcp add burnless -- python -m burnless.mcp_server")
+        return False
 
 
 def _now_iso() -> str:

@@ -302,6 +302,40 @@ def _apply_verify_gate(
     summary["validated"] = validated
     return summary
 
+
+def _preflight_verify_block(verify_cmds, *, cwd, timeout=30):
+    """Run each ## Verify command against the PRE-change state to catch a
+    MALFORMED check (one that crashes rather than cleanly exiting 1).
+
+    Returns a list of human-readable complaints, one per malformed check;
+    an empty list means every check is well-formed. A clean exit-1 (the
+    desired state simply does not hold yet, pre-change) is NOT malformed.
+    File-not-yet-created ('No such file or directory') is expected pre-change
+    and is deliberately ignored.
+    """
+    _CRASH_SIGS = (
+        "command not found",
+        "SyntaxError",
+        "syntax error",
+        "unexpected EOF",
+        "unbound variable",
+        "jq: error",
+    )
+    complaints = []
+    for cmd in verify_cmds:
+        try:
+            r = subprocess.run(
+                cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        out = (r.stdout or "") + (r.stderr or "")
+        malformed = r.returncode in (126, 127) or any(s in out for s in _CRASH_SIGS)
+        if malformed:
+            complaints.append(f"{cmd} (rc={r.returncode}): {out.strip()[:200]}")
+    return complaints
+
+
 def _verify_badge(summary: dict) -> str:
     """Distinguish a runner-verified OK from a worker-claimed OK using the
     deterministic 'verify: N/N checks passed' marker in summary['validated']."""
@@ -328,6 +362,17 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         return 2
     deleg_text = deleg_path.read_text(encoding="utf-8")
     _verify_cmds = _extract_verify_block(deleg_text) if cfg.get("validation", {}).get("honest_exit_code", True) else []
+    if _verify_cmds and cfg.get("validation", {}).get("preflight_verify", True):
+        _pf = _preflight_verify_block(
+            _verify_cmds, cwd=root.parent,
+            timeout=cfg.get("validation", {}).get("verify_timeout_s", 120),
+        )
+        if _pf:
+            print(f"burnless: {did} ABORTED — malformed ## Verify check(s):", file=sys.stderr)
+            for _c in _pf:
+                print(f"  x {_c}", file=sys.stderr)
+            print("  fix the check (it crashes instead of cleanly exiting 1) and re-dispatch.", file=sys.stderr)
+            return 5
     chain = _parse_chain_from_delegation(deleg_text)
     cache_prefix = bool((cfg.get("cache_prefix") or {}).get("enabled", False))
     prompt = _with_runtime_context(
