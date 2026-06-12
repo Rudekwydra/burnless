@@ -1439,6 +1439,35 @@ def cmd_chat(args: argparse.Namespace) -> int:
     )
     session = MaestroSession(base_uuid=base_uuid, model=model, claude_bin=claude_bin)
     state = PartnerState()
+
+    # Per-turn router: trivial turns → local ollama, non-trivial → maestro.
+    # CLI --router overrides config when non-None; default OFF.
+    _cli_router = getattr(args, "router", None)
+    router_enabled = (
+        _cli_router
+        if _cli_router is not None
+        else bool((cfg.get("chat") or {}).get("router_enabled", False))
+    )
+    _ollama_fn = None
+    if router_enabled:
+        from .maestro.turn_router import classify_turn as _classify_turn, local_answer as _local_answer
+        enc = (cfg.get("encoder") or {})
+        _enc_provider = (enc.get("provider") or "").strip()
+        _enc_model = enc.get("model") or ""
+        if _enc_provider == "ollama-local" and _enc_model:
+            import json as _json
+            import urllib.request as _urllib_request
+            def _ollama_fn(prompt: str) -> str:
+                data = _json.dumps({"model": _enc_model, "prompt": prompt, "stream": False}).encode()
+                req = _urllib_request.Request(
+                    "http://localhost:11434/api/generate",
+                    data=data,
+                    headers={"Content-Type": "application/json"},
+                )
+                with _urllib_request.urlopen(req, timeout=8) as resp:
+                    body = _json.loads(resp.read())
+                return body["response"].strip()
+
     rollover_turns = max(0, int(getattr(args, "rollover_turns", 0) or 0))
     keep_tail_turns = int((cfg.get("cache_policy") or {}).get("keep_tail_turns", 0))
     if rollover_turns > 0:
@@ -1476,6 +1505,35 @@ def cmd_chat(args: argparse.Namespace) -> int:
             break
         text = line
         depth = 0
+        # Per-turn router: attempt local ollama for trivial turns (fail-open).
+        if router_enabled and depth == 0 and _ollama_fn is not None and _classify_turn(text) == "local":
+            local_resp = _local_answer(state, text, ollama_fn=_ollama_fn)
+            if local_resp is not None:
+                print(local_resp)
+                state.window.append(__import__("burnless.maestro.engine", fromlist=["Turn"]).Turn("user", text, estimate_tokens(text)))
+                state.window.append(__import__("burnless.maestro.engine", fromlist=["Turn"]).Turn("maestro", local_resp, estimate_tokens(local_resp)))
+                conv_tokens += estimate_tokens(text) + estimate_tokens(local_resp)
+                worker_usages.append({
+                    "model": "ollama-local",
+                    "input_tokens": estimate_tokens(text),
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "output_tokens": estimate_tokens(local_resp),
+                })
+                turns_since_rollover += 1
+                if rollover_turns > 0 and turns_since_rollover >= rollover_turns:
+                    if maestro_engine.force_compact(
+                        state,
+                        compact_fn,
+                        burnless_root=root,
+                        keep_tail_turns=keep_tail_turns,
+                    ):
+                        session.rewind()
+                        turns_since_rollover = 0
+                        print(f"  ↻ rollover capsule {state.cycle} saved", file=sys.stderr)
+                snap = economy_snapshot(list(session.usages), conv_tokens, model, worker_usages)
+                print(render_footer(snap))
+                continue
         while True:
             response = partner_turn_session(
                 state, text,
@@ -1753,6 +1811,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="experimental: force a capsule cycle every N user turns and re-seed the next fork",
+    )
+    sp.add_argument(
+        "--router",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="route trivial turns to local ollama (overrides config chat.router_enabled)",
     )
     sp.set_defaults(func=cmd_chat)
 
