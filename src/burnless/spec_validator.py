@@ -61,6 +61,14 @@ def verify_block_is_silent_noop(text: str) -> bool:
     return not extract_verify_block(text)
 
 
+def should_block_unfenced_verify(text: str, enforce: bool, allow_override: bool) -> bool:
+    """True when dispatch must be blocked: a ## Verify section is present but yields
+    no fenced commands (silent gate no-op), enforcement is on, and no explicit override."""
+    if not enforce or allow_override:
+        return False
+    return verify_block_is_silent_noop(text)
+
+
 def format_verify_warning(lang: str = "pt-BR") -> str:
     if lang.startswith("pt"):
         return (

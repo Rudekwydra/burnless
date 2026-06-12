@@ -279,6 +279,10 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     from . import spec_validator as _spec_validator
     if _spec_validator.verify_block_is_silent_noop(text):
         print(_spec_validator.format_verify_warning(cfg.get("language", "pt-BR")), file=sys.stderr)
+        _enforce_fence = cfg.get("validation", {}).get("enforce_verify_fence", True)
+        _allow_unfenced = getattr(args, "allow_unfenced_verify", False)
+        if _spec_validator.should_block_unfenced_verify(text, _enforce_fence, _allow_unfenced):
+            return 6
 
     is_blocked, natural_tier, matched_kw = _hardcore_blocked(cfg, text, tier_override, args)
     if is_blocked:
@@ -1736,6 +1740,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="allow_relative_paths",
         help="skip the absolute-path guard (workers run in isolated cwd; relative paths may fail)",
     )
+    sp.add_argument(
+        "--allow-unfenced-verify",
+        action="store_true",
+        dest="allow_unfenced_verify",
+        help="allow dispatch with a ## Verify section that has no fenced block (gate will not run)",
+    )
     sp.set_defaults(func=cmd_delegate)
 
     sp = sub.add_parser("run", help="execute a delegation through its agent")
@@ -2026,6 +2036,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="allow_relative_paths",
         help="skip the absolute-path guard (workers run in isolated cwd; relative paths may fail)",
+    )
+    sp.add_argument(
+        "--allow-unfenced-verify",
+        action="store_true",
+        dest="allow_unfenced_verify",
+        help="allow dispatch with a ## Verify section that has no fenced block (gate will not run)",
     )
     for _t in ("diamond", "gold", "silver", "bronze"):
         sp.add_argument(
