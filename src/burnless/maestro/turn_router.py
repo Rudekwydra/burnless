@@ -2,11 +2,12 @@
 
 classify_turn is PURE and deterministic — no LLM/network calls.
 local_answer is fail-open: returns None on any error.
+parse_chat_command is PURE — parses /slash commands from the chat REPL.
 """
 from __future__ import annotations
 
 import re
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple, Union
 
 _ACTION_WORDS = re.compile(
     r"\b(implementa|cria|criar|refatora|build|fix|conserta|escreve|delega|delegate"
@@ -34,6 +35,52 @@ def classify_turn(text: str) -> str:
         if len(sentences) > 1:
             return "maestro"
     return "local"
+
+
+def parse_chat_command(line: str) -> Union[Tuple[str, object], None]:
+    """Parse a /slash command from the chat REPL.
+
+    Returns:
+        ("router", True|False)     for /router on|off
+        ("expand", True|False)     for /expand on|off
+        ("rollover", int)          for /rollover N
+        ("status", None)           for /status
+        ("help", None)             for /help
+        ("error", str)             for malformed commands (e.g. /rollover abc)
+        None                       for non-command lines or /exit /quit /q
+    """
+    stripped = line.strip()
+    if not stripped.startswith("/"):
+        return None
+    # preserve /exit /quit /q for caller
+    if stripped in {"/exit", "/quit", "/q"}:
+        return None
+
+    lower = stripped.lower()
+
+    if lower in {"/router on", "/router off"}:
+        return ("router", lower.endswith(" on"))
+
+    if lower in {"/expand on", "/expand off"}:
+        return ("expand", lower.endswith(" on"))
+
+    if lower.startswith("/rollover "):
+        rest = stripped[len("/rollover "):].strip()
+        try:
+            n = int(rest)
+        except ValueError:
+            return ("error", f"/rollover expects integer >=0, got: {rest!r}")
+        if n < 0:
+            return ("error", f"/rollover expects integer >=0, got: {n}")
+        return ("rollover", n)
+
+    if lower == "/status":
+        return ("status", None)
+
+    if lower == "/help":
+        return ("help", None)
+
+    return ("unknown", stripped)
 
 
 def local_answer(
