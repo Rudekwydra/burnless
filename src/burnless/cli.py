@@ -1408,7 +1408,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
     from .maestro import dispatcher as dispatcher_mod
     from .maestro import engine as maestro_engine
     from .maestro.base import maestro_base_init, maestro_iso_cwd
-    from .maestro.engine import PartnerState, estimate_tokens, partner_turn_session
+    from .maestro.engine import PartnerState, Turn, estimate_tokens, partner_turn_session
     from .maestro.runners import runner_claude_json
     from .maestro.session_runner import MaestroSession
 
@@ -1455,18 +1455,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
         _enc_provider = (enc.get("provider") or "").strip()
         _enc_model = enc.get("model") or ""
         if _enc_provider == "ollama-local" and _enc_model:
-            import json as _json
-            import urllib.request as _urllib_request
-            def _ollama_fn(prompt: str) -> str:
-                data = _json.dumps({"model": _enc_model, "prompt": prompt, "stream": False}).encode()
-                req = _urllib_request.Request(
-                    "http://localhost:11434/api/generate",
-                    data=data,
-                    headers={"Content-Type": "application/json"},
-                )
-                with _urllib_request.urlopen(req, timeout=8) as resp:
-                    body = _json.loads(resp.read())
-                return body["response"].strip()
+            from functools import partial as _partial
+            _ollama_fn = _partial(epochs_mod._ollama, _enc_model)
 
     rollover_turns = max(0, int(getattr(args, "rollover_turns", 0) or 0))
     keep_tail_turns = int((cfg.get("cache_policy") or {}).get("keep_tail_turns", 0))
@@ -1510,8 +1500,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
             local_resp = _local_answer(state, text, ollama_fn=_ollama_fn)
             if local_resp is not None:
                 print(local_resp)
-                state.window.append(__import__("burnless.maestro.engine", fromlist=["Turn"]).Turn("user", text, estimate_tokens(text)))
-                state.window.append(__import__("burnless.maestro.engine", fromlist=["Turn"]).Turn("maestro", local_resp, estimate_tokens(local_resp)))
+                state.window.append(Turn("user", text, estimate_tokens(text)))
+                state.window.append(Turn("maestro", local_resp, estimate_tokens(local_resp)))
                 conv_tokens += estimate_tokens(text) + estimate_tokens(local_resp)
                 worker_usages.append({
                     "model": "ollama-local",

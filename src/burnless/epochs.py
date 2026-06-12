@@ -205,6 +205,24 @@ def epoch_summarizer(project_root: Path):
     return _summarize
 
 
+def _ollama(model: str, prompt: str, *, timeout: int = 30, host: str = "http://localhost:11434") -> str | None:
+    """Call ollama /api/generate. Returns stripped response text or None on any error."""
+    try:
+        data = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
+        req = urllib.request.Request(
+            f"{host}/api/generate",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read())
+        out = body.get("response", "")
+        from .compression import _strip_gemma_channels
+        return _strip_gemma_channels(out).strip() or None
+    except Exception:
+        return None
+
+
 def _enabled_marker(project_root) -> Path:
     return Path(project_root) / ".burnless" / "epochs.on"
 
