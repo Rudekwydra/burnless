@@ -47,11 +47,32 @@ except (OSError, ValueError):
 
 # If pointer exists and is fresh, read content.
 try:
-    content = p.read_text(encoding="utf-8").strip()
+    raw = p.read_text(encoding="utf-8").strip()
 except OSError:
     sys.exit(0)
 
 # If empty, emit nothing.
+if not raw:
+    sys.exit(0)
+
+# Parse scope marker from first line.
+lines = raw.split('\n')
+target = None
+MARKER_PREFIX = '<!-- burnless-seed-target: '
+MARKER_SUFFIX = ' -->'
+if lines and lines[0].startswith(MARKER_PREFIX) and lines[0].endswith(MARKER_SUFFIX):
+    target = lines[0][len(MARKER_PREFIX):-len(MARKER_SUFFIX)].strip()
+    content = '\n'.join(lines[1:]).strip()
+else:
+    content = raw
+
+# Scope check: if marker present and cwd doesn't match, leave for correct project.
+cwd = payload.get('cwd', '')
+if target is not None:
+    if cwd != target and not cwd.startswith(target):
+        sys.exit(0)
+
+# If content empty after stripping marker, emit nothing.
 if not content:
     sys.exit(0)
 
@@ -71,6 +92,11 @@ try:
         }
     }, ensure_ascii=False)
     print(output)
+    # Consume-once: delete pointer so subsequent sessions don't re-inject.
+    try:
+        p.unlink()
+    except OSError:
+        pass
 except Exception:
     sys.exit(0)
 PY

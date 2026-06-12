@@ -216,40 +216,102 @@ try:
         except ValueError:
             limit = 10
         capsule, meta = build_capsule(limit)
-        capsule_path = state_dir / f"session-{sid}.rollover.md"
-        meta_path = state_dir / f"session-{sid}.rollover.json"
+        turns = int(meta.get("turns", 0))
+
+        light_path = state_dir / f"session-{sid}.rollover.md" if sid else None
+        meta_path  = state_dir / f"session-{sid}.rollover.json" if sid else None
+        seed_path  = state_dir / f"session-{sid}.seed.md" if sid else None
+
+        # REWIND DETECTION
+        prev_max = 0
+        if meta_path and meta_path.exists():
+            try:
+                prev_meta = json.loads(meta_path.read_text(encoding="utf-8", errors="replace"))
+                prev_max = int(prev_meta.get("max_turns_seen", 0))
+            except Exception:
+                prev_max = 0
+        rewound = turns < prev_max
+
+        new_max = turns if rewound else max(prev_max, turns)
+
         if sid:
             try:
-                capsule_path.write_text(capsule, encoding="utf-8")
-                meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                light_path.write_text(capsule, encoding="utf-8")
+                meta_out = dict(meta)
+                meta_out["max_turns_seen"] = new_max
+                meta_out["rewound"] = rewound
+                meta_path.write_text(json.dumps(meta_out, ensure_ascii=False, indent=2), encoding="utf-8")
             except OSError:
                 pass
 
-        # Rotation-point detection: check if we hit the threshold.
-        turns = meta.get("turns", 0)
-        rotation_marker = state_dir / f"session-{sid}.restart_due"
-        rotation_msg = ""
-        if turns > 0 and (turns % limit) == 0:
-            # Write marker file.
-            if sid:
-                try:
-                    rotation_marker.write_text(str(turns), encoding="utf-8")
-                except OSError:
-                    pass
-            rotation_msg = f"\n\n[BURNLESS ROTATION] turn {turns}: rotation point. To actually reset context, open a fresh session (bash ~/antigravity/burnless/restart_rollover.sh) — auto-respawn not yet wired."
-        else:
-            # Remove marker if present and not at rotation point.
+        def _gemma_compact(text: str) -> str:
             try:
-                rotation_marker.unlink(missing_ok=True)
+                import urllib.request as _ur
+                req = _ur.Request("http://localhost:11434/api/tags")
+                with _ur.urlopen(req, timeout=2) as resp:
+                    tags = json.loads(resp.read())
+                model_name = ""
+                for m in tags.get("models", []):
+                    if "gemma" in m.get("name", "").lower():
+                        model_name = m["name"]
+                        break
+                if not model_name:
+                    return ""
+                SYS = (
+                    "You are a lossless semantic compressor. Compress the input into a dense capsule "
+                    "preserving ALL decisions, tasks, open questions, file paths, and next steps. "
+                    "Output ONLY the capsule, no preamble."
+                )
+                body = json.dumps({"model": model_name, "prompt": SYS + "\n\nINPUT:\n" + text, "stream": False}).encode()
+                req2 = _ur.Request(
+                    "http://localhost:11434/api/generate",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                with _ur.urlopen(req2, timeout=20) as resp2:
+                    result = json.loads(resp2.read())
+                return result.get("response", "").strip()
+            except Exception:
+                return ""
+
+        # ROTATION SNAPSHOT (durable seed) — only at rotation point, never on rewind
+        if not rewound and turns > 0 and turns % limit == 0 and sid:
+            snapshot = _gemma_compact(capsule) or capsule
+            try:
+                seed_path.write_text(snapshot, encoding="utf-8")
+            except OSError:
+                pass
+            try:
+                (state_dir / "rotation_due").write_text(
+                    f"{sid} {meta['cycle']} {turns}\n", encoding="utf-8"
+                )
             except OSError:
                 pass
 
-        context = (
-            f"[BURNLESS ROLLOVER] (experimental: rolling focus; does NOT reduce native context until the session-respawn consumer lands) cycle={meta['cycle']} window={meta['limit']} turns={meta['turns']}\n"
-            f"Use the capsule below as the working state. Prefer it over older transcript details.\n\n"
+        # BUILD INJECTED CONTEXT
+        context = ""
+        if seed_path and seed_path.exists():
+            try:
+                seed_text = seed_path.read_text(encoding="utf-8", errors="replace")
+                context += (
+                    "[BURNLESS ROLLING MEMORY — durable seed, survives /rewind]\n"
+                    "Use this as the authoritative working state:\n\n"
+                    + seed_text + "\n\n"
+                )
+            except OSError:
+                pass
+        context += (
+            f"[BURNLESS ROLLOVER] cycle={meta['cycle']} window={meta['limit']} turns={turns}\n"
+            f"Prefer the seed above; the rolling focus below is supplementary.\n\n"
             f"{capsule}"
-            f"{rotation_msg}"
         )
+        if turns > 0 and turns % limit == 0 and not rewound:
+            context += (
+                f"\n\n\U0001f504 [BURNLESS ROLL] turn {turns}: contexto cheio. "
+                f"Dê /rewind pro início da sessão — esta seed re-injeta sozinha no próximo turno "
+                f"e o cache do prefixo fica quente. "
+                f"(compactação semântica via gemma; nada de /compact ou /clear nativo.)"
+            )
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
