@@ -554,4 +554,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    if "--check" in sys.argv:
+        print("ok")
+        raise SystemExit(0)
     asyncio.run(main())

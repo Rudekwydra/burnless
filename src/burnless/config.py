@@ -327,9 +327,8 @@ def apply_worker_overrides(cfg: dict, overrides: dict) -> dict:
 
 def write_default(path: Path, agents_override: dict | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    cfg = dict(DEFAULT_CONFIG)
+    cfg = {k: v for k, v in DEFAULT_CONFIG.items() if k != "agents"}
     if agents_override is not None:
-        cfg = dict(cfg)
         cfg["agents"] = agents_override
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
