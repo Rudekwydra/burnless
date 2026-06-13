@@ -25,7 +25,7 @@ Next steps (opt-in, manual):
      edit ~/.claude/settings.json and add "agent": "burnless-planner"
   3. To enable the Claude Code engagement hook:
      add the hook entry in settings.json hooks.UserPromptSubmit
-     and use /burnless off|partner|on|rollover in-session
+     and use /burnless off|on in-session
 """
 
 

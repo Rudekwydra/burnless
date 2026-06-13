@@ -1,16 +1,15 @@
 ---
-description: Set the Burnless engagement mode for this session (off | partner | on)
+description: Set the Burnless engagement mode for this session (off | on)
 ---
 
-`/burnless [off|partner|on|rollover]` — choose how much Burnless takes over this session.
+`/burnless [off|on]` — choose whether Burnless drives this session.
 
 - **off** — raw chat, zero Burnless.
-- **partner** — assistant keeps full reasoning and delegates execution to Burnless tiers
-  (`burnless do/delegate`) where it makes sense. No role injection.
-- **on** — assistant is pinned to the Maestro role: compress intent and *only* delegate
-  (no direct code/edits/deep planning); read only the compact capsule, never the raw log.
-- **rollover** — experimental rolling-memory mode: keep the chat native, but inject the
-  current capsule and rolling window from the transcript on every turn.
+- **on** — assistant is the Maestro: compress intent and *only* delegate via `burnless do/delegate`
+  (no direct code/edits/deep planning; read only the compact capsule, never the raw log), **plus**
+  rolling memory — epoch hooks keep context O(N) and survive `/clear`. This is the one efficient mode.
+
+(Legacy `partner` and `rollover` are removed; both are coerced to `on` for back-compat.)
 
 `/burnless` with no argument shows the menu and the current mode. The choice is stored per
 session (`~/.burnless/state/session-<id>.mode`) and takes effect from the next turn. See the
