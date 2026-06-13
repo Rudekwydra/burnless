@@ -51,14 +51,15 @@ bronze` works end to end. Without `tools`, an ollama agent is single-shot text (
 
 ## Engagement modes (your assistant)
 
-Choose per session how much Burnless drives your assistant — `/burnless off|partner|on`:
+Two modes only — `/burnless off|on`:
 
 - **off** — raw chat, no Burnless.
-- **partner** — the assistant keeps full reasoning and delegates execution to the tiers.
-- **on** — the assistant is pinned to the Maestro role: compress intent and only delegate.
+- **on** — the assistant is the Maestro: compress intent and delegate via the tiers, **plus** rolling
+  memory (epoch hooks keep context O(N), surviving `/clear`). This is the one efficient mode.
 
-Details + the hook: `docs/USING_BURNLESS_FROM_YOUR_LLM.md`. In `partner`/`on` the assistant compresses
-your intent into a capsule for the Maestro and expands the Maestro's response back to natural language.
+Details + the hook: `docs/USING_BURNLESS_FROM_YOUR_LLM.md`. In `on` the assistant compresses your intent
+into a capsule for the Maestro and expands the Maestro's response back to natural language. (Legacy
+`partner`/`rollover` are gone — both fold into `on`.)
 
 ---
 
@@ -66,6 +67,12 @@ your intent into a capsule for the Maestro and expands the Maestro's response ba
 
 `--mode {light|balanced|extreme}` controls output compression — it is **NOT** a timeout. `light` is
 the default. `extreme` is for read-only / summary work only.
+
+**Compression boundary (load-bearing):** compress memory, transit, and worker *output* — **never the
+live worker instruction or contract**. Compressing the instruction degrades fidelity (empirically
+re-validated 2026-06-13: a compressed instruction scored 0/3 correct vs 2/3 for the full instruction
+on the same task). The spec the worker must follow stays full-fidelity; only what's stored or returned
+is compressed.
 
 ---
 
@@ -158,6 +165,8 @@ fi
 
 ### Rule 3: All paths are absolute [GATED — cli.py blocks exit 6]
 Workers execute in an isolated cwd (`/private/tmp/claude-502/<uuid>/`). Relative paths like `src/file.py` are relative to the temp dir, not the project root, so file checks silently fail or read the wrong files.
+
+**Scope = the ENTIRE spec body, not just action-target paths or the `## Verify` block.** The validator scans all prose. A path mentioned only *illustratively* or as a *reference* still triggers the block — e.g. a HARD-PROHIBITION line saying "do not edit `src/` or touch `.burnless/config.yaml`" will fail with exit 6, even though those paths are not action targets. If you must name a path anywhere in the spec (prose, prohibitions, examples), write it absolute (`/Users/roberto/antigravity/burnless/.burnless/config.yaml`) or phrase it non-path-like ("the source tree", "the project config"). This footgun bit the author of this very doc on 2026-06-13.
 
 ✅ Correct:
 ```
@@ -260,3 +269,10 @@ If all six pass → `burnless do --tier T "..."`
 If any fails → re-spec or reword until all six pass.
 
 **Note:** Gates 1-3 are deterministic (exit 6 / ABORT) and block at dispatch time, regardless of model state. Gates 4-6 are NOT implemented in code yet (tier_health unwired, no schema gate) — treat as mental checklist until wired.
+
+**Verify checks must encode the COMPLETE correctness condition, not a proxy.** A proxy check passes
+plausible-but-wrong outputs as OK. Example (real, 2026-06-13): a task asked for "the first 3 `def`s";
+the Verify only checked "each reported line is a def with that name" — so an answer that returned 3
+*real but wrong* defs passed as OK. The check must assert the full condition (the correct three, in
+order), not a weaker stand-in. Coverage = quality of the check; the gate protects only as far as the
+check is written.

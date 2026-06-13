@@ -130,11 +130,12 @@ Otherwise: act, then report briefly.
 
 ## Engagement modes (generic — any LLM host)
 
-The `off`/`partner`/`on`/`rollover` engagement modes are a **generic** mechanism, implemented in
+The `off`/`on` engagement modes are a **generic** mechanism, implemented in
 `burnless_mode_hook.sh` and usable from **any LLM host**, not a Claude-Code-only feature. The hook reads a
 per-session mode and shapes the assistant's behavior each turn; any host that can run a shell hook on user
 input (or otherwise read the mode file) can adopt them. Burnless's core (`burnless do/delegate/run`) needs
-no hook at all — the modes are an optional behavior layer on top.
+no hook at all — the modes are an optional behavior layer on top. (Legacy `partner`/`rollover` are removed;
+both coerce to `on`.)
 
 Claude Code is simply the **reference integration**: a `/burnless` slash command sets the per-session mode and a
 `UserPromptSubmit` hook invokes `burnless_mode_hook.sh`. The example below shows that wiring, but the mode logic
@@ -145,8 +146,8 @@ a sentinel `__BURNLESS_MODE_CMD__ <arg>`.
 
 **2. Mode state** — stored per session at `~/.burnless/state/session-<id>.mode`. Precedence:
 `BURNLESS_OFF=1` (env) → per-session file → `~/.burnless/state/global.on` → default `off`.
-`rollover` is the experimental native-chat mode: it keeps `claude` looking like a single chat while
-the hook injects a rolling capsule derived from `transcript_path`.
+`on` is the Maestro mode and carries rolling memory (epoch `Stop`/`SessionStart` hooks keep context
+O(N) and survive `/clear`); `off` is a pure no-op.
 
 **3. UserPromptSubmit hook** — register in `~/.claude/settings.json`:
 
@@ -164,29 +165,27 @@ set -uo pipefail
 IN=$(cat); P=$(jq -r '.prompt // empty' <<<"$IN"); SID=$(jq -r '.session_id // empty' <<<"$IN")
 ST="$HOME/.burnless/state"; mkdir -p "$ST"
 emit(){ jq -n --arg c "$1" '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:$c}}'; }
-# /burnless [on|partner|rollover|off] sets the mode
+# /burnless [on|off] sets the mode (legacy partner|rollover coerce to on)
 if grep -qiE '^[[:space:]]*(/burnless|__BURNLESS_MODE_CMD__)' <<<"$P"; then
   a=$(sed -E 's#^[[:space:]]*(/burnless|__BURNLESS_MODE_CMD__)[: ]*##i' <<<"$P" | tr -dc 'a-z')
-  case "$a" in on|partner|rollover|off) [ -n "$SID" ] && echo "$a" > "$ST/session-$SID.mode";
+  case "$a" in partner|rollover) a=on;; esac
+  case "$a" in on|off) [ -n "$SID" ] && echo "$a" > "$ST/session-$SID.mode";
     emit "Burnless mode -> $a (next turn). Confirm to the user, do nothing else.";; 
-  *) emit "Show the Burnless mode menu: /burnless on|partner|rollover|off. Current: $(cat "$ST/session-$SID.mode" 2>/dev/null || echo off).";; esac
+  *) emit "Show the Burnless mode menu: /burnless on|off. Current: $(cat "$ST/session-$SID.mode" 2>/dev/null || echo off).";; esac
   exit 0
 fi
 [ "${BURNLESS_OFF:-}" = "1" ] && exit 0
 M=off; [ -n "$SID" ] && [ -f "$ST/session-$SID.mode" ] && M=$(cat "$ST/session-$SID.mode")
+case "$M" in partner|rollover) M=on;; esac
 [ "$M" = off ] && { [ -f "$ST/global.on" ] && M=on; }
 [ "$M" = on ] && emit "[BURNLESS ON] You are the Maestro. Compress intent and ONLY delegate via burnless do/delegate (--tier bronze|silver|gold) with a tight spec + a ## Verify block. Do not write code or edit disk yourself. Read only the capsule (burnless read dXXX), never the raw log. Answer from the capsule, briefly."
-# partner = no injection (you keep reasoning + delegate where it helps); rollover = rolling capsule injection;
-# off = no-op
+# on = Maestro injection + rolling memory (via epoch Stop/SessionStart hooks); off = no-op
 exit 0
 ```
 
-`partner` deliberately injects nothing — the assistant stays itself and delegates at its own discretion;
-`on` pins it to the Maestro role; `rollover` keeps the native chat but feeds a rolling capsule from the
-transcript into each turn; `off` is a pure no-op. Adjust the `on` text to taste.
-
-The shipped template at [`templates/scripts/burnless_mode_hook.sh`](../templates/scripts/burnless_mode_hook.sh)
-contains the full `rollover` helper.
+`on` makes the assistant the Maestro and (via the epoch hooks) carries rolling memory across turns and
+`/clear`; `off` is a pure no-op. Adjust the `on` text to taste. Rolling memory itself comes from the
+separate `Stop`/`SessionStart` epoch hooks, not this hook.
 
 ## Reference
 
