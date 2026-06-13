@@ -2121,7 +2121,23 @@ def build_parser() -> argparse.ArgumentParser:
     esp = epoch_sub.add_parser("status", parents=[epoch_common], help="show ON/OFF state + chat/summary count")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="status")
 
+    sp = sub.add_parser("doctor", help="healthcheck install/config/wiring/MCP; --fix auto-remediates safe issues")
+    sp.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    sp.add_argument("--fix", action="store_true",
+                    help="auto-remediate safe issues (write config, wire hooks, copy managed files, register MCP) then re-check")
+    sp.set_defaults(func=cmd_doctor)
+
     return p
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from . import doctor as doctor_mod
+    checks = doctor_mod.run_checks(fix=bool(getattr(args, "fix", False)))
+    if getattr(args, "json", False):
+        print(json.dumps(doctor_mod.render_json(checks), indent=2, ensure_ascii=False))
+    else:
+        print(doctor_mod.render_human(checks))
+    return doctor_mod.exit_code(checks)
 
 
 def cmd_pipeline(args: argparse.Namespace) -> int:
