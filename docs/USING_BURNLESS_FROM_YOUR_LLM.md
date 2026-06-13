@@ -54,16 +54,50 @@ burnless read d104
 
 The user can pass `--tier` to override. With `BURNLESS_HARDCORE=1`, the maestro **cannot self-upgrade** beyond what the keyword router resolved — so routing rules are guarantees, not hints.
 
-## Worker result
+## Worker output contract (the JSON envelope)
 
-Burnless surfaces the subprocess exit code and stdout. Inspect what the
-worker did via `git diff` and the run log.
+The canonical worker output contract is a **JSON envelope**. Every worker returns exactly these fields:
+
+| Field | Meaning |
+|---|---|
+| `status` | `OK` \| `PART` \| `ERR` \| `BLK` — the verdict. |
+| `kind` | `execution` (changed/ran/checked something — needs evidence) or `thought` (planning/design only). |
+| `summary` | One-line what-happened. |
+| `files_touched` | Array of absolute paths the worker created/modified. |
+| `validated` | What was actually verified (test output, grep results, the `## Verify` block outcome). |
+| `evidence` | **Literal** commands run + their literal outputs. **Never abbreviated, never paraphrased** — the audit reads the raw text to confirm the work happened. |
+| `issues` | Problems, gaps, or caveats found. |
+| `next` | Suggested follow-up, or empty. |
+
+`evidence` is the load-bearing field. If it is empty or vague, treat the result as if the work did **not** happen — even when `status` says `OK`. The audit loop checks `kind: execution` reports against the filesystem (file existence, sizes) before the Maestro is allowed to treat them as done; `kind: thought` reports skip the filesystem check so design work doesn't loop as a false `PART`.
+
+Beyond the envelope, Burnless also surfaces the subprocess exit code and stdout. You can still inspect what the worker did via `git diff` and the run log.
 
 ## Optional: compression filter (saves tokens before they reach the expensive LLM)
 
 If [`examples/plugins/burnless-compress`](../examples/plugins/burnless-compress) is installed (the user can `cp examples/plugins/burnless-compress/manifest.json ~/.burnless/plugins/` and run `python examples/plugins/burnless-compress/server.py`), Burnless automatically compresses verbose prompts before they reach the cloud LLM. Empirically: **2.5× compression** on Portuguese samples with `qwen2.5:7b-instruct` local + telegrafista. See [`bench/COMPRESSION_FINDINGS.md`](../bench/COMPRESSION_FINDINGS.md) for the full method.
 
 You don't do anything special to use it — it runs as a Burnless plugin hook (`pre_worker_prompt`, `pre_brain_prompt`). Just know that your verbose prompt gets a free token diet on the way out.
+
+## Compression modes (how prior session state is encoded)
+
+Separate from the optional compress *plugin* above, Burnless has a built-in **compression mode** that controls how much of the prior session state is preserved in the capsule history the Maestro reads. Set it per run with `--mode <light|balanced|extreme>` (or via config).
+
+| Mode | Layers | ~Savings | Keeps | Use when |
+|---|---|---|---|---|
+| **light** | minifier only (L1) | ~40% | Anchor preserved — **prior decisions remain revisable** | High-stakes / iterative work where you may need to reopen earlier decisions, or where over-compression risks **phantom completion** (the Maestro "remembering" something as done that wasn't). |
+| **balanced** | minifier + encoder (L1+L2) | ~88% (default) | Semantic result kept; argumentative trajectory dropped | Normal multi-turn work. The sensible default. |
+| **extreme** | all layers | ~93%+, no friendly output | Final result only | CI/CD batches with **no human in the loop**. |
+
+**When to use `--mode light`:** reach for it whenever you need decisions to stay revisable, or when aggressive compression could let a phantom-completion slip through (the worker/Maestro believing a step ran because the dropped context can't contradict it). Light keeps the anchor so the trajectory stays auditable; pay the extra tokens when correctness matters more than savings.
+
+Workers are always **epistemically pure** regardless of mode — they receive a clean task without the Maestro's debate history, so the mode only affects what the Maestro itself sees between turns.
+
+## Capsule encryption status (read before assuming privacy)
+
+The capsule envelope (compression Layer 3) uses a **session key held in RAM** by default. It is **NOT enterprise-grade encryption in v0.x** — do not treat capsules as a privacy guarantee against a determined party. Capsule format v2: `burnless:v2:<session_id>:<key_id>:<base64_ciphertext>`.
+
+Privacy in Burnless is a property of **where each component runs** (local vs cloud encoder/Maestro/workers), not of the envelope crypto. If you need real encryption guarantees, that is out of scope for the current implementation — modes `redact`, `audit`, `opaque`, `burnkey` are planned, not yet implemented.
 
 ## How to operate (rules of thumb)
 
@@ -94,12 +128,17 @@ You don't do anything special to use it — it runs as a Burnless plugin hook (`
 
 Otherwise: act, then report briefly.
 
-## Engagement modes (Claude Code integration)
+## Engagement modes (generic — any LLM host)
 
-Burnless itself works from any assistant or plain shell — `burnless do/delegate/run` need no hook.
-The `off`/`partner`/`on`/`rollover` modes (see the README "Engagement modes" section) are an *optional*
-Claude Code convenience: a `/burnless` slash command sets a per-session mode, and a `UserPromptSubmit`
-hook reads it and shapes the assistant's behavior each turn.
+The `off`/`partner`/`on`/`rollover` engagement modes are a **generic** mechanism, implemented in
+`burnless_mode_hook.sh` and usable from **any LLM host**, not a Claude-Code-only feature. The hook reads a
+per-session mode and shapes the assistant's behavior each turn; any host that can run a shell hook on user
+input (or otherwise read the mode file) can adopt them. Burnless's core (`burnless do/delegate/run`) needs
+no hook at all — the modes are an optional behavior layer on top.
+
+Claude Code is simply the **reference integration**: a `/burnless` slash command sets the per-session mode and a
+`UserPromptSubmit` hook invokes `burnless_mode_hook.sh`. The example below shows that wiring, but the mode logic
+itself is host-agnostic.
 
 **1. Slash command** — ships at [`.claude/commands/burnless.md`](../.claude/commands/burnless.md). It emits
 a sentinel `__BURNLESS_MODE_CMD__ <arg>`.

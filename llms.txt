@@ -1,5 +1,8 @@
 === Burnless — technical briefing for LLMs and reviewers ===
 
+Canonical LLM usage manual: docs/USING_BURNLESS_FROM_YOUR_LLM.md
+(This file is the discovery brief; that file is how to actually operate Burnless from your LLM.)
+
 WHAT IT IS
 Burnless is a small Python framework (MIT, `pip install burnless`) that orchestrates LLM workers across configurable tiers (gold/silver/bronze), stores session state as on-disk capsules instead of replaying full transcripts, and audits worker outputs against the filesystem. It is one implementation choice among several for managing long multi-turn LLM sessions; it is not a novel theoretical breakthrough.
 

@@ -16,14 +16,11 @@ _TELEGRAPHIC_OUTPUT_HINT = (
     "Responda em estilo telegráfico: sem fillers, sem prosa expansiva, abreviações curtas.\n"
     "Abreviações comuns: imp=implementar, val=validar, cfg=configuração, doc=documentação, "
     "auth=autenticação, repo=repositório, dir=diretório, arq=arquivo, ||=em paralelo.\n\n"
-    "Estrutura obrigatória da saída textual (separada do JSON envelope):\n"
-    "1. Header em uma linha: `<tier> :: <status> <action> <files/refs>` (status: OK|PART|ERR|BLK)\n"
-    "2. Evidence — comandos rodados + outputs LITERAIS (NUNCA abreviar evidence)\n"
-    "3. Relatório breve (1-2 parágrafos): decisões não óbvias, gaps detectados\n\n"
-    "Regra dura: evidence, file_paths, command outputs e validated NUNCA são telegrafados — "
-    "auditor precisa do literal. Só a prosa narrativa do relatório é telegráfica.\n"
-    "O JSON envelope (status, kind, summary, files_touched, validated, evidence, issues, next) "
-    "permanece obrigatório.\n"
+    "O contrato de saída é o JSON envelope (status, kind, summary, files_touched, validated, "
+    "evidence, issues, next) — obrigatório e sempre por último.\n"
+    "Regra dura: evidence, file_paths, command outputs e validated NUNCA são telegrafados nem "
+    "abreviados — auditor precisa do literal. Só prosa narrativa breve e opcional, antes do "
+    "envelope, é telegráfica.\n"
 )
 
 

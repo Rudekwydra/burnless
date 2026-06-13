@@ -272,7 +272,6 @@ def _check_c(checks: list[Check], home: Path | None = None) -> None:
     if home is None:
         home = Path.home()
     from .init_claude_code import is_wired
-    wired = is_wired(home)
 
     def _fix_wire() -> None:
         _wire_hooks(home)
@@ -281,6 +280,8 @@ def _check_c(checks: list[Check], home: Path | None = None) -> None:
         _install_managed(home)
 
     # C1: settings.json exists → wire (creates settings.json)
+    wired = is_wired(home)
+
     if wired["settings_exists"]:
         checks.append(Check("C1", "C", "PASS", "~/.claude/settings.json exists"))
     else:
