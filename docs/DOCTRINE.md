@@ -106,3 +106,157 @@ Never pipe `do`/`run` through `tail`/`head` — it masks the exit code. Capture 
 ## Rolling memory (epochs)
 
 In `burnless chat`, the maestro's own context rolls instead of growing — each turn is summarized to `.burnless/epochs/`, every 10 turns the fork rotates and re-seeds from the rolling summary (Θ(N²)→Θ(N)). Toggle: `burnless epoch on|off`. Default off.
+
+---
+
+## Spec Authoring — Pre-Dispatch Checklist (6 Rules)
+
+**When:** Before every `burnless do` or `burnless delegate`. **Why:** These rules prevent systematic errors discovered in TEST 1 audit (2026-06-13). **Who checks:** Pre-flight validator (automatic) + you (mental checklist).
+
+### Rule 1: Verify block MUST be fenced [GATED — cli.py blocks exit 6]
+The `## Verify` section must be inside a shell code block (```sh ... ```). If unfenced, the extractor returns an empty list, the gate disables silently, and the delegation passes with `OK` even if it should fail.
+
+✅ Correct:
+```
+## Verify
+```sh
+test -f /path/to/file || exit 1
+```
+```
+
+❌ Wrong:
+```
+## Verify
+test -f /path/to/file || exit 1
+```
+
+**Pre-flight check:** Regex `^##\s*Verify` → must be followed by ````sh` within a few lines.
+
+---
+
+### Rule 2: Each Verify check = 1 line [GATED — runner ABORT]
+The validator splits the fenced block by newlines, executing each line as a separate shell command. Multi-line commands (if/else/fi, loops, heredocs) break because the lines become incomplete shell fragments.
+
+✅ Correct:
+```sh
+grep -q 'pattern' /path/to/file || exit 1
+```
+
+❌ Wrong:
+```sh
+if grep -q 'pattern' /path/to/file; then
+  echo "found"
+else
+  exit 1
+fi
+```
+→ Parsed as three commands: `if grep ... ; then` (syntax error: where's the command after `then`?), `echo ...`, `exit 1`, `fi`.
+
+**Pre-flight check:** Count semicolons in each line; collapse long commands with `||`, `&&`, but no `if/fi` or loops inside a single check.
+
+---
+
+### Rule 3: All paths are absolute [GATED — cli.py blocks exit 6]
+Workers execute in an isolated cwd (`/private/tmp/claude-502/<uuid>/`). Relative paths like `src/file.py` are relative to the temp dir, not the project root, so file checks silently fail or read the wrong files.
+
+✅ Correct:
+```
+File: /Users/roberto/antigravity/burnless/src/burnless/doctor.py
+## Verify
+```sh
+test -f /Users/roberto/antigravity/burnless/src/burnless/doctor.py || exit 1
+```
+```
+
+❌ Wrong:
+```
+File: src/burnless/doctor.py
+## Verify
+```sh
+test -f src/burnless/doctor.py || exit 1
+```
+
+**Pre-flight check:** Regex `-v "^/"` to flag any path not starting with `/` (relative). Prepend project root.
+
+---
+
+### Rule 4: Bronze doesn't edit large files (>200 lines) [MENTAL ONLY — not enforced in code]
+Haiku and local Gemma workers emit tool-call markup (`<antml>...</<tool>`) inside file edits when the file is large. This markup leaks into the output, corrupting JSON/code with `[3D[K` ANSI sequences or mismatched brackets.
+
+✅ Correct: Use Bronze for read-only, classification, or small new files.  
+✅ Correct: Use Silver or Gold for any mutation of an existing large file.
+
+❌ Wrong: `burnless do --tier bronze "Edit /Users/.../doctor.py (500 lines) and add function X"`  
+→ Markup corruption → SyntaxError → PART.
+
+**Pre-flight check:** If spec mentions edit + file >200 lines → warn or auto-tier to silver.
+
+---
+
+### Rule 5: Output schema explicit (JSON with example + declared fields) [MENTAL ONLY — not enforced in code]
+Worker output that is empty or has declared fields set to empty arrays/null passes as `OK` even when it should fail. The schema-verify gate (d667, 2026-06-13) detects this false-OK and demotes the delegation to PART.
+
+✅ Correct:
+```
+Find all security bugs in /Users/.../ doctor.py.
+
+Output JSON **only**:
+{
+  "bugs": [
+    {"type": "injection", "line": 42, "severity": "high"}
+  ]
+}
+If no bugs found, still return {"bugs": []}, but the `bugs` array MUST be present.
+
+## Verify
+```sh
+test -f /Users/.../doctor.py || exit 1
+python3 -c "import json; d=json.load(open('/tmp/output.json')); assert isinstance(d['bugs'], list) and len(d['bugs']) > 0 or True, 'must include bugs key'" || exit 1
+```
+```
+
+❌ Wrong:
+```
+Find all security bugs.
+Output: JSON with bugs.
+## Verify
+test -f file.py
+```
+→ Worker returns `{"bugs": []}` or `{"bugs": null}` → JSON is valid, but schema gate catches it → PART.
+
+**Pre-flight check:** Spec must include example JSON with non-empty arrays/objects. Gate asserts declared fields are populated.
+
+---
+
+### Rule 6: Tier health check before dispatch [MENTAL ONLY — not enforced in code]
+If a tier is unavailable (e.g., diamond→Fable gated by Anthropic), the dispatcher should block instead of silently falling back to a degraded tier (gemma-local). This was the root cause of d074, d075, d660, d662 timeouts in TEST 1.
+
+✅ Correct (config + pre-flight):
+```yaml
+tier_model_overrides:
+  diamond: anthropic:opus  # interim, until Fable available
+```
+
+Then, pre-flight runs `tier_health.py` → 1-token probe on each tier → if tier fails, `[BLOCK]` and suggest alternate tier.
+
+❌ Wrong: Diamond tier unavailable → silently fall back to gemma-local → worker never sees external file paths → OOM or timeout.
+
+**Pre-flight check:** Health probe module; if tier unavailable, return `False` and block dispatch (not silent fallback).
+
+---
+
+## Summary: Pre-Dispatch Validation Gates
+
+When you write a spec for `burnless do`, run this checklist:
+
+1. **Verify fencing**: Is `## Verify` inside a ```sh block?
+2. **Line limit**: Does each check inside `## Verify` fit on one line (no if/else)?
+3. **Absolute paths**: Does every path start with `/`? (Project root = `/Users/roberto/antigravity/...`)
+4. **Tier + file size**: Is a large file edit assigned to silver/gold, not bronze?
+5. **Output schema**: Does the spec give an example JSON with non-empty declared fields?
+6. **Tier health**: Is the requested tier available (checked via health probe)?
+
+If all six pass → `burnless do --tier T "..."`  
+If any fails → re-spec or reword until all six pass.
+
+**Note:** Gates 1-3 are deterministic (exit 6 / ABORT) and block at dispatch time, regardless of model state. Gates 4-6 are NOT implemented in code yet (tier_health unwired, no schema gate) — treat as mental checklist until wired.

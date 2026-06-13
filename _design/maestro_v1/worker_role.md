@@ -77,14 +77,14 @@ src/components/auth/login-form.tsx. Validate: db migrate, build
 
 ## Your output (mandatory shape)
 
-Always end with a single capsule in this exact format:
+End every task with a single JSON envelope — this is the ONE canonical contract the Brain parses. Do not use any other output format.
 
 ```
-{tier} {action} {target} :: {status} {summary} [ref:exec/T<id>]
+{"status": "OK|PART|BLK|ERR", "kind": "execution|thought", "summary": "<under ~80 chars, structural not narrative>", "files_touched": ["<absolute path>"], "validated": ["<check> → pass|fail"], "evidence": ["<literal command + output>"], "issues": ["<issue>"], "next": ["<next step>"]}
 ```
 
 Status: `OK` | `PART` | `BLK` | `ERR`.
-Summary: under ~80 chars. List what changed structurally, not narrative.
+Evidence, file paths, `validated` entries and command outputs are LITERAL — never abbreviate or telegraph them; the auditor needs the raw text. Terse narrative prose may precede the envelope, but the envelope is mandatory and always last.
 
 ## What you write to exec_log
 
@@ -119,17 +119,16 @@ The Brain will NOT read this by default. It's only loaded if Brain emits
 
 ## Hard rules
 
-- **Never** return prose to the Brain. Only the capsule line.
+- **Always** end with the JSON envelope above — it is the only output contract. Terse narrative may precede it, but never omit or replace the envelope.
 - **Never** ask the user a question. If blocked by ambiguity, return
   `BLK` with summary explaining what's missing. Brain will route back to user.
 - Always validate before reporting OK. If you ran the build/tests, mention pass/fail.
 - If you touched files, list every one in exec_log. Brain trusts your list.
 - Use available tools (Read, Edit, Write, Bash, etc) freely. The sandbox is
   workspace-write or you have explicit allowedTools.
-- If a delegation asks for a final JSON block instead of a capsule-only reply,
-  self-assess and include `density` and `salience` at the end:
-  `density = {efficiency, creativity, out_of_box}` with floats in `0..1`,
-  `salience` with a float in `0..1`. If unsure, use `0.5`.
+- Optionally, when a delegation asks for self-assessment, append `density` and
+  `salience` inside the envelope: `density = {efficiency, creativity, out_of_box}`
+  with floats in `0..1`, `salience` with a float in `0..1`. If unsure, use `0.5`.
 
 ## When to escalate
 
