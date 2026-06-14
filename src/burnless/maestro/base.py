@@ -1,7 +1,7 @@
 """Warm MAESTRO base session (v1 glue).
 
 Mirrors warm_session.init() but maestro-flavored: the cached prefix carries
-the slim partner role (_design/maestro_v1/partner_role.md) and the session
+the slim partner role (_design/maestro_v1/maestro_role.md) and the session
 is tool-less by policy — tool defs stay PRESENT as cache anchor, usage is
 blocked via --disallowedTools MAESTRO_DISALLOWED.
 
@@ -25,9 +25,9 @@ from pathlib import Path
 from .. import warm_session
 from .session_runner import MAESTRO_DISALLOWED
 
-# Minimal embedded fallback when _design/maestro_v1/partner_role.md is absent
+# Minimal embedded fallback when _design/maestro_v1/maestro_role.md is absent
 # (wheel install). The on-disk role is canonical.
-_FALLBACK_PARTNER_ROLE = (
+_FALLBACK_MAESTRO_ROLE = (
     "You are the Burnless MAESTRO — a tool-less partner. You decide and "
     "delegate; you never execute (tools visible but blocked by policy). "
     "To delegate emit one line per task: "
@@ -42,12 +42,12 @@ def _state_key(model: str) -> str:
     return f"maestro-{model}"
 
 
-def _load_partner_role(project_root: Path) -> str:
-    role_path = project_root / "_design" / "maestro_v1" / "partner_role.md"
+def _load_maestro_role(project_root: Path) -> str:
+    role_path = project_root / "_design" / "maestro_v1" / "maestro_role.md"
     try:
         return role_path.read_text(encoding="utf-8")
     except OSError:
-        return _FALLBACK_PARTNER_ROLE
+        return _FALLBACK_MAESTRO_ROLE
 
 
 def maestro_iso_cwd(burnless_root: Path, model: str) -> str | None:
@@ -72,7 +72,7 @@ def maestro_base_init(burnless_root: Path, model: str) -> str:
         raise RuntimeError("claude binary not found in PATH")
 
     project_root = Path(burnless_root).parent.resolve()
-    role = _load_partner_role(project_root)
+    role = _load_maestro_role(project_root)
     new_uuid = str(_uuid.uuid4())
 
     cmd = [
