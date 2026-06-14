@@ -65,8 +65,8 @@ into a capsule for the Maestro and expands the Maestro's response back to natura
 
 ## Compression
 
-`--mode {light|balanced|extreme}` controls output compression — it is **NOT** a timeout. `light` is
-the default. `extreme` is for read-only / summary work only.
+Capsule compression is fixed and faithful (~150 chars/field, ≤12 list items, full paths, dedupe only).
+There is no `--mode` knob; debug a raw capsule via `burnless log` / direct read.
 
 **Compression boundary (load-bearing):** compress memory, transit, and worker *output* — **never the
 live worker instruction or contract**. Compressing the instruction degrades fidelity (empirically

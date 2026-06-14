@@ -193,31 +193,18 @@ agents:
 
 With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro cannot self-upgrade above the tier the keyword router resolved — manual override requires explicit `--force`.
 
-## Compression modes
+## Compression
 
-```yaml
-compression:
-  mode: balanced   # light | balanced | extreme
-```
+Capsule compression is fixed and faithful — preserve everything (~150 chars/field, ≤12 list items), dedupe only. No mode knob.
 
-| Mode       | Layers           | Anchor preserved | Friendly output | Approx savings | Use when                              |
-|------------|------------------|------------------|-----------------|---------------:|---------------------------------------|
-| `light`    | L1 only          | Yes              | On              |          ~40%  | Architecture debates, decisions       |
-| `balanced` | L1+L2 (default)  | No               | On              |          ~88%  | Project execution                     |
-| `extreme`  | L1+L2+L3         | No               | Off             |         ~93%+  | CI/CD batches, no human in the loop   |
-
-"Anchor preserved" means the Maestro's capsules retain enough argumentative structure that prior decisions remain revisable. Workers are always epistemically pure — they receive a clean task without the Maestro's debate history.
-
-The savings percentages above are what the author observes on his own workload; they will shift with session length and content density.
-
-Per-invocation override: `burnless --mode light "review this architecture"`.
+Workers are always epistemically pure — they receive a clean task without the Maestro's debate history.
 
 ### Compression layers
 
 | Layer                     | What it does                                                          | Cost         | When it fires      |
 |---------------------------|-----------------------------------------------------------------------|--------------|--------------------|
 | 1. Deterministic minifier | Strips filler phrases, normalizes whitespace                          | Zero         | Every turn         |
-| 2. Cache-emergent encoder | Small model compresses semantically; abbreviations emerge per session | ~$0.001/turn | balanced + extreme |
+| 2. Cache-emergent encoder | Small model compresses semantically; abbreviations emerge per session | ~$0.001/turn | L2 encoder path |
 | 3. Capsule envelope       | Wraps compressed text with session key (RAM-only by default)          | Zero         | After Layer 2      |
 | 4. Base64 pack            | ASCII-portable capsule format                                         | Zero         | After Layer 3      |
 

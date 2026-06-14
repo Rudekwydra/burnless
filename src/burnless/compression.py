@@ -5,10 +5,8 @@ Generates an "operational memory for AI" capsule from a raw agent log + the
 JSON summary the agent emitted. The capsule is what feeds back into state.json
 and what the next delegation will see — not the raw log.
 
-Three modes:
-  light     — preserves everything; ~150 chars per field; dedupe only
-  balanced  — basename paths; ~80 chars per field; dedupe + drop empties (default)
-  extreme   — slugs/short bullets; ~40 chars per field; only essentials
+Capsule compression is fixed and faithful: ~150 chars per field, ≤12 list
+items, full paths, dedupe only. There is no mode knob.
 
 A capsule preserves these fields (always present, even if empty):
   objective, status, files, decisions, validations, errors, risks, next
@@ -41,21 +39,8 @@ def _strip_gemma_channels(text: str) -> str:
     return text.strip()
 
 
-MODES = ("light", "balanced", "extreme")
-DEFAULT_MODE = "balanced"
-MODE_ALIASES = {"safe": "light", "aggressive": "extreme"}
-
-
-def normalize_mode(mode: str) -> str:
-    """Map legacy aliases silently to canonical names."""
-    return MODE_ALIASES.get(mode, mode)
-
-
-_FIELD_LIMITS = {
-    "light":    {"per_field": 150, "list_items": 12},
-    "balanced": {"per_field": 80,  "list_items": 8},
-    "extreme":  {"per_field": 40,  "list_items": 5},
-}
+_PER_FIELD = 150
+_LIST_ITEMS = 12
 
 _DECISION_PATTERNS = [
     re.compile(r"\b(?:decided|chose|opted|picked|selected)\s+(?:to\s+)?([^\n]{6,140})", re.I),
@@ -84,7 +69,7 @@ class Capsule:
     errors: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
     next: str = ""
-    mode: str = DEFAULT_MODE
+    mode: str = "faithful"
     tokens: dict = field(default_factory=dict)
     created_at: str = ""
 
@@ -111,28 +96,22 @@ def compress(
     goal: str,
     summary: dict,
     raw_log: str,
-    mode: str = DEFAULT_MODE,
 ) -> Capsule:
-    """Build a capsule from goal + summary + raw_log under the given mode."""
+    """Build a faithful capsule from goal + summary + raw_log."""
     from .codec.decoder import _coerce_to_list
-
-    mode = normalize_mode(mode)
-    if mode not in MODES:
-        raise ValueError(f"unknown compression mode: {mode!r}; pick one of {MODES}")
 
     summary = dict(summary or {})
     for field in ("validated", "evidence", "files_touched", "issues"):
         if field in summary:
             summary[field] = _coerce_to_list(summary[field])
 
-    limits = _FIELD_LIMITS[mode]
-    per_field = limits["per_field"]
-    max_items = limits["list_items"]
+    per_field = _PER_FIELD
+    max_items = _LIST_ITEMS
 
     objective = _trim(goal or summary.get("summary", ""), per_field)
     status = str(summary.get("status") or "?").strip().upper() or "?"
 
-    files = _normalize_files(summary.get("files_touched") or [], mode=mode)
+    files = _normalize_files(summary.get("files_touched") or [])
     files = _cap_list(files, max_items=max_items, per_item=per_field)
 
     validations = _cap_list(
@@ -157,12 +136,6 @@ def compress(
 
     next_step = _trim(summary.get("next") or "", per_field)
 
-    if mode == "extreme":
-        objective = _slugify_phrase(objective, max_words=10)
-        next_step = _slugify_phrase(next_step, max_words=8)
-        decisions = [_slugify_phrase(d, max_words=8) for d in decisions]
-        risks = [_slugify_phrase(r, max_words=8) for r in risks]
-
     return Capsule(
         id=delegation_id,
         objective=objective,
@@ -173,7 +146,7 @@ def compress(
         errors=errors,
         risks=risks,
         next=next_step,
-        mode=mode,
+        mode="faithful",
         created_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -237,16 +210,12 @@ def _cap_list(items: list[str], *, max_items: int, per_item: int) -> list[str]:
     return out
 
 
-def _normalize_files(items: list, *, mode: str) -> list[str]:
-    mode = normalize_mode(mode)
+def _normalize_files(items: list) -> list[str]:
     out: list[str] = []
     for f in items:
         if not f:
             continue
-        s = str(f)
-        if mode in ("balanced", "extreme"):
-            s = Path(s).name or s
-        out.append(s)
+        out.append(str(f))
     return _dedupe(out)
 
 
@@ -423,10 +392,6 @@ def compress_transcript(
     import secrets
     from .codec.cipher import generate_key, encode as cipher_encode, pack
     from . import config
-
-    mode = normalize_mode(mode)
-    if mode not in MODES:
-        raise ValueError(f"unknown compression mode: {mode!r}; pick one of {MODES}")
 
     session_id = secrets.token_hex(6)
     key = generate_key()

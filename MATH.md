@@ -323,30 +323,18 @@ The same content, summarized into a compact document and presented to the same m
 
 Workers receive a task, a cached system prompt, and the capsules relevant to that task. They do not receive the argumentative history of the Maestro session. Every Worker call is epistemically fresh. This is not a limitation — it is the correct design for execution. An executor that inherits the Maestro's accumulated debate would defend architectural decisions when its job is to implement them.
 
-### Compression modes as an epistemic trade-off
+### The layered compression architecture
 
-The three compression modes (`light`, `balanced`, `extreme`) are not only cost settings. They control where on the **cost × epistemic fidelity** plane the session runs.
+Capsule compression is fixed and faithful: ~150 chars/field, ≤12 list items, full paths, dedupe only. There is no user-chosen mode — the same faithful behavior applies to every capsule.
 
-| Mode | Compression layers active | Anchor preserved | Friendly | Savings vs standalone | Use when |
-|---|---|---|---|---|---|
-| `light` | Minifier only (L1) | **Yes** | On | ~40% | Design sessions, architecture debates, decisions that may need revisiting |
-| `balanced` *(default)* | Minifier + semantic encoder (L1 + L2) | No | On | ~88% | Project execution, multi-step implementation, standard workflows |
-| `extreme` | All layers (L1 + L2 + L3 opt-in) | No | **Off** | ~93%+ | CI/CD pipelines, batch automation, no human in the loop |
+The compression still runs as layers on the **cost × epistemic fidelity** plane:
 
-`light` mode preserves the argumentative structure in capsules — the encoder is skipped and only deterministic minification runs. The Maestro accumulates context that a human would recognize as reasoning, not just state. The cost is a fatter history and lower savings; the benefit is that the session can genuinely reconsider.
+| Layer | What it does | Anchor preserved | Cost |
+|---|---|---|---|
+| L1 — Minifier | Deterministic filler strip + whitespace normalization | **Yes** | Zero |
+| L2 — Semantic encoder | Small model compresses semantically; abbreviations emerge per session | No | ~$0.001/turn |
+| L3 — Capsule envelope | Wraps compressed text with session key; ASCII-portable pack | No | Zero |
 
-`balanced` discards the trajectory and retains only the semantic result. The Maestro knows what was decided; it does not know how. This is the correct default for execution-heavy sessions where continuity of *state* matters but continuity of *argument* does not.
+The faithful capsule preserves the argumentative structure — everything is retained, only duplicates are dropped. The Maestro accumulates context a human would recognize as reasoning, not just state, so the session can genuinely reconsider past decisions.
 
-`extreme` adds maximum compression and disables natural-language expansion (friendly mode off). Output is machine-readable capsules without prose wrapping. Appropriate for pipelines where no human reads the intermediate output.
-
-### Setting the mode
-
-```yaml
-# .burnless/config.yaml
-compression:
-  mode: light       # light | balanced | extreme
-```
-
-Or per-invocation: `burnless --mode light "review this architecture decision"`.
-
-The choice is not about how much you trust the model. It is about what the task requires: **decisions need anchoring; execution needs purity.**
+The design principle is unchanged: **decisions need anchoring; execution needs purity.** Workers receive clean tasks; the Maestro retains the faithful history.

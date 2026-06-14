@@ -97,8 +97,7 @@ DEFAULT_CONFIG: dict = {
         "expensive_model_usd_per_million": 15.0,
     },
     "compression": {
-        "mode": "balanced",   # canonical: light | balanced | extreme (aliases: safe→light, aggressive→extreme)
-        "friendly": True,      # True = Haiku expands capsule into prose; False = print raw capsule (default for extreme)
+        "friendly": True,      # True = Haiku expands capsule into prose; False = print raw capsule
         "voice_match": True,   # True (default) = decoder mirrors user's tone/slang/warmth in response. ~5% extra input tokens. False = robotic prose.
         "local_codec": "auto",  # auto | ollama | hint — auto = use ollama if detected, else hint-only
         "local_codec_model": "qwen2.5-coder:7b",
@@ -246,11 +245,9 @@ def load(path: Path) -> dict:
     user_comp = user_data.get("compression", {}) if isinstance(user_data.get("compression"), dict) else {}
     data = _deep_merge(DEFAULT_CONFIG, user_data)
     _normalize_legacy_tiers(data, prefer_diamond=legacy_diamond_only)
-    from . import compression as _comp
     comp = data.setdefault("compression", {})
-    comp["mode"] = _comp.normalize_mode(comp.get("mode", "balanced"))
     if "friendly" not in user_comp:
-        comp["friendly"] = comp["mode"] != "extreme"
+        comp["friendly"] = True
     return data
 
 
