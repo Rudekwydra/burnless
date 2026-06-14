@@ -42,12 +42,21 @@ def extract(r: dict) -> dict:
     }
 
 
-TURN_TASK = (
-    "Write a detailed paragraph (around 300 tokens, roughly 200 words) explaining "
-    "step {k} of an imaginary technical migration plan. Be specific: invent realistic "
-    "components, dependencies, risks, and verification commands. Do NOT use placeholders "
-    "like 'XYZ' — write concrete prose. End with a one-line summary."
-)
+TURN_TASKS = {
+    "migration": (
+        "Write a detailed paragraph (around 300 tokens, roughly 200 words) explaining "
+        "step {k} of an imaginary technical migration plan. Be specific: invent realistic "
+        "components, dependencies, risks, and verification commands. Do NOT use placeholders "
+        "like 'XYZ' — write concrete prose. End with a one-line summary."
+    ),
+    "code": (
+        "Implement step {k} of a Python CLI tool, building on the prior steps. Add ONE "
+        "well-formed function (~30-50 lines): realistic logic, type hints, a docstring, and "
+        "error handling. Output ONLY the new function's code (no prose). End with a one-line "
+        "'# summary: ...' comment."
+    ),
+}
+TURN_TASK = TURN_TASKS["migration"]
 
 
 def run_replay(turns: int, model: str) -> list[dict]:
@@ -92,7 +101,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--turns", type=int, default=10)
     ap.add_argument("--model", default="haiku")
+    ap.add_argument("--task", choices=["migration", "code"], default="migration")
     args = ap.parse_args()
+    global TURN_TASK
+    TURN_TASK = TURN_TASKS[args.task]
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = Path.home() / ".burnless" / "test_data" / ts
