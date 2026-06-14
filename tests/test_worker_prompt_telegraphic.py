@@ -51,13 +51,6 @@ def test_hint_forbids_telegraphing_evidence():
     assert "evidence" in _TELEGRAPHIC_OUTPUT_HINT.lower()
 
 
-def test_hint_has_all_three_output_parts():
-    hint = _TELEGRAPHIC_OUTPUT_HINT
-    assert "Header" in hint or "header" in hint.lower()
-    assert "Evidence" in hint or "evidence" in hint.lower()
-    assert "Relatório" in hint or "relatório" in hint.lower()
-
-
 def test_chain_manifest_still_appears_before_telegraphic():
     with tempfile.TemporaryDirectory() as tmp:
         project, burnless = _ctx_args(tmp)

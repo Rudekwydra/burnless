@@ -45,8 +45,3 @@ def test_cmd_epoch_on_status(tmp_root, capsys):
     out = capsys.readouterr().out
     assert "ON" in out
 
-
-def test_maestro_gate_uses_helper():
-    import burnless.maestro_layer as m
-    src = inspect.getsource(m.process_envelope)
-    assert "is_enabled" in src, "process_envelope gate not using is_enabled helper"

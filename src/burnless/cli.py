@@ -30,7 +30,6 @@ from . import live_runner
 from .estimator import estimate_tokens
 from .codec.decoder import normalize_worker_envelope
 from .cmd_wrapper import run_and_capsule
-from . import pipeline_state as pipeline_state_mod
 from .report_kind import (
     infer_kind_hint as _infer_kind_hint,
     normalize_report_kind as _normalize_report_kind,
@@ -331,37 +330,22 @@ def cmd_delegate(args: argparse.Namespace) -> int:
     text = re.sub(r"^##\s", "### ", text, flags=re.MULTILINE)
     success = args.success or "task completed; final JSON block emitted as required."
     kind_hint = _infer_kind_hint(text)
-    chat_mode = bool(getattr(args, "chat", False))
-    if chat_mode:
-        body = deleg_mod.render_maestro_chat(
-            delegation_id=did,
-            task=text,
-            agent_name=agent_cfg["name"],
-            tier=tier,
-        )
-    else:
-        body = deleg_mod.render_delegation(
-            delegation_id=did,
-            goal=goal,
-            task=text,
-            success=success,
-            kind_hint=kind_hint,
-            agent_name=agent_cfg["name"],
-            tier=tier,
-            routed_by=kw,
-        )
+    body = deleg_mod.render_delegation(
+        delegation_id=did,
+        goal=goal,
+        task=text,
+        success=success,
+        kind_hint=kind_hint,
+        agent_name=agent_cfg["name"],
+        tier=tier,
+        routed_by=kw,
+    )
     deleg_path = p["delegations"] / f"{did}.md"
     if chain:
         header = f"---\nchain: [{', '.join(chain)}]\n---\n"
         deleg_mod.write_delegation(deleg_path, header + body)
     else:
         deleg_mod.write_delegation(deleg_path, body)
-    # Marker file so the shell renderer knows to display the natural-text
-    # response rather than parsing for the JSON schema (which won't exist).
-    if chat_mode:
-        runs_dir = p["root"] / "runs"
-        runs_dir.mkdir(parents=True, exist_ok=True)
-        (runs_dir / f"{did}.chat").write_text("", encoding="utf-8")
     def _set_last(st):
         st["last_delegation"] = did
     state_mod.update_locked(p["state"], _set_last)
@@ -709,52 +693,6 @@ def cmd_metrics_desktop(args: argparse.Namespace) -> int:
     print(f"Source: {turns_path}")
     return 0
 
-
-
-def cmd_brain(args: argparse.Namespace) -> int:
-    print("`burnless brain` is retired. Use `burnless chat` (canonical v1 maestro).", file=sys.stderr)
-    return cmd_chat(argparse.Namespace(model=getattr(args, "model", None)))
-
-def _run_basic_maestro_repl(run_one, *, handle_slash=None, model: str | None = None) -> int:
-    print("Burnless Maestro chat — /help for commands, /exit to leave.")
-    if model:
-        print(f"Maestro: {model}")
-    print("prompt_toolkit unavailable; using basic multiline input.")
-    print("Submit with an empty trailing line or Ctrl-D.")
-    while True:
-        print("maestro › ", end="", flush=True)
-        lines: list[str] = []
-        try:
-            while True:
-                line = input()
-                if not line and lines:
-                    break
-                if not line and not lines:
-                    continue
-                lines.append(line)
-        except EOFError:
-            if not lines:
-                print()
-                return 0
-        message = "\n".join(lines).strip()
-        if not message:
-            continue
-        if handle_slash is not None:
-            slash_result = handle_slash(message)
-            if slash_result == 0:
-                return 0
-            if slash_result is None:
-                continue
-        else:
-            if message in {"/exit", "/quit", "exit", "quit"}:
-                return 0
-            if message == "/clear":
-                os.system("clear")
-                continue
-        code = run_one(message)
-        if code:
-            return code
-        print()
 
 
 def cmd_read(args: argparse.Namespace) -> int:
@@ -1150,14 +1088,6 @@ def cmd_setup(args: argparse.Namespace) -> int:
     )
 
 
-def cmd_maestro(args: argparse.Namespace) -> int:
-    # Retired: the stateless single-telegram maestro is superseded by `burnless chat`.
-    # Preserve passthrough: echo the telegram so any wrapper consuming stdout still works.
-    print(args.telegram)
-    print("`burnless maestro` is retired; the engine lives in `burnless chat`.", file=sys.stderr)
-    return 0
-
-
 def _worker_overrides_from_args(args) -> dict:
     """Collect per-call tier worker overrides from --diamond/--gold/--silver/--bronze."""
     return {t: getattr(args, t) for t in ("diamond", "gold", "silver", "bronze") if getattr(args, t, None)}
@@ -1232,21 +1162,6 @@ def cmd_do(args: argparse.Namespace) -> int:
             p["config"].write_text(_orig_config_text, encoding="utf-8")
 
     return rc
-
-
-def cmd_shell(args: argparse.Namespace) -> int:
-    # `burnless shell` is an alias for `burnless pty` — the legacy REPL was
-    # removed in v0.7.4 because pyd preserves Claude Code commands while
-    # still wrapping the session in Burnless instrumentation.
-    import sys
-    print("\033[2mburnless shell → burnless pty (alias since v0.7.4)\033[0m", file=sys.stderr)
-    return cmd_pty(args)
-
-
-def cmd_pty(args: argparse.Namespace) -> int:
-    from . import pty_shell
-
-    return pty_shell.main(argv_extra=getattr(args, "args", None) or [])
 
 
 def cmd_route(args: argparse.Namespace) -> int:
@@ -1369,292 +1284,6 @@ def cmd_economy(args: argparse.Namespace) -> int:
     return 0
 
 
-def _chat_worker_usage_estimate(
-    delegate_line: str,
-    capsule_line: str,
-    burnless_root: Path,
-    cfg: dict,
-) -> dict:
-    """Estimated usage dict for one dispatched worker (floor, not meter):
-    input = delegate line, cache_read = warm worker prefix (measured ~22k,
-    warm_session docstring), output = worker stdout from its exec_log."""
-    from .maestro.dispatcher import TIER_ALIASES
-    from .maestro.engine import estimate_tokens as _est
-
-    out_tokens = _est(capsule_line)
-    m = re.search(r"\[ref:exec/T(\d+)\]", capsule_line)
-    if m:
-        log_path = burnless_root / "exec_log" / f"T{int(m.group(1)):04d}.md"
-        try:
-            body = log_path.read_text(encoding="utf-8")
-            if "## STDOUT" in body:
-                body = body.split("## STDOUT", 1)[1].split("## STDERR", 1)[0]
-            out_tokens = max(out_tokens, _est(body))
-        except OSError:
-            pass
-    tier_short = (capsule_line.split(None, 1) or ["slv"])[0].lstrip("+~").lower()
-    tier = TIER_ALIASES.get(tier_short, "silver")
-    # fallback estimate — used only when the worker emitted no usage in its output
-    return {
-        "model": config_mod.resolve_model(tier, cfg),
-        "input_tokens": _est(delegate_line),
-        "cache_read_input_tokens": 22000,
-        "cache_creation_input_tokens": 0,
-        "output_tokens": out_tokens,
-    }
-
-
-def cmd_chat(args: argparse.Namespace) -> int:
-    """Maestro REPL on the new core (v1 glue): warm maestro base →
-    MaestroSession/maestro_turn_session → dispatcher.run_all → economy footer.
-    Compaction OFF by default. An opt-in rollover mode can force a cycle
-    boundary every N user turns and seed the next fork from the resulting
-    capsule."""
-    from functools import partial
-
-    from . import chat_history
-    from . import warm_session
-    from . import epochs as epochs_mod
-    from .economy import economy_snapshot, render_footer
-    from .maestro import dispatcher as dispatcher_mod
-    from .maestro import engine as maestro_engine
-    from .maestro.base import maestro_base_init, maestro_iso_cwd
-    from .maestro.engine import MaestroState, Turn, estimate_tokens, maestro_turn_session
-    from .maestro.runners import runner_claude_json
-    from .maestro.session_runner import MaestroSession
-
-    root = paths_mod.require_root()
-    p = paths_mod.paths_for(root)
-    cfg = config_mod.load(p["config"])
-    _maestro_cfg_model = config_mod.resolve_layer_models(cfg).get("maestro")
-    model = (
-        config_mod.normalize_model(getattr(args, "model", None))
-        or (_maestro_cfg_model if _maestro_cfg_model and _maestro_cfg_model != "off" else None)
-        or config_mod.DEFAULT_TIER_MODELS["bronze"]
-    )
-    claude_bin = warm_session._claude_binary()
-    if claude_bin is None:
-        print("claude binary not found in PATH", file=sys.stderr)
-        return 1
-    try:
-        base_uuid = maestro_base_init(root, model)
-    except RuntimeError as e:
-        print(f"maestro base init failed: {e}", file=sys.stderr)
-        return 1
-    # Forks must run from the base's iso-cwd so --resume finds the jsonl.
-    turn_timeout = int((cfg.get("maestro") or {}).get("turn_timeout_s", 600))
-    runner = partial(
-        runner_claude_json,
-        timeout=turn_timeout,
-        cwd=maestro_iso_cwd(root, model),
-    )
-    session = MaestroSession(base_uuid=base_uuid, model=model, claude_bin=claude_bin)
-    state = MaestroState()
-
-    # Per-turn router: trivial turns → local ollama, non-trivial → maestro.
-    # CLI --router overrides config when non-None; default OFF.
-    _cli_router = getattr(args, "router", None)
-    router_enabled = (
-        _cli_router
-        if _cli_router is not None
-        else bool((cfg.get("chat") or {}).get("router_enabled", False))
-    )
-    _cli_expand = getattr(args, "expand", None)
-    expand_enabled = (
-        _cli_expand
-        if _cli_expand is not None
-        else bool((cfg.get("chat") or {}).get("expand_display", False))
-    )
-    _ollama_fn = None
-    from .maestro.turn_router import parse_chat_command as _parse_chat_command
-    if router_enabled:
-        from .maestro.turn_router import classify_turn as _classify_turn, local_answer as _local_answer
-    if router_enabled or expand_enabled:
-        enc = (cfg.get("encoder") or {})
-        _enc_provider = (enc.get("provider") or "").strip()
-        _enc_model = enc.get("model") or ""
-        if _enc_provider == "ollama-local" and _enc_model:
-            from functools import partial as _partial
-            _ollama_fn = _partial(epochs_mod._ollama, _enc_model)
-
-    rollover_turns = max(0, int(getattr(args, "rollover_turns", 0) or 0))
-    keep_tail_turns = int((cfg.get("cache_policy") or {}).get("keep_tail_turns", 0))
-    if rollover_turns > 0:
-        summarizer = epochs_mod.epoch_summarizer(root)
-
-        def compact_fn(blob: str) -> dict:
-            summary = summarizer(blob) if summarizer else None
-            if not summary or not summary.strip():
-                summary = "\n".join(line for line in blob.splitlines() if line.strip())[:2000]
-            return {"decisions": [], "constraints": [], "open_threads": [], "summary": summary}
-    else:
-        compact_fn = lambda blob: {}  # compaction OFF for MVP  # noqa: E731
-    worker_usages: list[dict] = []
-    conv_tokens = 0
-    turns_since_rollover = 0
-
-    def _delegate_lines(text: str) -> list[str]:
-        out = []
-        for raw in text.splitlines():
-            line = raw.strip()
-            if dispatcher_mod.DELEGATE_RE.match(line) or dispatcher_mod.DELEGATE_SHORT_RE.match(line):
-                out.append(line)
-        return out
-
-    print(f"burnless chat — maestro {model} (base {base_uuid[:8]}…) · /exit to quit")
-    while True:
-        try:
-            line = input("you> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if not line:
-            continue
-        if line in {"/exit", "/quit", "/q"}:
-            break
-
-        _cmd = _parse_chat_command(line)
-        if _cmd is not None:
-            _kind, _val = _cmd
-            if _kind == "router":
-                router_enabled = _val
-                print(f"router {'on' if router_enabled else 'off'}")
-            elif _kind == "expand":
-                expand_enabled = _val
-                print(f"expand {'on' if expand_enabled else 'off'}")
-            elif _kind == "rollover":
-                rollover_turns = _val
-                if rollover_turns > 0:
-                    import functools as _functools
-                    _is_noop_compact = not callable(compact_fn) or (
-                        hasattr(compact_fn, "__code__") and compact_fn.__code__.co_consts == ({},)
-                    )
-                    _summarizer = epochs_mod.epoch_summarizer(root)
-
-                    def compact_fn(blob: str, _s=_summarizer) -> dict:
-                        summary = _s(blob) if _s else None
-                        if not summary or not summary.strip():
-                            summary = "\n".join(ln for ln in blob.splitlines() if ln.strip())[:2000]
-                        return {"decisions": [], "constraints": [], "open_threads": [], "summary": summary}
-                else:
-                    compact_fn = lambda blob: {}  # noqa: E731
-                print(f"rollover {rollover_turns}")
-            elif _kind == "status":
-                print(
-                    f"router={'on' if router_enabled else 'off'} "
-                    f"expand={'on' if expand_enabled else 'off'} "
-                    f"rollover={rollover_turns} "
-                    f"cycle={state.cycle} "
-                    f"window={len(state.window) // 2}"
-                )
-            elif _kind == "help":
-                print(
-                    "/router on|off  /expand on|off  /rollover N  "
-                    "/status  /help  /exit"
-                )
-            elif _kind == "error":
-                print(_val)
-            else:
-                print("comando desconhecido; /help")
-            continue
-
-        text = line
-        depth = 0
-        # Per-turn router: attempt local ollama for trivial turns (fail-open).
-        if router_enabled and depth == 0 and _ollama_fn is not None and _classify_turn(text) == "local":
-            local_resp = _local_answer(state, text, ollama_fn=_ollama_fn)
-            if local_resp is not None:
-                print(local_resp)
-                state.window.append(Turn("user", text, estimate_tokens(text)))
-                state.window.append(Turn("maestro", local_resp, estimate_tokens(local_resp)))
-                conv_tokens += estimate_tokens(text) + estimate_tokens(local_resp)
-                worker_usages.append({
-                    "model": "ollama-local",
-                    "input_tokens": estimate_tokens(text),
-                    "cache_read_input_tokens": 0,
-                    "cache_creation_input_tokens": 0,
-                    "output_tokens": estimate_tokens(local_resp),
-                })
-                turns_since_rollover += 1
-                if rollover_turns > 0 and turns_since_rollover >= rollover_turns:
-                    if maestro_engine.force_compact(
-                        state,
-                        compact_fn,
-                        burnless_root=root,
-                        keep_tail_turns=keep_tail_turns,
-                    ):
-                        session.rewind()
-                        turns_since_rollover = 0
-                        print(f"  ↻ rollover capsule {state.cycle} saved", file=sys.stderr)
-                chat_history.append(p["chat"] / "history.md", user=line, burnless=local_resp)
-                snap = economy_snapshot(list(session.usages), conv_tokens, model, worker_usages)
-                print(render_footer(snap))
-                continue
-        _terse_for_history = None
-        while True:
-            response = maestro_turn_session(
-                state, text,
-                cfg=cfg, session=session, runner=runner,
-                compact_fn=compact_fn, burnless_root=root,
-            )
-            conv_tokens += estimate_tokens(text) + estimate_tokens(response or "")
-            if depth == 0:
-                _terse_for_history = response or ""
-            if response:
-                if depth == 0 and expand_enabled:
-                    from .maestro.display import expand_for_display as _expand_fn
-                    print(_expand_fn(response, _ollama_fn))
-                else:
-                    print(response)
-            delegates = _delegate_lines(response or "")
-            if not delegates:
-                break
-            if depth >= 3:
-                print("max delegate depth reached; stopping after 3 levels", file=sys.stderr)
-                break
-            for dl in delegates:
-                print(f"  → {dl}")
-            details = dispatcher_mod.run_all_detailed(
-                delegates,
-                burnless_root=root,
-                project_root=root.parent,
-                config=cfg,
-            )
-            capsules = [d["capsule"] for d in details]
-            for cap in capsules:
-                print(f"  ✓ {cap}")
-            for dl, d in zip(delegates, details):
-                if d["usage"]:
-                    tier_short = (d["capsule"].split(None, 1) or ["slv"])[0].lstrip("+~").lower()
-                    worker_usages.append({
-                        "model": config_mod.resolve_model(dispatcher_mod.TIER_ALIASES.get(tier_short, "silver"), cfg),
-                        "input_tokens": int(d["usage"].get("input_tokens", 0) or 0),
-                        "cache_read_input_tokens": int(d["usage"].get("cache_read_input_tokens", 0) or 0),
-                        "cache_creation_input_tokens": int(d["usage"].get("cache_creation_input_tokens", 0) or 0),
-                        "output_tokens": int(d["usage"].get("output_tokens", 0) or 0),
-                    })
-                else:
-                    worker_usages.append(_chat_worker_usage_estimate(dl, d["capsule"], root, cfg))
-            text = "\n".join(c for c in capsules if c.strip()) or \
-                "brz :: ERR worker returned empty capsule"
-            depth += 1
-        chat_history.append(p["chat"] / "history.md", user=line, burnless=(_terse_for_history or ""))
-        turns_since_rollover += 1
-        if rollover_turns > 0 and turns_since_rollover >= rollover_turns:
-            if maestro_engine.force_compact(
-                state,
-                compact_fn,
-                burnless_root=root,
-                keep_tail_turns=keep_tail_turns,
-            ):
-                session.rewind()
-                turns_since_rollover = 0
-                print(f"  ↻ rollover capsule {state.cycle} saved", file=sys.stderr)
-        snap = economy_snapshot(list(session.usages), conv_tokens, model, worker_usages)
-        print(render_footer(snap))
-    return 0
-
-
 def cmd_profile(args: argparse.Namespace) -> int:
     from . import profiles as profiles_mod
     sub = getattr(args, "profile_cmd", None)
@@ -1734,11 +1363,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="manually override the hard tier gate when selecting a higher tier",
-    )
-    sp.add_argument(
-        "--chat",
-        action="store_true",
-        help="Maestro chat mode: render conversational template (no JSON schema, natural-text response)",
     )
     sp.add_argument(
         "--allow-relative-paths",
@@ -1874,33 +1498,6 @@ def build_parser() -> argparse.ArgumentParser:
     dsp = decisions_sub.add_parser("clear", help="clear cached architectural decisions")
     dsp.set_defaults(func=cmd_decisions_clear)
 
-    sp = sub.add_parser("chat", help="maestro REPL on the new core (warm base + workers + economy footer)")
-    sp.add_argument("--model", default=None, help="maestro model (default: maestro.model in config, else gold tier model)")
-    sp.add_argument(
-        "--rollover-turns",
-        type=int,
-        default=0,
-        help="experimental: force a capsule cycle every N user turns and re-seed the next fork",
-    )
-    sp.add_argument(
-        "--router",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="route trivial turns to local ollama (overrides config chat.router_enabled)",
-    )
-    sp.add_argument(
-        "--expand",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="expand maestro responses via local ollama for display (overrides config chat.expand_display)",
-    )
-    sp.set_defaults(func=cmd_chat)
-
-    sp = sub.add_parser("brain", help="enter Maestro chat (model configurable in .burnless/config.yaml)")
-    sp.add_argument("--message", "-m", help="single-shot mode")
-    sp.add_argument("--model", default=None, help="override Maestro model")
-    sp.set_defaults(func=cmd_brain)
-
     sp = sub.add_parser("read", help="print compact JSON summary for delegation ID")
     sp.add_argument("id")
     sp.set_defaults(func=cmd_read)
@@ -1975,14 +1572,6 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_sub.add_parser("status", help="show daemon PID + last log lines")
     daemon_sub.add_parser("run-fg", help="run daemon in foreground (debug)")
     wdp.set_defaults(func=cmd_warm_daemon)
-
-    sp = sub.add_parser("shell", help="alias for `burnless pty` (legacy REPL removed in v0.7.4)")
-    sp.add_argument("args", nargs=argparse.REMAINDER, help="extra args passed to pty")
-    sp.set_defaults(func=cmd_shell)
-
-    sp = sub.add_parser("pty", help="spawn the real maestro CLI (claude/codex) with 🔥 Burnless header")
-    sp.add_argument("args", nargs="*", help="extra args forwarded to the maestro binary")
-    sp.set_defaults(func=cmd_pty)
 
     sp = sub.add_parser("profile", help="manage named profiles (~/.burnless/profiles/)")
     sp.set_defaults(func=cmd_profile, _parser=sp)
@@ -2059,27 +1648,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_do)
 
     sp = sub.add_parser(
-        "maestro",
-        help="invoke the Maestro conducting layer (isolated, stateless) with a compacted telegram",
-    )
-    sp.add_argument("telegram", help="compacted one-line telegram of intent (JSON)")
-    sp.add_argument("--model", default=None, help="model for the Maestro layer (default haiku)")
-    sp.set_defaults(func=cmd_maestro)
-
-    sp = sub.add_parser(
-        "pipeline",
-        help="3-layer pipeline toggle (encoder/decoder layer via mcp__burnless__maestro)",
-    )
-    sp.add_argument("action", nargs="?", default="status",
-                    choices=["on", "off", "status"],
-                    help="action (default: status)")
-    sp.add_argument("--compression-mode", default="tight",
-                    choices=["tight", "balanced", "loose"],
-                    dest="compression_mode",
-                    help="compression mode when activating (default: tight)")
-    sp.set_defaults(func=cmd_pipeline)
-
-    sp = sub.add_parser(
         "cmd",
         help="Run shell command; capsule output via Haiku if > threshold (brain-side capsule layer)",
     )
@@ -2148,33 +1716,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return doctor_mod.exit_code(checks)
 
 
-def cmd_pipeline(args: argparse.Namespace) -> int:
-    root = paths_mod.require_root()
-    project = root.parent if root.name == ".burnless" else root
-    action = (getattr(args, "action", None) or "status").lower()
-    if action == "on":
-        mode = getattr(args, "compression_mode", None) or "tight"
-        payload = pipeline_state_mod.activate(project, compression_mode=mode)
-        print(f"✓ Burnless pipeline ON · mode={payload['compression_mode']} · project={project.name}")
-        print(f"  state: {pipeline_state_mod._state_file(project)}")
-        return 0
-    if action == "off":
-        if pipeline_state_mod.deactivate(project):
-            print(f"✓ Burnless pipeline OFF · project={project.name}")
-        else:
-            print(f"(already off) project={project.name}")
-        return 0
-    if action == "status":
-        state = pipeline_state_mod.read_state(project)
-        if not state:
-            print(f"OFF · project={project.name}")
-        else:
-            print(pipeline_state_mod.statusline(project))
-        return 0
-    print(f"unknown action '{action}'. Use: on | off | status", file=sys.stderr)
-    return 2
-
-
 def cmd_cmd(args: argparse.Namespace) -> int:
     return run_and_capsule(
         args.shell_cmd,
@@ -2188,7 +1729,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if not argv:
-        return cmd_chat(argparse.Namespace(model=None))
+        parser = build_parser()
+        parser.print_help()
+        return 0
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args) or 0
