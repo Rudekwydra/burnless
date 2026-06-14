@@ -79,19 +79,11 @@ If [`examples/plugins/burnless-compress`](../examples/plugins/burnless-compress)
 
 You don't do anything special to use it — it runs as a Burnless plugin hook (`pre_worker_prompt`, `pre_brain_prompt`). Just know that your verbose prompt gets a free token diet on the way out.
 
-## Compression modes (how prior session state is encoded)
+## Compression (how prior session state is encoded)
 
-Separate from the optional compress *plugin* above, Burnless has a built-in **compression mode** that controls how much of the prior session state is preserved in the capsule history the Maestro reads. Set it per run with `--mode <light|balanced|extreme>` (or via config).
+Separate from the optional compress *plugin* above, Burnless has built-in capsule compression that controls how the prior session state is preserved in the capsule history the Maestro reads. It is **fixed and faithful** — ~150 chars/field, ≤12 list items, full paths, dedupe only. There is no per-run knob; everything is preserved (the anchor stays revisable and phantom-completion has no compression vector).
 
-| Mode | Layers | ~Savings | Keeps | Use when |
-|---|---|---|---|---|
-| **light** | minifier only (L1) | ~40% | Anchor preserved — **prior decisions remain revisable** | High-stakes / iterative work where you may need to reopen earlier decisions, or where over-compression risks **phantom completion** (the Maestro "remembering" something as done that wasn't). |
-| **balanced** | minifier + encoder (L1+L2) | ~88% (default) | Semantic result kept; argumentative trajectory dropped | Normal multi-turn work. The sensible default. |
-| **extreme** | all layers | ~93%+, no friendly output | Final result only | CI/CD batches with **no human in the loop**. |
-
-**When to use `--mode light`:** reach for it whenever you need decisions to stay revisable, or when aggressive compression could let a phantom-completion slip through (the worker/Maestro believing a step ran because the dropped context can't contradict it). Light keeps the anchor so the trajectory stays auditable; pay the extra tokens when correctness matters more than savings.
-
-Workers are always **epistemically pure** regardless of mode — they receive a clean task without the Maestro's debate history, so the mode only affects what the Maestro itself sees between turns.
+Workers are always **epistemically pure** — they receive a clean task without the Maestro's debate history, so compression only affects what the Maestro itself sees between turns.
 
 ## Capsule encryption status (read before assuming privacy)
 

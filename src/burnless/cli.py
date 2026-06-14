@@ -290,8 +290,7 @@ def cmd_delegate(args: argparse.Namespace) -> int:
         modulation_reason = ""
     else:
         tier, kw = routing_mod.route(text, cfg["routing"])
-        comp_mode = cfg.get("compression", {}).get("mode", "balanced")
-        tier, modulation_reason = routing_mod.modulate_by_compression(tier, kw, comp_mode)
+        modulation_reason = ""
     if tier not in cfg["agents"]:
         fallback = "gold" if tier == "diamond" else "silver"
         print(
@@ -741,53 +740,11 @@ def cmd_capsule(args: argparse.Namespace) -> int:
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
     capsule_path = p["capsules"] / f"{args.id}.json"
-    summary_path = p["temp"] / f"{args.id}.json"
-    log_path = p["logs"] / f"{args.id}.log"
-    deleg_path = p["delegations"] / f"{args.id}.md"
 
-    if args.mode is None:
-        if not capsule_path.exists():
-            print(f"burnless: no capsule for {args.id} (run it first?)", file=sys.stderr)
-            return 2
-        print(capsule_path.read_text(encoding="utf-8"))
-        return 0
-
-    args.mode = compression_mod.normalize_mode(args.mode)
-    if args.mode not in compression_mod.MODES:
-        print(
-            f"burnless: invalid mode {args.mode!r}; pick one of {compression_mod.MODES}",
-            file=sys.stderr,
-        )
+    if not capsule_path.exists():
+        print(f"burnless: no capsule for {args.id} (run it first?)", file=sys.stderr)
         return 2
-    if not summary_path.exists() or not log_path.exists():
-        print(
-            f"burnless: cannot regenerate; need both {summary_path} and {log_path}",
-            file=sys.stderr,
-        )
-        return 2
-
-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    raw_log = log_path.read_text(encoding="utf-8")
-    goal = ""
-    if deleg_path.exists():
-        goal = _parse_goal_from_delegation(deleg_path.read_text(encoding="utf-8")) or ""
-
-    capsule = compression_mod.compress(
-        delegation_id=args.id,
-        goal=goal or summary.get("summary", ""),
-        summary=summary,
-        raw_log=raw_log,
-        mode=args.mode,
-    )
-    savings = compression_mod.measure_savings(raw_log, capsule)
-    capsule.tokens = savings
-    compression_mod.write(capsule_path, capsule)
-    print(
-        f"capsule {args.id} regenerated in mode={args.mode}: "
-        f"{savings['raw_tokens']}t → {savings['capsule_tokens']}t "
-        f"(×{savings['compression_ratio']}, saved {savings['saved_tokens']}t)"
-    )
-    print(f"  {capsule_path}")
+    print(capsule_path.read_text(encoding="utf-8"))
     return 0
 
 
@@ -1104,18 +1061,8 @@ def cmd_do(args: argparse.Namespace) -> int:
         print("burnless: delegate did not produce a delegation ID", file=sys.stderr)
         return 1
 
-    # If --mode is requested, temporarily override config compression.mode
-    _mode_override = getattr(args, "mode_override", None)
     _config_patched = False
     _orig_config_text: str | None = None
-    if _mode_override:
-        cfg = config_mod.load(p["config"])
-        _orig_mode = cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
-        if _orig_mode != _mode_override:
-            _orig_config_text = p["config"].read_text(encoding="utf-8")
-            cfg.setdefault("compression", {})["mode"] = _mode_override
-            config_mod.save(p["config"], cfg)
-            _config_patched = True
 
     # Per-call worker overrides (--diamond/--gold/--silver/--bronze PROVIDER:MODEL),
     # temp-patched into the project config and restored in the finally below.
@@ -1491,14 +1438,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("id")
     sp.set_defaults(func=cmd_log)
 
-    sp = sub.add_parser("capsule", help="show or regenerate the operational capsule for a delegation")
+    sp = sub.add_parser("capsule", help="show the operational capsule for a delegation")
     sp.add_argument("id")
-    sp.add_argument(
-        "--mode",
-        choices=list(compression_mod.MODES),
-        default=None,
-        help="regenerate capsule under this mode (light|balanced|extreme)",
-    )
     sp.set_defaults(func=cmd_capsule)
 
     sp = sub.add_parser("watch", help="Stream liveness events from a delegation (.burnless/runs/<did>/liveness.jsonl)")
@@ -1584,13 +1525,6 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["diamond", "gold", "silver", "bronze"],
         default=None,
         help="force a specific tier (diamond = explicit escalation only)",
-    )
-    sp.add_argument(
-        "--mode",
-        choices=["balanced", "extreme", "light"],
-        default=None,
-        dest="mode_override",
-        help="compression mode for this run only (does not modify config permanently)",
     )
     sp.add_argument(
         "--cold-cache",

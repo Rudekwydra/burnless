@@ -25,7 +25,6 @@ The three layers: **Encoder/Decoder** (compaction) → **Maestro** (routing) →
 
 ### `burnless do` — delegate + run atomically
 - `--tier {diamond,gold,silver,bronze}` — force a tier (diamond = explicit escalation only).
-- `--mode {balanced,extreme,light}` — **compression mode for this run only** (does not modify config). **This is the knob for the phantom-completion risk — use `--mode light` for sensitive specs, NOT a timeout flag.**
 - `--cold-cache` — inject a nonce to force a cache miss (cold-cache benchmarks).
 - `--timeout TIMEOUT` — worker timeout in seconds, forwarded to the embedded run *(added v0.9.0; before that `do` rejected it)*.
 - `--stale-timeout-s STALE_TIMEOUT_S` — abort if no worker output for N seconds, forwarded to the embedded run *(added v0.9.0)*.
@@ -45,10 +44,8 @@ The three layers: **Encoder/Decoder** (compaction) → **Maestro** (routing) →
 - **Silent default:** `do`/`run` print the one-line result, not the full delegation `.md`. Still: **never pipe `burnless do/run` through `tail`/`head`** — it masks the exit code and truncates errors. Capture with `> file 2>&1` or `set -o pipefail`, and audit deliverables by filesystem (`ls`/`grep`) before trusting an OK.
 - **Worker read scope:** workers run with `--permission-mode bypassPermissions`, so they CAN read paths outside the project root (e.g. `/tmp`, `~/Downloads`). *(Proven 2026-05-28.)* Inlining small sources in the spec is still good practice, but not required for reads.
 
-## Compression modes
-- `light` — minimal compression. **Default for sensitive specs** (avoids the balanced-mode phantom where a worker reads a compressed spec as a completed-task status). As of 2026-05-28 all active projects are set to `light`.
-- `balanced` — more aggressive; historically caused phantom completion with bronze Haiku on file-ref specs (`feedback-bronze-balanced-compression-phantom-2026-05-23`).
-- `extreme` — maximum compression; only for read-only/summary work where signal loss is acceptable.
+## Compression
+- Capsule compression is fixed and faithful (~150 chars/field, ≤12 list items, full paths, dedupe only). No mode knob.
 
 ## Versioning
 Single source of truth: `src/burnless/__init__.py` → `__version__`. `pyproject.toml` reads it dynamically (`[tool.hatch.version]`). Never hardcode a version elsewhere.

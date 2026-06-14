@@ -84,11 +84,9 @@ The cost reduction applies at all four levels independently of privacy.
 
 The capsule envelope (Layer 3) is **not** strong cryptography in v0.x. If you need real encryption guarantees, treat that as out of scope for the current implementation. Modes `redact`, `audit`, `opaque`, `burnkey` are planned, not yet implemented.
 
-EPISTEMIC FIDELITY (compression modes)
-- light — minifier only (~40% savings). Anchor preserved: prior decisions remain revisable.
-- balanced — minifier + encoder (~88% savings, default). Semantic result kept; argumentative trajectory dropped.
-- extreme — all layers (~93%+, no friendly output). For CI/CD batches with no human in the loop.
-Workers are always epistemically pure regardless of mode — they receive a clean task without Brain debate history.
+EPISTEMIC FIDELITY (compression)
+- Capsule compression is fixed and faithful: ~150 chars/field, ≤12 list items, full paths, dedupe only. No `--mode` knob.
+Workers are always epistemically pure — they receive a clean task without Brain debate history.
 
 PLUGIN PROTOCOL v0.7
 8 hooks (HTTP / stdio, 5s timeout, fail-open):

@@ -881,14 +881,6 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     deleg_mod.write_summary(p["temp"] / f"{did}.json", summary)
 
     # Automatic Session Compression — generate capsule (operational memory for AI)
-    raw_mode = cfg.get("compression", {}).get("mode", compression_mod.DEFAULT_MODE)
-    mode = compression_mod.normalize_mode(raw_mode)
-    if mode not in compression_mod.MODES:
-        print(
-            f"burnless: invalid compression.mode={raw_mode!r}; falling back to {compression_mod.DEFAULT_MODE}",
-            file=sys.stderr,
-        )
-        mode = compression_mod.DEFAULT_MODE
     raw_log_text = log_path.read_text(encoding="utf-8")
     goal = _parse_goal_from_delegation(prompt) or summary.get("summary", "")
     capsule = compression_mod.compress(
@@ -896,7 +888,6 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         goal=goal,
         summary=summary,
         raw_log=raw_log_text,
-        mode=mode,
     )
     capsule_path = p["capsules"] / f"{did}.json"
     compression_mod.write(capsule_path, capsule)
@@ -910,11 +901,11 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
             source="capsule_compression",
             amount=savings["saved_tokens"],
             reason=(
-                f"capsule mode={mode}: raw {savings['raw_tokens']}t → "
+                f"capsule mode=faithful: raw {savings['raw_tokens']}t → "
                 f"capsule {savings['capsule_tokens']}t (×{savings['compression_ratio']})"
             ),
             delegation_id=did,
-            extra={"mode": mode, "ratio": savings["compression_ratio"]},
+            extra={"mode": "faithful", "ratio": savings["compression_ratio"]},
             usd_per_million=cfg["metrics"]["expensive_model_usd_per_million"],
             capsules_delta=1,
         )
@@ -926,7 +917,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     # Raw logs and the agent's verbose stdout never reach state.json.
     state["last_delegation"] = did
     state["last_capsule"] = did
-    state["last_capsule_mode"] = mode
+    state["last_capsule_mode"] = "faithful"
     state["next"] = capsule.next or None
     # Increment turn counter for savings footer tracking
     state["turn_counter"] = int(state.get("turn_counter", 0) or 0) + 1
