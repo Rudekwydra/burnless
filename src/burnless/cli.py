@@ -67,21 +67,6 @@ from .exec.runner import (
 
 
 
-def _extract_model(cmd_str: str, provider: str) -> str:
-    """Extract model name from agent command string."""
-    if provider == "anthropic":
-        m = re.search(r"--model\s+(\S+)", cmd_str)
-    elif provider == "codex":
-        m = re.search(r"-m\s+(\S+)", cmd_str)
-        if not m:
-            return config_mod.DEFAULT_PROVIDER_MODELS["codex"]
-    else:
-        return ""
-    return m.group(1) if m else ""
-
-
-
-
 def cmd_rtk(args: argparse.Namespace) -> int:
     """Toggle the RTK wrapper in the current project's .burnless/config.yaml.
 
