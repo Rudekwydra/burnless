@@ -1405,8 +1405,8 @@ def _chat_worker_usage_estimate(
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
-    """Partner-maestro REPL on the new core (v1 glue): warm maestro base →
-    MaestroSession/partner_turn_session → dispatcher.run_all → economy footer.
+    """Maestro REPL on the new core (v1 glue): warm maestro base →
+    MaestroSession/maestro_turn_session → dispatcher.run_all → economy footer.
     Compaction OFF by default. An opt-in rollover mode can force a cycle
     boundary every N user turns and seed the next fork from the resulting
     capsule."""
@@ -1419,7 +1419,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
     from .maestro import dispatcher as dispatcher_mod
     from .maestro import engine as maestro_engine
     from .maestro.base import maestro_base_init, maestro_iso_cwd
-    from .maestro.engine import PartnerState, Turn, estimate_tokens, partner_turn_session
+    from .maestro.engine import MaestroState, Turn, estimate_tokens, maestro_turn_session
     from .maestro.runners import runner_claude_json
     from .maestro.session_runner import MaestroSession
 
@@ -1449,7 +1449,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         cwd=maestro_iso_cwd(root, model),
     )
     session = MaestroSession(base_uuid=base_uuid, model=model, claude_bin=claude_bin)
-    state = PartnerState()
+    state = MaestroState()
 
     # Per-turn router: trivial turns → local ollama, non-trivial → maestro.
     # CLI --router overrides config when non-None; default OFF.
@@ -1592,7 +1592,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 continue
         _terse_for_history = None
         while True:
-            response = partner_turn_session(
+            response = maestro_turn_session(
                 state, text,
                 cfg=cfg, session=session, runner=runner,
                 compact_fn=compact_fn, burnless_root=root,
@@ -1874,7 +1874,7 @@ def build_parser() -> argparse.ArgumentParser:
     dsp = decisions_sub.add_parser("clear", help="clear cached architectural decisions")
     dsp.set_defaults(func=cmd_decisions_clear)
 
-    sp = sub.add_parser("chat", help="partner-maestro REPL on the new core (warm base + workers + economy footer)")
+    sp = sub.add_parser("chat", help="maestro REPL on the new core (warm base + workers + economy footer)")
     sp.add_argument("--model", default=None, help="maestro model (default: maestro.model in config, else gold tier model)")
     sp.add_argument(
         "--rollover-turns",

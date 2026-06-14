@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from burnless import cli
-from burnless.maestro.engine import PartnerState, RollingCapsule, Turn, force_compact
+from burnless.maestro.engine import MaestroState, RollingCapsule, Turn, force_compact
 
 
 def test_chat_rollover_flag_parses_after_subcommand():
@@ -12,7 +12,7 @@ def test_chat_rollover_flag_parses_after_subcommand():
 
 
 def test_force_compact_prepares_next_seed_and_writes_capsule(tmp_path):
-    state = PartnerState(
+    state = MaestroState(
         rolling_capsule=RollingCapsule(summary="old"),
         window=[
             Turn("user", "keep-me", 2),

@@ -1,4 +1,4 @@
-"""Deterministic tests for the maestro partner engine (M1 prototype).
+"""Deterministic tests for the maestro engine (M1 prototype).
 
 No LLM/network/subprocess: model_fn and compact_fn are injected fakes.
 """
@@ -9,12 +9,12 @@ from pathlib import Path
 
 from burnless.maestro import engine
 from burnless.maestro.engine import (
-    PartnerState,
+    MaestroState,
     RollingCapsule,
     Turn,
     assemble_prompt,
     maybe_compact,
-    partner_turn,
+    maestro_turn,
     window_tokens,
 )
 
@@ -45,7 +45,7 @@ def tiny_model_fn(prompt: str) -> tuple[str, int]:
     return ("ok", 2)
 
 
-def make_compact_fn(state: PartnerState):
+def make_compact_fn(state: MaestroState):
     def compact_fn(blob: str) -> dict:
         return {"decisions": [], "constraints": [], "open_threads": [], "summary": f"CAP{state.cycle + 1}"}
     return compact_fn
@@ -54,7 +54,7 @@ def make_compact_fn(state: PartnerState):
 def run_turns(state, n, model_fn, user_text, **kw):
     max_window = 0
     for _ in range(n):
-        partner_turn(
+        maestro_turn(
             state,
             user_text,
             cfg=CFG,
@@ -67,7 +67,7 @@ def run_turns(state, n, model_fn, user_text, **kw):
 
 
 def test_window_stays_bounded_over_many_turns():
-    state = PartnerState()
+    state = MaestroState()
     user_text = "u" * 1000  # ~250 tokens estimated
     per_turn = engine.estimate_tokens(user_text) + BIG_RESPONSE_TOKENS  # ~850
     max_window = run_turns(state, 30, big_model_fn, user_text)
@@ -82,16 +82,16 @@ def test_window_stays_bounded_over_many_turns():
 
 
 def test_cycle_increments_repeatedly():
-    state = PartnerState()
+    state = MaestroState()
     run_turns(state, 30, big_model_fn, "u" * 1000)
     assert state.cycle >= 2
 
 
 def test_rolling_capsule_nonempty_after_first_compaction():
-    state = PartnerState()
+    state = MaestroState()
     user_text = "u" * 1000
     for i in range(30):
-        partner_turn(
+        maestro_turn(
             state, user_text, cfg=CFG,
             model_fn=big_model_fn, compact_fn=make_compact_fn(state),
         )
@@ -102,7 +102,7 @@ def test_rolling_capsule_nonempty_after_first_compaction():
 
 
 def test_capsules_written_to_disk(tmp_path):
-    state = PartnerState()
+    state = MaestroState()
     run_turns(state, 30, big_model_fn, "u" * 1000, burnless_root=tmp_path)
     assert state.cycle >= 2
     rolling = tmp_path / "maestro" / "rolling"
@@ -120,7 +120,7 @@ def test_capsules_written_to_disk(tmp_path):
 
 
 def test_tiny_turns_never_compact():
-    state = PartnerState()
+    state = MaestroState()
     run_turns(state, 30, tiny_model_fn, "hi")
     assert state.cycle == 0
     assert state.rolling_capsule.render() == ""
@@ -138,14 +138,14 @@ def test_rolling_compaction_disabled_by_default():
     """
     from burnless.config import DEFAULT_CONFIG
     cfg = {"cache_policy": DEFAULT_CONFIG["cache_policy"]}
-    big = PartnerState(window=[Turn("user", "x", 500000)])
+    big = MaestroState(window=[Turn("user", "x", 500000)])
     result = maybe_compact(big, cfg, lambda b: {"decisions": [], "constraints": [], "open_threads": [], "summary": "s"})
     assert result is False, "default must be never-compact (rolling_compaction_enabled=False)"
     assert big.cycle == 0, "cycle must stay 0 when compaction is disabled"
 
 
 def test_assemble_prompt_user_seen_exactly_once():
-    state = PartnerState(rolling_capsule=RollingCapsule(summary="CAPX"))
+    state = MaestroState(rolling_capsule=RollingCapsule(summary="CAPX"))
     state.window.append(Turn("user", "earlier", 2))
     state.window.append(Turn("maestro", "earlier-reply", 3))
     seen = {}
@@ -154,7 +154,7 @@ def test_assemble_prompt_user_seen_exactly_once():
         seen["prompt"] = prompt
         return ("reply", 5)
 
-    partner_turn(
+    maestro_turn(
         state, "current question", cfg=CFG,
         model_fn=spy_model,
         compact_fn=lambda blob: {"decisions": [], "constraints": [], "open_threads": [], "summary": "CAP"},
@@ -168,7 +168,7 @@ def test_assemble_prompt_user_seen_exactly_once():
 
 
 def test_maybe_compact_below_threshold_is_noop():
-    state = PartnerState()
+    state = MaestroState()
     state.window.append(Turn("user", "small", 100))
     assert maybe_compact(state, CFG, lambda blob: {"decisions": [], "constraints": [], "open_threads": [], "summary": "CAP"}) is False
     assert state.cycle == 0
@@ -176,7 +176,7 @@ def test_maybe_compact_below_threshold_is_noop():
 
 
 def test_compact_blob_includes_prior_capsule_and_window():
-    state = PartnerState(rolling_capsule=RollingCapsule(summary="OLDCAP"))
+    state = MaestroState(rolling_capsule=RollingCapsule(summary="OLDCAP"))
     state.window.append(Turn("user", "big question", 2000))
     blobs = []
 
@@ -193,7 +193,7 @@ def test_compact_blob_includes_prior_capsule_and_window():
 
 
 def test_assemble_prompt_without_capsule_has_no_state_header():
-    state = PartnerState()
+    state = MaestroState()
     prompt = assemble_prompt(state, "hello")
     assert prompt == "user: hello"
 
@@ -223,9 +223,9 @@ def test_trigger_is_size_driven():
     b_star = int(S + (w * S + M) / (K * r))  # 10250
 
     _noop = lambda b: {"decisions": [], "constraints": [], "open_threads": [], "summary": "C"}
-    small = PartnerState(window=[Turn("user", "x", b_star // 2)])     # 5125 tokens < B*, should_compact=False
+    small = MaestroState(window=[Turn("user", "x", b_star // 2)])     # 5125 tokens < B*, should_compact=False
     # big: 5 turns (> keep_tail=4) with total tokens >> B*
-    big = PartnerState(window=[Turn("user", "x", b_star)] * (keep + 1))
+    big = MaestroState(window=[Turn("user", "x", b_star)] * (keep + 1))
 
     assert maybe_compact(small, cfg, _noop) is False, "small window should NOT compact"
     assert maybe_compact(big, cfg, _noop) is True, "huge window SHOULD compact"
@@ -244,7 +244,7 @@ def test_verbatim_tail_kept_after_compact():
     cfg = {"cache_policy": cp}
     keep = cfg["cache_policy"]["keep_tail_turns"]  # 4
     turns = [Turn("user" if i % 2 == 0 else "maestro", f"t{i}", 30000) for i in range(10)]
-    state = PartnerState(window=turns)
+    state = MaestroState(window=turns)
     assert maybe_compact(state, cfg, lambda b: {"decisions": [], "constraints": [], "open_threads": [], "summary": "s"}) is True
     assert len(state.window) == keep, f"expected {keep} tail turns, got {len(state.window)}"
     assert state.window[-1].text == "t9", "most-recent turn must be last in tail"
@@ -258,7 +258,7 @@ def test_decisions_and_constraints_accumulate_across_two_cycles():
     cp = copy.deepcopy(DEFAULT_CONFIG["cache_policy"])
     cp["rolling_compaction_enabled"] = True
     cfg = {"cache_policy": cp}
-    state = PartnerState(window=[Turn("user", "x", 30000) for _ in range(10)])
+    state = MaestroState(window=[Turn("user", "x", 30000) for _ in range(10)])
 
     def cf1(blob: str) -> dict:
         return {"decisions": ["D1"], "constraints": ["C1"], "open_threads": ["O1"], "summary": "s1"}
@@ -291,7 +291,7 @@ def test_compact_blob_excludes_kept_tail():
     cfg = {"cache_policy": cp}
     keep = cfg["cache_policy"]["keep_tail_turns"]  # 4
     n = keep + 4  # 8 turns total
-    state = PartnerState(window=[Turn("user", f"t{i}", 30000) for i in range(n)])
+    state = MaestroState(window=[Turn("user", f"t{i}", 30000) for i in range(n)])
     blobs: list[str] = []
 
     def capture(blob: str) -> dict:
@@ -308,10 +308,10 @@ def test_compact_blob_excludes_kept_tail():
 
 
 # ---------------------------------------------------------------------------
-# partner_turn_session: integrated session backend (fake session + runner)
+# maestro_turn_session: integrated session backend (fake session + runner)
 # ---------------------------------------------------------------------------
 
-from burnless.maestro.engine import partner_turn_session
+from burnless.maestro.engine import maestro_turn_session
 
 
 class FakeSession:
@@ -349,8 +349,8 @@ def _noop_runner(cmd):
 def test_session_normal_turn_is_delta_send():
     """No pending seed → rewind_capsule=None, only the user delta sent; window gains 2 Turns."""
     fs = FakeSession(response_tokens=2)
-    state = PartnerState()
-    resp = partner_turn_session(
+    state = MaestroState()
+    resp = maestro_turn_session(
         state, "hello", cfg=_default_cfg(), session=fs,
         runner=_noop_runner, compact_fn=_seed_compact_fn,
     )
@@ -367,9 +367,9 @@ def test_session_compaction_rewinds_and_sets_pending_seed():
     # DEFAULT_CONFIG: B*=10250, keep_tail=4. 3000-tok responses → fires on the 4th turn
     # (window ~12k > B*, 8 turns > keep_tail).
     fs = FakeSession(response_tokens=3000)
-    state = PartnerState()
+    state = MaestroState()
     for _ in range(4):
-        partner_turn_session(
+        maestro_turn_session(
             state, "q", cfg=_default_cfg(), session=fs,
             runner=_noop_runner, compact_fn=_seed_compact_fn,
         )
@@ -387,16 +387,16 @@ def test_session_compaction_rewinds_and_sets_pending_seed():
 def test_session_next_send_consumes_and_clears_seed():
     """The pending_seed set by a rewind reaches the NEXT send as rewind_capsule, then clears."""
     fs = FakeSession(response_tokens=3000)
-    state = PartnerState()
+    state = MaestroState()
     for _ in range(4):
-        partner_turn_session(
+        maestro_turn_session(
             state, "q", cfg=_default_cfg(), session=fs,
             runner=_noop_runner, compact_fn=_seed_compact_fn,
         )
     seed_before = state.pending_seed
     assert seed_before != ""
     # 5th turn: tail (~6k) + 1 turn (~3k) stays below B*=10250 → no new compaction
-    partner_turn_session(
+    maestro_turn_session(
         state, "q2", cfg=_default_cfg(), session=fs,
         runner=_noop_runner, compact_fn=_seed_compact_fn,
     )
@@ -410,9 +410,9 @@ def test_session_next_send_consumes_and_clears_seed():
 def test_session_tiny_turns_never_rewind():
     """Tiny turns: no compaction, no rewind, pending_seed stays empty, every send is bare delta."""
     fs = FakeSession(response_tokens=2)
-    state = PartnerState()
+    state = MaestroState()
     for i in range(30):
-        partner_turn_session(
+        maestro_turn_session(
             state, f"hi{i}", cfg=_default_cfg(), session=fs,
             runner=_noop_runner, compact_fn=_seed_compact_fn,
         )

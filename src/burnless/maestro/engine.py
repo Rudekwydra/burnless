@@ -1,9 +1,9 @@
-"""Unified maestro engine prototype: partner loop + rolling rewind-recompact.
+"""Unified maestro engine prototype: maestro loop + rolling rewind-recompact.
 
 ADDITIVE prototype (M1 of v1) — not wired into any command yet. See
 _design/TARGET_ARCHITECTURE_2026-06-09.md §0.A / §0.A.1.
 
-The maestro is a tool-less partner. Context per turn =
+The maestro is a tool-less maestro. Context per turn =
 [rolling capsule] + [window of recent turns] + [user msg]. When the window
 crosses should_compact()'s ROI threshold, it is ultra-compacted into a new
 rolling capsule (persisted to disk) and the window resets ("rewind").
@@ -50,7 +50,7 @@ class RollingCapsule:
 
 
 @dataclass
-class PartnerState:
+class MaestroState:
     rolling_capsule: RollingCapsule = field(default_factory=RollingCapsule)
     window: list[Turn] = field(default_factory=list)
     cycle: int = 0                     # how many compaction cycles have happened
@@ -68,7 +68,7 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def assemble_prompt(state: PartnerState, user_text: str) -> str:
+def assemble_prompt(state: MaestroState, user_text: str) -> str:
     """Bounded context for one model call: capsule + window + current user msg."""
     parts = []
     rendered = state.rolling_capsule.render()
@@ -80,12 +80,12 @@ def assemble_prompt(state: PartnerState, user_text: str) -> str:
     return "\n\n".join(parts)
 
 
-def window_tokens(state: PartnerState) -> int:
+def window_tokens(state: MaestroState) -> int:
     return sum(t.tokens for t in state.window)
 
 
 def maybe_compact(
-    state: PartnerState,
+    state: MaestroState,
     cfg: dict,
     compact_fn: CompactFn,
     burnless_root: Optional[Path] = None,
@@ -111,14 +111,14 @@ def maybe_compact(
     return force_compact(state, compact_fn, burnless_root=burnless_root, keep_tail_turns=keep_tail)
 
 
-def build_pending_seed(state: PartnerState) -> str:
+def build_pending_seed(state: MaestroState) -> str:
     tail = _render_tail(state)
     cap = state.rolling_capsule.render()
     return cap + (("\n\n## Recent\n" + tail) if tail else "")
 
 
 def _apply_compaction_result(
-    state: PartnerState,
+    state: MaestroState,
     result: dict,
     *,
     tail: list[Turn],
@@ -162,7 +162,7 @@ def _apply_compaction_result(
 
 
 def force_compact(
-    state: PartnerState,
+    state: MaestroState,
     compact_fn: CompactFn,
     burnless_root: Optional[Path] = None,
     *,
@@ -192,8 +192,8 @@ def force_compact(
     return True
 
 
-def partner_turn(
-    state: PartnerState,
+def maestro_turn(
+    state: MaestroState,
     user_text: str,
     *,
     cfg: dict,
@@ -201,7 +201,7 @@ def partner_turn(
     compact_fn: CompactFn,
     burnless_root: Optional[Path] = None,
 ) -> str:
-    """One partner turn: assemble bounded context -> model -> append -> maybe rolling-compact.
+    """One maestro turn: assemble bounded context -> model -> append -> maybe rolling-compact.
 
     assemble_prompt() supplies the current user msg itself, so the model sees
     state + window + current-user exactly once; the user Turn joins the window
@@ -215,12 +215,12 @@ def partner_turn(
     return response
 
 
-def _render_tail(state: PartnerState) -> str:
+def _render_tail(state: MaestroState) -> str:
     return "\n".join(f"{t.role}: {t.text}" for t in state.window)
 
 
-def partner_turn_session(
-    state: PartnerState,
+def maestro_turn_session(
+    state: MaestroState,
     user_text: str,
     *,
     cfg: dict,
@@ -229,7 +229,7 @@ def partner_turn_session(
     compact_fn: CompactFn,        # -> structured dict (maybe_compact contract)
     burnless_root: Optional[Path] = None,
 ) -> str:
-    """One partner turn over a conversation-native session.
+    """One maestro turn over a conversation-native session.
 
     - Sends ONLY the delta (user_text) to the session; when a prior rewind left
       a pending_seed, that seed (capsule.render() + verbatim tail) is injected

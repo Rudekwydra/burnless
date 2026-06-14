@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from burnless.maestro.turn_router import classify_turn, local_answer
-from burnless.maestro.engine import PartnerState
+from burnless.maestro.engine import MaestroState
 
 
 # --- classify_turn ---
@@ -77,7 +77,7 @@ class TestClassifyTurnMaestro:
 
 class TestLocalAnswer:
     def _make_state(self):
-        return PartnerState()
+        return MaestroState()
 
     def test_returns_text_when_ollama_fn_returns(self):
         state = self._make_state()
