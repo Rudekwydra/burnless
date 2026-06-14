@@ -1,3 +1,5 @@
+> SUPERSEDED 2026-06-14: chat/pty/maestro-REPL cut from v1 (see cut_chat_pty_2026_06_14.md)
+
 # Worker Role Prompt (Sonnet/Codex default)
 
 Injetado em `system` após o glossário, com `cache_control: ephemeral 1h`.

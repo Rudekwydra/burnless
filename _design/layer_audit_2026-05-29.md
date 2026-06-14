@@ -1,3 +1,5 @@
+> SUPERSEDED 2026-06-14: chat/pty/maestro-REPL cut from v1 (see cut_chat_pty_2026_06_14.md)
+
 # cached_worker started model=claude-opus-4-7 timeout=900s
 # started_at: 2026-05-29T03:01:35.384497+00:00
 I'll audit the codebase read-only, grounding every claim in file:line refs.

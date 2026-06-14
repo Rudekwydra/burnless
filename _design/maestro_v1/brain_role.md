@@ -1,3 +1,5 @@
+> SUPERSEDED 2026-06-14: chat/pty/maestro-REPL cut from v1 (see cut_chat_pty_2026_06_14.md)
+
 # Brain Role Prompt
 
 Injected into `system` after the glossary block, with the provider's prompt-cache directive (e.g. Anthropic `cache_control: ephemeral 1h`). Model is configurable in `.burnless/config.yaml`.

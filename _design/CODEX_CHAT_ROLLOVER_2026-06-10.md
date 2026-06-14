@@ -1,3 +1,5 @@
+> SUPERSEDED 2026-06-14: chat/pty/maestro-REPL cut from v1 (see cut_chat_pty_2026_06_14.md)
+
 # Codex chat — Rollover mode (sessão app antigravity)
 
 **Origem:** `rollout-2026-06-10T19-45-09-019eb3b5-fd23-7a00-9ee1-ba203755e0b3.jsonl`

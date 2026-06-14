@@ -1,3 +1,5 @@
+> SUPERSEDED 2026-06-14: chat/pty/maestro-REPL cut from v1 (see cut_chat_pty_2026_06_14.md)
+
 # Rolling memory for a PURE Claude Code session + simplified mode surface
 
 **Date:** 2026-06-13
