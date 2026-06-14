@@ -1308,7 +1308,13 @@ def cmd_epoch(args: argparse.Namespace) -> int:
             if result is None:
                 break
             level += 1
-        print(path.name)
+        if getattr(args, "emit_chain", False):
+            for f in epochs_mod.active_chain(root_path, chat_id):
+                print(f"# {f.name}\n")
+                print(f.read_text(encoding='utf-8'))
+                print()
+        else:
+            print(path.name)
         return 0
 
     elif epoch_cmd == "read":
@@ -2109,6 +2115,8 @@ def build_parser() -> argparse.ArgumentParser:
     epoch_common.add_argument("--root", default=None, help="project root (default: find_root())")
     epoch_sub = sp.add_subparsers(dest="epoch_cmd", required=True)
     esp = epoch_sub.add_parser("capture", parents=[epoch_common], help="read STDIN, summarize, append, consolidate")
+    esp.add_argument("--emit-chain", action="store_true", dest="emit_chain", default=False,
+                     help="on successful append, print the active chain to stdout instead of the slot name")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="capture")
     esp = epoch_sub.add_parser("read", parents=[epoch_common], help="print active chain to stdout")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="read")

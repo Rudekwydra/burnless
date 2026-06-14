@@ -145,7 +145,7 @@ def epoch_summarizer(project_root: Path):
         try:
             from . import config, paths
             try:
-                cfg = config.load(paths.paths_for(project_root)["config"])
+                cfg = config.load(paths.paths_for(Path(project_root) / ".burnless")["config"])
             except Exception:
                 cfg = {}
             enc = cfg.get("encoder") or {}
@@ -171,7 +171,7 @@ def epoch_summarizer(project_root: Path):
                     data=data,
                     headers={"Content-Type": "application/json"},
                 )
-                with urllib.request.urlopen(req, timeout=8) as resp:
+                with urllib.request.urlopen(req, timeout=20) as resp:
                     body = json.loads(resp.read())
                 out = body["response"]
                 from .compression import _strip_gemma_channels
@@ -188,7 +188,7 @@ def epoch_summarizer(project_root: Path):
                     input=prompt,
                     capture_output=True,
                     text=True,
-                    timeout=8,
+                    timeout=20,
                 )
                 data = json.loads(result.stdout)
                 out = data["result"]
