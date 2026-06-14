@@ -112,7 +112,7 @@ Never pipe `do`/`run` through `tail`/`head` — it masks the exit code. Capture 
 
 ## Rolling memory (epochs)
 
-In `burnless chat`, the maestro's own context rolls instead of growing — each turn is summarized to `.burnless/epochs/`, every 10 turns the fork rotates and re-seeds from the rolling summary (Θ(N²)→Θ(N)). Toggle: `burnless epoch on|off`. Default off.
+Rolling memory runs in your **Claude CLI session** via hooks (no `burnless chat` — that was removed). The `Stop` hook summarizes each turn into `.burnless/epochs/<session>/` (consolidating every 10 slots) and the `SessionStart` hook re-injects the rolling summary — **including after `/clear`**, via the project-level `_rolling/seed.md` fallback (since `/clear` rotates the session id, the per-session chain is empty and the fallback carries state forward). Keeps the maestro's context Θ(N), not Θ(N²). Toggle: `burnless epoch on|off`.
 
 ---
 
