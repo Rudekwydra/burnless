@@ -69,17 +69,21 @@ def test_setup_idempotency(tmp_home):
     pass
 
 def test_doctor_fix(tmp_home):
-    """Test that doctor --fix reaches 0 FAIL on a broken home."""
-    # Create a "broken" environment
-    # No .burnless dir
-    # No ~/.claude/settings.json
-    
-    # Run doctor with fix=True
-    # We need to mock some things like 'claude' command if it exists
+    """doctor --fix resolves all FIXABLE checks (0 FAIL) once a project config exists.
+
+    --fix repairs Claude Code wiring (Band C); it does NOT scaffold a global config
+    (Band B). So init a config first, then assert fix drives FAIL to 0.
+    """
+    from burnless.cli import cmd_init
+    init_args = MagicMock()
+    init_args.project = "test-project"
+    init_args.force = True
+    init_args.claude_code = False
+    init_args.with_claude_md = False
+    cmd_init(init_args)
+
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="ok\n")
-        
         results = run_checks(home=tmp_home, fix=True)
-        
         fails = sum(1 for c in results if c.status == "FAIL")
         assert fails == 0
