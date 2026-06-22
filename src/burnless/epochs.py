@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -189,6 +190,7 @@ def epoch_summarizer(project_root: Path):
                     capture_output=True,
                     text=True,
                     timeout=60,
+                    env={**os.environ, "BURNLESS_NO_EPOCH": "1"},
                 )
                 data = json.loads(result.stdout)
                 out = data["result"]

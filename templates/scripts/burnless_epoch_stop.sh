@@ -1,5 +1,7 @@
 #!/bin/bash
 
+[[ -n "$BURNLESS_NO_EPOCH" ]] && exit 0
+
 export PATH="$HOME/.local/bin:$PATH"
 BURNLESS_BIN="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 
@@ -53,6 +55,8 @@ try:
 except:
   pass
 ' "$TP" 2>/dev/null)
+
+case "$extracted" in *"Resuma o trecho de conversa abaixo"*) exit 0 ;; esac
 
 if [[ -n "$extracted" ]]; then
   mkdir -p "$ROOT/.burnless/epochs/_rolling"
