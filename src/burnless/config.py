@@ -248,6 +248,14 @@ def load(path: Path) -> dict:
     comp = data.setdefault("compression", {})
     if "friendly" not in user_comp:
         comp["friendly"] = True
+    _prof = os.environ.get('BURNLESS_PROFILE')
+    if _prof:
+        _pp = Path.home() / '.burnless' / 'profiles' / (_prof + '.yaml')
+        if _pp.exists():
+            with _pp.open('r', encoding='utf-8') as _f:
+                _pd = yaml.safe_load(_f) or {}
+            _pd.pop('extends', None)
+            data = _deep_merge(data, _pd)
     return data
 
 

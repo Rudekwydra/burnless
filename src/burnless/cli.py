@@ -1653,6 +1653,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, 'profile', None):
+        os.environ['BURNLESS_PROFILE'] = args.profile
     return args.func(args) or 0
 
 
