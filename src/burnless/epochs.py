@@ -188,7 +188,7 @@ def epoch_summarizer(project_root: Path):
                     input=prompt,
                     capture_output=True,
                     text=True,
-                    timeout=20,
+                    timeout=60,
                 )
                 data = json.loads(result.stdout)
                 out = data["result"]
@@ -223,28 +223,29 @@ def _ollama(model: str, prompt: str, *, timeout: int = 30, host: str = "http://l
         return None
 
 
-def _enabled_marker(project_root) -> Path:
-    return Path(project_root) / ".burnless" / "epochs.on"
+def _disabled_marker(project_root) -> Path:
+    return Path(project_root) / ".burnless" / "epochs.off"
 
 
 def is_enabled(project_root, cfg=None) -> bool:
-    "True if config epochs.enabled OR the marker file exists. Fail-open False."
+    "Opt-out: ON by default. OFF only if .off marker exists or cfg epochs.enabled is explicitly False. Fail-open True."
     try:
-        if cfg and bool((cfg.get("epochs") or {}).get("enabled", False)):
-            return True
-        return _enabled_marker(project_root).exists()
+        if cfg is not None and (cfg.get("epochs") or {}).get("enabled", None) is False:
+            return False
+        return not _disabled_marker(project_root).exists()
     except Exception:
-        return False
+        return True
 
 
 def set_enabled(project_root, on: bool) -> bool:
-    "Create/remove the marker. Returns the new state. Fail-open."
-    m = _enabled_marker(project_root)
+    "Opt-out marker. on=True removes the .off marker; on=False creates it. Fail-open."
+    m = _disabled_marker(project_root)
     try:
         if on:
-            m.parent.mkdir(parents=True, exist_ok=True); m.write_text("on", encoding="utf-8")
-        elif m.exists():
-            m.unlink()
+            if m.exists():
+                m.unlink()
+        else:
+            m.parent.mkdir(parents=True, exist_ok=True); m.write_text("off", encoding="utf-8")
     except Exception:
         pass
     return is_enabled(project_root)

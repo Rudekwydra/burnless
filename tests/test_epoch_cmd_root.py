@@ -24,8 +24,8 @@ def tmp_project():
         yield tmp_dir
 
 
-def test_epoch_on_writes_correct_marker(tmp_project):
-    """Test that epoch on writes to .burnless/epochs.on (not doubled .burnless/.burnless/)."""
+def test_epoch_off_writes_correct_marker(tmp_project):
+    """Test that epoch off writes to .burnless/epochs.off (not doubled .burnless/.burnless/)."""
     burnless_dir = tmp_project / ".burnless"
 
     # Monkeypatch find_root to return the .burnless dir when cwd is the project dir
@@ -34,7 +34,7 @@ def test_epoch_on_writes_correct_marker(tmp_project):
 
     with patch.object(paths_mod, "find_root", mock_find_root):
         args = argparse.Namespace(
-            epoch_cmd="on",
+            epoch_cmd="off",
             root=None,
             chat_id=None,
         )
@@ -43,11 +43,11 @@ def test_epoch_on_writes_correct_marker(tmp_project):
     assert rc == 0, "cmd_epoch returned non-zero"
 
     # Check correct path exists
-    marker_path = burnless_dir / "epochs.on"
+    marker_path = burnless_dir / "epochs.off"
     assert marker_path.exists(), f"marker not found at {marker_path}"
 
     # Check doubled path does NOT exist
-    doubled_path = burnless_dir / ".burnless" / "epochs.on"
+    doubled_path = burnless_dir / ".burnless" / "epochs.off"
     assert not doubled_path.exists(), f"doubled path should not exist: {doubled_path}"
 
 
@@ -56,7 +56,7 @@ def test_epoch_explicit_root_unchanged(tmp_project):
     burnless_dir = tmp_project / ".burnless"
 
     args = argparse.Namespace(
-        epoch_cmd="on",
+        epoch_cmd="off",
         root=str(tmp_project),  # Explicit root = project dir
         chat_id=None,
     )
@@ -65,9 +65,9 @@ def test_epoch_explicit_root_unchanged(tmp_project):
     assert rc == 0, "cmd_epoch returned non-zero"
 
     # Check marker at correct location
-    marker_path = burnless_dir / "epochs.on"
+    marker_path = burnless_dir / "epochs.off"
     assert marker_path.exists(), f"marker not found at {marker_path}"
 
     # Check doubled path does NOT exist
-    doubled_path = burnless_dir / ".burnless" / "epochs.on"
+    doubled_path = burnless_dir / ".burnless" / "epochs.off"
     assert not doubled_path.exists(), f"doubled path should not exist: {doubled_path}"

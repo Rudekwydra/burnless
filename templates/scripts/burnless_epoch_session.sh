@@ -20,7 +20,7 @@ while [[ -n "$current" && "$current" != "/" ]]; do
 done
 
 [[ -z "$ROOT" ]] && exit 0
-[[ ! -f "$ROOT/.burnless/epochs.on" ]] && exit 0
+[[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
 
 CHAIN=$("$BURNLESS_BIN" epoch read --chat-id "$SID" --root "$ROOT" 2>/dev/null)
 
