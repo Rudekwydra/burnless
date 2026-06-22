@@ -21,7 +21,7 @@ while [[ -n "$current" && "$current" != "/" ]]; do
 done
 
 [[ -z "$ROOT" ]] && exit 0
-[[ ! -f "$ROOT/.burnless/epochs.on" ]] && exit 0
+[[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
 
 extracted=$(python3 -c '
 import sys, json
@@ -40,6 +40,8 @@ try:
         t = c
       else:
         t = ""
+      if not t.strip():
+        continue
       if r == "user":
         u = t
       elif r == "assistant":
