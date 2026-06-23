@@ -160,7 +160,10 @@ def epoch_summarizer(project_root: Path):
 
         prompt = (
             "Resuma o trecho de conversa abaixo num resumo DENSO em português: o que foi PEDIDO, "
-            "o que foi FEITO/DECIDIDO, refs (paths/IDs/commits), e pendências. Sem pensamento/debate. "
+            "o que foi FEITO/DECIDIDO, refs (paths/IDs/commits), e pendências. "
+            "Se o trecho tocou/definiu código, acrescente no fim uma seção iniciada por ## Contracts "
+            "listando as assinaturas/shapes-chave no formato arquivo:linha (tipos, exports, schemas, contratos de função) "
+            "— só o essencial pra retomar cirúrgico sem reler o arquivo inteiro. Sem pensamento/debate. "
             "Markdown curto.\n\n" + text
         )
 
