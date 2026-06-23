@@ -15,6 +15,32 @@ DEFAULT_DENSITY = {
     "out_of_box": 0.5,
 }
 
+_STATUS_SYNONYMS = {
+    "ok": "OK",
+    "complete": "OK",
+    "completed": "OK",
+    "done": "OK",
+    "success": "OK",
+    "succeeded": "OK",
+    "successful": "OK",
+    "finished": "OK",
+    "pass": "OK",
+    "passed": "OK",
+    "part": "PART",
+    "partial": "PART",
+    "partially": "PART",
+    "incomplete": "PART",
+    "err": "ERR",
+    "error": "ERR",
+    "errored": "ERR",
+    "failed": "ERR",
+    "failure": "ERR",
+    "fail": "ERR",
+    "blk": "BLK",
+    "blocked": "BLK",
+    "block": "BLK",
+}
+
 STYLE_GUIDE = """
 The capsule may include [tone:X,lang:Y]. Match THAT tone in your output —
 this is per-this-turn, not a user profile. If voice_sample is provided,
@@ -235,6 +261,17 @@ def _coerce_to_list(value: Any) -> list:
 def normalize_worker_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     """Backwards-compatible normalization for worker JSON envelopes."""
     normalized = dict(payload or {})
+
+    # Canonicalize status field to ensure verify gate and exit code logic work correctly
+    if "status" in normalized:
+        raw_status = str(normalized.get("status") or "").strip()
+        if raw_status:
+            lower_status = raw_status.lower()
+            if lower_status in _STATUS_SYNONYMS:
+                normalized["status"] = _STATUS_SYNONYMS[lower_status]
+            elif raw_status.upper() in {"OK", "PART", "ERR", "BLK"}:
+                normalized["status"] = raw_status.upper()
+
     raw_density = normalized.get("density")
     density = raw_density if isinstance(raw_density, dict) else {}
     normalized["density"] = {
