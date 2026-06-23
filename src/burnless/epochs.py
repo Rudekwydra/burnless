@@ -254,3 +254,179 @@ def set_enabled(project_root, on: bool) -> bool:
     except Exception:
         pass
     return is_enabled(project_root)
+
+
+def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
+    """Resolve project root from cwd using canonical logic.
+
+    Returns (first match):
+    (a) Closest ancestor of cwd with .burnless/config.yaml (excluding workspace itself)
+    (b) workspace/<first_component> if cwd is strictly inside workspace
+    (c) _detect_from_transcript or freshest_project_root if cwd == workspace or cwd == home
+    (d) cwd itself
+    Returns None on any error.
+    """
+    try:
+        cwd = Path(cwd) if isinstance(cwd, str) else cwd
+        workspace = Path(workspace) if isinstance(workspace, str) else workspace
+
+        current = cwd
+        while current != Path(current.root):
+            if workspace is not None and current.parent == workspace:
+                break
+            config_file = current / ".burnless" / "config.yaml"
+            if config_file.exists():
+                return current
+            current = current.parent
+
+        if workspace is not None and cwd != workspace:
+            try:
+                cwd_rel = cwd.relative_to(workspace)
+                first_component = cwd_rel.parts[0] if cwd_rel.parts else None
+                if first_component:
+                    return workspace / first_component
+            except ValueError:
+                pass
+
+        if cwd == workspace or cwd == Path.home():
+            if transcript is not None:
+                detected = _detect_from_transcript(transcript, workspace)
+                if detected:
+                    return detected
+            return freshest_project_root(workspace)
+
+        return cwd
+    except Exception:
+        return None
+
+
+def freshest_project_root(workspace) -> Path | None:
+    """Find project dir with newest .burnless/epochs/_rolling/seed.md.
+
+    Scans only one level under workspace; excludes workspace itself.
+    Returns None if no seed files found.
+    """
+    try:
+        if workspace is None:
+            return None
+        workspace = Path(workspace) if isinstance(workspace, str) else workspace
+        if not workspace.exists():
+            return None
+
+        freshest = None
+        freshest_mtime = 0
+
+        for proj_dir in workspace.iterdir():
+            if not proj_dir.is_dir():
+                continue
+            seed_file = proj_dir / ".burnless" / "epochs" / "_rolling" / "seed.md"
+            if seed_file.exists():
+                mtime = seed_file.stat().st_mtime
+                if mtime > freshest_mtime:
+                    freshest_mtime = mtime
+                    freshest = proj_dir
+
+        return freshest
+    except Exception:
+        return None
+
+
+def _detect_from_transcript(transcript, workspace) -> Path | None:
+    """Detect dominant project from transcript file references.
+
+    Counts references matching <workspace>/<proj>/<file>.
+    Returns <workspace>/<proj> if most common proj has ≥5 hits.
+    Returns None otherwise.
+    """
+    try:
+        if transcript is None or workspace is None:
+            return None
+
+        transcript_path = Path(transcript) if isinstance(transcript, str) else transcript
+        workspace = Path(workspace) if isinstance(workspace, str) else workspace
+
+        if not transcript_path.exists():
+            return None
+
+        proj_counts = {}
+        text = transcript_path.read_text(encoding='utf-8', errors='ignore')
+
+        for line in text.split('\n'):
+            try:
+                if workspace.as_posix() in line:
+                    parts = line.split(workspace.as_posix() + '/')
+                    if len(parts) > 1:
+                        remainder = parts[1]
+                        proj_name = remainder.split('/')[0] if '/' in remainder else remainder.split()[0]
+                        if proj_name and not proj_name.startswith('.'):
+                            proj_counts[proj_name] = proj_counts.get(proj_name, 0) + 1
+            except Exception:
+                continue
+
+        if not proj_counts:
+            return None
+
+        most_common_proj = max(proj_counts, key=proj_counts.get)
+        if proj_counts[most_common_proj] >= 5:
+            return workspace / most_common_proj
+
+        return None
+    except Exception:
+        return None
+
+
+def carry_forward_chain(root, current_chat_id=None) -> str:
+    """Render carry-forward memory chain from predecessor chats or rolling seed.
+
+    Returns (first match):
+    (a) Active chain from newest predecessor chat (not _rolling, not current_chat_id)
+    (b) Content of _rolling/seed.md if exists
+    (c) Empty string
+    """
+    try:
+        root = Path(root) if isinstance(root, str) else root
+
+        if not is_enabled(root):
+            return ""
+
+        epochs_dir = root / ".burnless" / "epochs"
+        if not epochs_dir.exists():
+            return ""
+
+        newest_chat = None
+        newest_mtime = 0
+
+        for chat_dir in epochs_dir.iterdir():
+            if not chat_dir.is_dir():
+                continue
+            if chat_dir.name == "_rolling" or chat_dir.name == current_chat_id:
+                continue
+
+            chain = active_chain(root, chat_dir.name)
+            if not chain:
+                continue
+
+            mtime = chat_dir.stat().st_mtime
+            if mtime > newest_mtime:
+                newest_mtime = mtime
+                newest_chat = chat_dir.name
+
+        if newest_chat is not None:
+            chain = active_chain(root, newest_chat)
+            if chain:
+                result = []
+                for f in chain:
+                    result.append(f"# {f.name}\n")
+                    result.append(f.read_text(encoding='utf-8'))
+                    result.append("\n")
+                return "".join(result)
+
+        seed_file = epochs_dir / "_rolling" / "seed.md"
+        if seed_file.exists():
+            content = seed_file.read_text(encoding='utf-8')
+            if content.strip():
+                return content
+
+        return ""
+    except Exception:
+        return ""

@@ -1,30 +1,15 @@
 #!/bin/bash
-
 [[ -n "$BURNLESS_NO_EPOCH" ]] && exit 0
-
 export PATH="$HOME/.local/bin:$PATH"
-BURNLESS_BIN="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
-
+BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 stdin_data=$(cat)
 SID=$(echo "$stdin_data" | /usr/bin/jq -r '.session_id // empty' 2>/dev/null)
 CWD=$(echo "$stdin_data" | /usr/bin/jq -r '.cwd // empty' 2>/dev/null)
 TP=$(echo "$stdin_data" | /usr/bin/jq -r '.transcript_path // empty' 2>/dev/null)
-
 [[ -z "$SID" || -z "$CWD" || -z "$TP" ]] && exit 0
-
-ROOT=""
-current="$CWD"
-while [[ -n "$current" && "$current" != "/" ]]; do
-  if [[ -f "$current/.burnless/config.yaml" ]]; then
-    ROOT="$current"
-    break
-  fi
-  current=$(dirname "$current")
-done
-
+ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$HOME/antigravity" --transcript "$TP" 2>/dev/null)
 [[ -z "$ROOT" ]] && exit 0
 [[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
-
 extracted=$(python3 -c '
 import sys, json
 u = ""
@@ -55,19 +40,12 @@ try:
 except:
   pass
 ' "$TP" 2>/dev/null)
-
 case "$extracted" in *"Resuma o trecho de conversa abaixo"*) exit 0 ;; esac
-
-if [[ -n "$extracted" ]]; then
-  mkdir -p "$ROOT/.burnless/epochs/_rolling"
-  {
-    # Single guarded, non-destructive write (Layer A + B): capture emits the
-    # active chain to stdout with --emit-chain; promote the temp seed only if it
-    # is non-empty, so a summarizer failure preserves the last good seed.
-    tmp="$ROOT/.burnless/epochs/_rolling/.seed.md.tmp.$$"
-    echo "$extracted" | "$BURNLESS_BIN" epoch capture --chat-id "$SID" --root "$ROOT" --emit-chain > "$tmp" 2>/dev/null
-    if [[ -s "$tmp" ]]; then mv -f "$tmp" "$ROOT/.burnless/epochs/_rolling/seed.md"; else rm -f "$tmp"; fi
-  } &
-fi
-
+[[ -z "$extracted" ]] && exit 0
+mkdir -p "$ROOT/.burnless/epochs/_rolling"
+{
+  tmp="$ROOT/.burnless/epochs/_rolling/.seed.md.tmp.$$"
+  echo "$extracted" | "$BB" epoch capture --chat-id "$SID" --root "$ROOT" --emit-chain > "$tmp" 2>/dev/null
+  if [[ -s "$tmp" ]]; then mv -f "$tmp" "$ROOT/.burnless/epochs/_rolling/seed.md"; else rm -f "$tmp"; fi
+} &
 exit 0

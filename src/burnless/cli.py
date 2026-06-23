@@ -1114,8 +1114,14 @@ def cmd_epoch(args: argparse.Namespace) -> int:
     if _explicit:
         root_path = Path(_explicit)
     else:
-        _fr = paths_mod.find_root()
-        root_path = (_fr.parent if _fr else Path.cwd())
+        cwd = getattr(args, "cwd", None)
+        workspace = getattr(args, "workspace", None)
+        transcript = getattr(args, "transcript", None)
+        if cwd is not None:
+            root_path = epochs_mod.resolve_root(cwd, workspace=workspace, transcript=transcript) or Path.cwd()
+        else:
+            _fr = paths_mod.find_root()
+            root_path = (_fr.parent if _fr else Path.cwd())
     chat_id = getattr(args, "chat_id", None)
     epoch_cmd = getattr(args, "epoch_cmd", None)
 
@@ -1175,6 +1181,26 @@ def cmd_epoch(args: argparse.Namespace) -> int:
     elif epoch_cmd == "cleanup":
         n = epochs_mod.cleanup_originais(root_path, chat_id)
         print(f"removed {n}")
+        return 0
+
+    elif epoch_cmd == "resolve-root":
+        cwd = getattr(args, "cwd", None)
+        workspace = getattr(args, "workspace", None)
+        transcript = getattr(args, "transcript", None)
+        r = epochs_mod.resolve_root(cwd, workspace=workspace, transcript=transcript)
+        print(str(r) if r else "")
+        return 0
+
+    elif epoch_cmd == "resume":
+        cwd = getattr(args, "cwd", None)
+        workspace = getattr(args, "workspace", None)
+        transcript = getattr(args, "transcript", None)
+        root = epochs_mod.resolve_root(cwd, workspace=workspace, transcript=transcript)
+        if root is None:
+            print("")
+            return 0
+        chain = epochs_mod.carry_forward_chain(root, getattr(args, "chat_id", None))
+        print(chain)
         return 0
 
     return 2
@@ -1600,6 +1626,9 @@ def build_parser() -> argparse.ArgumentParser:
     epoch_common = argparse.ArgumentParser(add_help=False)
     epoch_common.add_argument("--chat-id", required=False, default=None, dest="chat_id", help="chat ID for epoch storage (required for capture/read/cleanup)")
     epoch_common.add_argument("--root", default=None, help="project root (default: find_root())")
+    epoch_common.add_argument("--cwd", default=None, help="working directory for root resolution")
+    epoch_common.add_argument("--workspace", default=None, help="workspace root for project detection")
+    epoch_common.add_argument("--transcript", default=None, help="transcript file path for project detection")
     epoch_sub = sp.add_subparsers(dest="epoch_cmd", required=True)
     esp = epoch_sub.add_parser("capture", parents=[epoch_common], help="read STDIN, summarize, append, consolidate")
     esp.add_argument("--emit-chain", action="store_true", dest="emit_chain", default=False,
@@ -1615,6 +1644,10 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="off")
     esp = epoch_sub.add_parser("status", parents=[epoch_common], help="show ON/OFF state + chat/summary count")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="status")
+    esp = epoch_sub.add_parser("resolve-root", parents=[epoch_common], help="resolve project root from cwd")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="resolve-root")
+    esp = epoch_sub.add_parser("resume", parents=[epoch_common], help="emit carry-forward chain")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="resume")
 
     sp = sub.add_parser("doctor", help="healthcheck install/config/wiring/MCP; --fix auto-remediates safe issues")
     sp.add_argument("--json", action="store_true", help="emit machine-readable JSON")
