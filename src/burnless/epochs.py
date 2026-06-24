@@ -414,8 +414,11 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         if newest_chat is not None:
             chain = active_chain(root, newest_chat)
             if chain:
-                result = []
-                for f in chain:
+                # Newest-first: clear-resume trunca o seed injetado pelo topo,
+                # entao o checkpoint vivo (ultimo epoch) tem que liderar.
+                # Ler de cima pra baixo = mais novo -> mais velho.
+                result = ["> ordem: mais NOVO primeiro (topo = ultimo checkpoint vivo)\n\n"]
+                for f in reversed(chain):
                     result.append(f"# {f.name}\n")
                     result.append(f.read_text(encoding='utf-8'))
                     result.append("\n")
