@@ -1162,7 +1162,10 @@ def cmd_epoch(args: argparse.Namespace) -> int:
                 break
             level += 1
         if getattr(args, "emit_chain", False):
-            for f in epochs_mod.active_chain(root_path, chat_id):
+            # Newest-first: seed.md alimenta o carry-forward, truncado pelo topo
+            # no clear-resume. Topo = ultimo checkpoint vivo (ler novo -> velho).
+            print("> ordem: mais NOVO primeiro (topo = ultimo checkpoint vivo)\n")
+            for f in reversed(epochs_mod.active_chain(root_path, chat_id)):
                 print(f"# {f.name}\n")
                 print(f.read_text(encoding='utf-8'))
                 print()
