@@ -393,9 +393,16 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         if not epochs_dir.exists():
             return ""
 
-        newest_chat = None
-        newest_mtime = 0
+        # Merge ALL recent predecessor chains, newest-first, deduped, capped.
+        # Single-newest-dir selection orphaned a deep working chain whenever a
+        # thin throwaway session (1 epoch) happened to have a newer dir mtime —
+        # the freshest checkpoint silently lost to noise. Ranking each chain by
+        # its freshest epoch and merging keeps every recent chain alive; the cap
+        # (newest-first) preserves the clear-resume top-truncation guarantee, and
+        # dedup drops the seed.md / repeated-summary echoes.
+        CARRY_FORWARD_CAP = 8000
 
+        candidates = []
         for chat_dir in epochs_dir.iterdir():
             if not chat_dir.is_dir():
                 continue
@@ -406,23 +413,27 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
             if not chain:
                 continue
 
-            mtime = chat_dir.stat().st_mtime
-            if mtime > newest_mtime:
-                newest_mtime = mtime
-                newest_chat = chat_dir.name
+            last_mtime = max(f.stat().st_mtime for f in chain)
+            candidates.append((last_mtime, chain))
 
-        if newest_chat is not None:
-            chain = active_chain(root, newest_chat)
-            if chain:
-                # Newest-first: clear-resume trunca o seed injetado pelo topo,
-                # entao o checkpoint vivo (ultimo epoch) tem que liderar.
-                # Ler de cima pra baixo = mais novo -> mais velho.
-                result = ["> ordem: mais NOVO primeiro (topo = ultimo checkpoint vivo)\n\n"]
+        if candidates:
+            candidates.sort(key=lambda c: c[0], reverse=True)
+            result = ["> ordem: mais NOVO primeiro (topo = ultimo checkpoint vivo)\n\n"]
+            seen = set()
+            total = 0
+            for _, chain in candidates:
                 for f in reversed(chain):
-                    result.append(f"# {f.name}\n")
-                    result.append(f.read_text(encoding='utf-8'))
-                    result.append("\n")
-                return "".join(result)
+                    body = f.read_text(encoding='utf-8')
+                    key = body.strip()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    block = f"# {f.name}\n{body}\n"
+                    if total > 0 and total + len(block) > CARRY_FORWARD_CAP:
+                        return "".join(result)
+                    result.append(block)
+                    total += len(block)
+            return "".join(result)
 
         seed_file = epochs_dir / "_rolling" / "seed.md"
         if seed_file.exists():
