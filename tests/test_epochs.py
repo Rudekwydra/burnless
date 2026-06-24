@@ -118,3 +118,59 @@ def test_cleanup_originais(tmp_path):
 
     assert count >= 10
     assert not (d / "originais").exists()
+
+
+def test_carry_forward_merges_recent_chains(tmp_path):
+    """A deep working chain must not be orphaned by a thinner, newer session.
+
+    Regression: carry_forward_chain used to return only the single newest chat
+    dir (by dir mtime), so a 1-epoch throwaway session shadowed a multi-epoch
+    working chain. It must merge recent chains, newest-first.
+    """
+    import os
+    from burnless.epochs import carry_forward_chain
+
+    for i in range(3):
+        append_epoch(tmp_path, "chatDeep", f"deep epoch {i+1}")
+    append_epoch(tmp_path, "chatThin", "thin epoch 1")
+
+    # Make the thin chain the most recently active.
+    for f in epoch_dir(tmp_path, "chatDeep").glob("*.md"):
+        os.utime(f, (1000, 1000))
+    for f in epoch_dir(tmp_path, "chatThin").glob("*.md"):
+        os.utime(f, (2000, 2000))
+
+    out = carry_forward_chain(tmp_path, current_chat_id="chatCurrent")
+
+    # Both chains survive — the deep chain is NOT orphaned.
+    assert "thin epoch 1" in out
+    assert "deep epoch 1" in out
+    assert "deep epoch 3" in out
+    # Newest-first: the fresher thin chain leads the merge.
+    assert out.index("thin epoch 1") < out.index("deep epoch 3")
+    assert "mais NOVO primeiro" in out
+
+
+def test_carry_forward_excludes_current_chat(tmp_path):
+    """The current chat's own epochs are never replayed back to it."""
+    from burnless.epochs import carry_forward_chain
+
+    append_epoch(tmp_path, "chatCurrent", "my own epoch")
+    append_epoch(tmp_path, "chatOther", "other epoch")
+
+    out = carry_forward_chain(tmp_path, current_chat_id="chatCurrent")
+
+    assert "other epoch" in out
+    assert "my own epoch" not in out
+
+
+def test_carry_forward_dedups_repeated_summaries(tmp_path):
+    """Identical epoch bodies across chains collapse to one (kills seed echoes)."""
+    from burnless.epochs import carry_forward_chain
+
+    append_epoch(tmp_path, "chatA", "duplicated body")
+    append_epoch(tmp_path, "chatB", "duplicated body")
+
+    out = carry_forward_chain(tmp_path, current_chat_id="chatCurrent")
+
+    assert out.count("duplicated body") == 1
