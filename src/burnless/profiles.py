@@ -2,6 +2,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from . import config
+
 import yaml
 
 _PROFILES_DIR = Path.home() / ".burnless" / "profiles"
@@ -36,8 +38,11 @@ _TEMPLATES: dict[str, dict] = {
         },
         "agents": {
             "bronze": {
-                "name": "qwen-local",
-                "command": "ollama run qwen2.5:7b",
+                "name": config.DEFAULT_LOCAL_MODEL,
+                "provider": "ollama-local",
+                "tools": True,
+                "model": config.DEFAULT_LOCAL_MODEL,
+                "command": "",
             }
         },
         "keepalive": {"enabled": False},
