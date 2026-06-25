@@ -18,6 +18,9 @@ from burnless.epochs_v2 import (
     ring_dir,
     living_seed,
     SECTIONS,
+    _is_trivial_text,
+    contract_key,
+    update_contract_ages,
 )
 
 
@@ -260,3 +263,98 @@ def test_parse_living_strips_dashes():
     contracts = parsed["Contracts"]
     assert "a.py:1 func()" in contracts or "- a.py:1 func()" in contracts
     assert "b.ts:2 x()" in contracts or "- b.ts:2 x()" in contracts
+
+
+def test_is_trivial_text_confirmation():
+    assert _is_trivial_text("ok pode ir em frente") is True
+    assert _is_trivial_text("beleza") is True
+    assert _is_trivial_text("") is True
+
+
+def test_is_trivial_text_question():
+    assert _is_trivial_text("qual é a resposta?") is True
+    assert _is_trivial_text("a" * 121 + "?") is False
+
+
+def test_is_trivial_text_non_trivial():
+    assert _is_trivial_text("refatora /a/b.py agora porque mudou o schema") is False
+
+
+def test_is_noop_trivial_confirmation():
+    prev_md = "ja tem /x/y.py aqui"
+    exchange = "PERGUNTA:\nbeleza pode seguir\n\nRESPOSTA:\nfeito"
+    assert is_noop(prev_md, exchange) is True
+
+
+def test_is_noop_new_entity_in_exchange():
+    prev_md = "nada aqui"
+    exchange = "vai em /novo/z.ts"
+    assert is_noop(prev_md, exchange) is False
+
+
+def test_contract_key_with_entity():
+    line = "a.py:1 foo()"
+    key = contract_key(line)
+    assert key == "a.py"
+
+
+def test_contract_key_without_entity():
+    line = "alguma coisa aqui"
+    key = contract_key(line)
+    assert key == "alguma coisa aqui"
+
+
+def test_update_contract_ages():
+    new_md = "## Contracts\n- a.py:1 foo()\n- b.ts:2 bar()\n"
+    ages = update_contract_ages(None, new_md, turn=5)
+    assert ages["a.py"] == 5
+    assert ages["b.ts"] == 5
+
+
+def test_preserve_guard_with_ages_stale():
+    prev_md = "## Contracts\n- a.py:1 foo()\n"
+    new_md = "## Foco atual\n- x\n"
+    old = preserve_guard(prev_md, new_md, contract_ages={"a.py": 0}, turn=99, max_age=15)
+    assert "a.py:1 foo()" not in old
+
+
+def test_preserve_guard_with_ages_fresh():
+    prev_md = "## Contracts\n- a.py:1 foo()\n"
+    new_md = "## Foco atual\n- x\n"
+    fresh = preserve_guard(prev_md, new_md, contract_ages={"a.py": 99}, turn=99, max_age=15)
+    assert "a.py:1 foo()" in fresh
+
+
+def test_enforce_budget_with_stale_contracts(tmp_path):
+    md = """## Foco atual
+- focus
+
+## Threads abertas
+- thread
+
+## Decisões
+- dec1
+
+## Contracts
+- old.py:1 old()
+- new.py:2 new()
+
+## Refs
+- ref
+"""
+    ages = {"old.py": 0, "new.py": 99}
+    result = enforce_budget(md, budget_tokens=10, contract_ages=ages, turn=99, max_age=15)
+    assert "new.py:2 new()" in result
+
+
+def test_apply_capture_persists_turn_and_ages(tmp_path):
+    stub_rewriter = lambda prompt: "## Foco atual\n- t\n## Threads abertas\n## Decisões\n## Contracts\n- y.py:2 bar()\n## Refs\n"
+
+    apply_capture(tmp_path, "c2", "vai em /a/b.py", rewriter=stub_rewriter)
+    apply_capture(tmp_path, "c2", "agora /c/d.py tambem", rewriter=stub_rewriter)
+
+    sp = state_path(tmp_path, "c2")
+    state_data = json.loads(sp.read_text())
+    assert state_data["turn"] == 2
+    assert "contract_ages" in state_data
+    assert "y.py" in state_data["contract_ages"]
