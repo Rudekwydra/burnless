@@ -21,6 +21,24 @@ _ENTITY_PATTERNS = [
     re.compile(r'\b[\w\-]+\.[A-Za-z]{1,5}\b'),
 ]
 
+# No-op patterns: trivial confirmations and short questions
+_NOOP_PATTERNS = [
+    re.compile(r'^\s*(ok|okay|blz|beleza|valeu|vlw|isso|isso a[ií]|certo|perfeito|show|fechou|fechado|'
+               r'pode (ir|fazer|seguir|mandar)|manda|vai( em frente)?|segue|bom|[oó]timo|massa|top|'
+               r'sim|n[aã]o|nope|yep|sure|thanks|obrigad[oa])\b', re.IGNORECASE),
+]
+
+
+def _is_trivial_text(s: str) -> bool:
+    t = s.strip()
+    if not t:
+        return True
+    if any(p.match(t) for p in _NOOP_PATTERNS) and len(t) <= 200:
+        return True
+    if t.endswith('?') and len(t) <= 120:
+        return True
+    return False
+
 
 def living_path(root, chat_id: str) -> Path:
     from . import epochs
@@ -47,13 +65,47 @@ def extract_entities(text: str) -> set[str]:
     return entities
 
 
+def contract_key(line: str) -> str:
+    line = line.lstrip('- ').strip()
+    ents = extract_entities(line)
+    return next(iter(ents)) if ents else line
+
+
+def update_contract_ages(prev_ages: dict | None, new_md: str, turn: int) -> dict:
+    ages = dict(prev_ages or {})
+    for line in parse_living(new_md).get('Contracts', []):
+        ages[contract_key(line)] = turn
+    return ages
+
+
 def is_noop(prev_md: str, exchange: str, max_len: int = 240) -> bool:
     exchange_stripped = exchange.strip()
+    if not exchange_stripped:
+        return True
+
+    exchange_entities = extract_entities(exchange_stripped)
+    prev_entities = extract_entities(prev_md)
+
+    if not exchange_entities.issubset(prev_entities):
+        return False
+
     if len(exchange_stripped) <= max_len:
-        exchange_entities = extract_entities(exchange_stripped)
-        prev_entities = extract_entities(prev_md)
-        return exchange_entities.issubset(prev_entities)
-    return False
+        return True
+
+    user_portion = exchange_stripped
+    for marker in ('PERGUNTA:', 'Pergunta:'):
+        if marker in exchange_stripped:
+            start = exchange_stripped.find(marker) + len(marker)
+            rest = exchange_stripped[start:].strip()
+            for end_marker in ('RESPOSTA:', 'Resposta:', '\n\n'):
+                if end_marker in rest:
+                    end = rest.find(end_marker)
+                    user_portion = rest[:end].strip()
+                    break
+            if user_portion:
+                break
+
+    return _is_trivial_text(user_portion)
 
 
 def parse_living(md: str) -> dict[str, list[str]]:
@@ -130,7 +182,7 @@ Retorne apenas o documento markdown atualizado. Sem markdown fence. Pronto."""
     return prompt
 
 
-def preserve_guard(prev_md: str, new_md: str) -> str:
+def preserve_guard(prev_md: str, new_md: str, contract_ages: dict | None = None, turn: int = 0, max_age: int = 15) -> str:
     prev_parsed = parse_living(prev_md)
     prev_contracts = prev_parsed.get('Contracts', [])
 
@@ -144,7 +196,13 @@ def preserve_guard(prev_md: str, new_md: str) -> str:
         if first_entity:
             first_token = next(iter(first_entity))
             if first_token not in new_md:
-                recovered.append(contract_line_clean)
+                key = contract_key(contract_line_clean)
+                if contract_ages is None:
+                    recovered.append(contract_line_clean)
+                else:
+                    age_val = contract_ages.get(key, turn)
+                    if turn - age_val <= max_age:
+                        recovered.append(contract_line_clean)
 
     if not recovered:
         return new_md
@@ -182,7 +240,7 @@ def preserve_guard(prev_md: str, new_md: str) -> str:
     return new_md
 
 
-def enforce_budget(md: str, budget_tokens: int = 2500) -> str:
+def enforce_budget(md: str, budget_tokens: int = 2500, contract_ages: dict | None = None, turn: int = 0, max_age: int = 15) -> str:
     estimated_tokens = len(md) // 4
     if estimated_tokens <= budget_tokens:
         return md
@@ -194,6 +252,23 @@ def enforce_budget(md: str, budget_tokens: int = 2500) -> str:
         decisoes.pop(0)
         parsed['Decisões'] = decisoes
         md = _rebuild_md(parsed)
+
+    if contract_ages is not None and (len(md) // 4) > budget_tokens:
+        contracts = parsed.get('Contracts', [])
+        stale_contracts = []
+        for line in contracts:
+            key = contract_key(line)
+            age_val = contract_ages.get(key, turn)
+            if turn - age_val > max_age:
+                stale_contracts.append((turn - age_val, line))
+
+        stale_contracts.sort(reverse=True)
+        for age, line in stale_contracts:
+            if (len(md) // 4) <= budget_tokens:
+                break
+            contracts.remove(line)
+            parsed['Contracts'] = contracts
+            md = _rebuild_md(parsed)
 
     return md
 
@@ -242,6 +317,16 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
             push_ring(root, chat_id, exchange)
             return lp
 
+        prev_state = {}
+        if sp.exists():
+            try:
+                prev_state = json.loads(sp.read_text(encoding='utf-8'))
+            except Exception:
+                pass
+
+        turn = prev_state.get('turn', 0) + 1
+        prev_ages = prev_state.get('contract_ages', {})
+
         if rewriter is None:
             rewriter = living_rewriter(root)
 
@@ -255,8 +340,10 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
             push_ring(root, chat_id, exchange)
             return lp
 
-        new_md = preserve_guard(prev_md, new_md)
-        new_md = enforce_budget(new_md)
+        ages = update_contract_ages(prev_ages, new_md, turn)
+        new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)
+        new_md = enforce_budget(new_md, contract_ages=ages, turn=turn)
+        ages = update_contract_ages(ages, new_md, turn)
 
         lp.parent.mkdir(parents=True, exist_ok=True)
 
@@ -273,6 +360,8 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
             raise
 
         harvested = harvest_state(new_md)
+        harvested['turn'] = turn
+        harvested['contract_ages'] = ages
         sp.write_text(json.dumps(harvested, ensure_ascii=False, indent=2), encoding='utf-8')
 
         push_ring(root, chat_id, exchange)
