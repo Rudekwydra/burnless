@@ -49,7 +49,7 @@ def load_config_model() -> str:
             return model
     except Exception:
         pass
-    return "hf.co/unsloth/gemma-4-12b-it-GGUF:Q4_K_M"
+    return "hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL"
 
 def extract_output(payload: dict) -> str:
     """Probe tool_response/tool_output/output fields; return first non-empty string."""
