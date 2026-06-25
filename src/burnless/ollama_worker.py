@@ -83,6 +83,8 @@ def run_ollama_tools(
 
     def _ler_arquivo(caminho: str) -> str:
         try:
+            if not os.path.isabs(caminho):
+                caminho = os.path.join(effective_cwd, caminho)
             with open(caminho, "r", encoding="utf-8", errors="replace") as f:
                 return f.read()
         except Exception as e:
@@ -90,6 +92,8 @@ def run_ollama_tools(
 
     def _escrever_arquivo(caminho: str, conteudo: str) -> str:
         try:
+            if not os.path.isabs(caminho):
+                caminho = os.path.join(effective_cwd, caminho)
             os.makedirs(os.path.dirname(os.path.abspath(caminho)) or ".", exist_ok=True)
             with open(caminho, "w", encoding="utf-8") as f:
                 f.write(conteudo)
@@ -135,7 +139,19 @@ def run_ollama_tools(
 
     for n in range(1, max_iters + 1):
         body = json.dumps(
-            {"model": model, "messages": messages, "tools": _TOOLS, "stream": False},
+            {
+                "model": model,
+                "messages": messages,
+                "tools": _TOOLS,
+                "stream": False,
+                "keep_alive": os.environ.get("BURNLESS_OLLAMA_KEEPALIVE", "30m"),
+                "options": {
+                    "temperature": 1.0,
+                    "top_p": 0.95,
+                    "top_k": 64,
+                    "num_ctx": int(os.environ.get("BURNLESS_OLLAMA_NUM_CTX", "32768")),
+                },
+            },
             ensure_ascii=False,
         ).encode("utf-8")
         req = urllib.request.Request(
