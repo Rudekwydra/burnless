@@ -375,6 +375,30 @@ def _detect_from_transcript(transcript, workspace) -> Path | None:
         return None
 
 
+def _commits_since_mtime(root, mtime: float, cap: int = 15) -> str:
+    """Reconciliation aid: commits that landed after the living-doc was frozen.
+    Closes the 'trailing by 1 commit' gap — a git commit is not a captured
+    conversational exchange, so the living-doc never learns the work landed.
+    Deterministic, zero-LLM, fail-open (git error / non-repo -> empty string)."""
+    try:
+        import subprocess
+        import datetime
+        since = datetime.datetime.fromtimestamp(mtime).isoformat()
+        out = subprocess.run(
+            ["git", "-C", str(root), "log", "--since=" + since,
+             "--pretty=format:%h %s", "-" + str(cap)],
+            capture_output=True, text=True, timeout=5,
+        )
+        lines = [l for l in out.stdout.splitlines() if l.strip()]
+        if not lines:
+            return ""
+        body = "\n".join("- " + l for l in lines)
+        return ("\n## Commits apos o checkpoint (reconciliar vs Threads abertas)\n"
+                + body + "\n")
+    except Exception:
+        return ""
+
+
 def carry_forward_chain(root, current_chat_id=None) -> str:
     """Render carry-forward memory chain from predecessor chats or rolling seed.
 
@@ -424,6 +448,9 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
                         break
                     out.append(block)
                     total += len(block)
+                recon = _commits_since_mtime(root, v2_cand[0][0])
+                if recon:
+                    out.append(recon)
                 return "".join(out)
             # no living docs yet -> fall through to V1 chain (backward compat)
 
