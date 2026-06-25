@@ -1149,6 +1149,18 @@ def cmd_epoch(args: argparse.Namespace) -> int:
 
     elif epoch_cmd == "capture":
         text = _sys.stdin.read()
+        if os.environ.get("BURNLESS_EPOCH_V2"):
+            try:
+                from . import epochs_v2
+                lp = epochs_v2.apply_capture(root_path, chat_id, text)
+                if getattr(args, "emit_chain", False):
+                    print("> ordem: documento vivo (living-doc v2)\n")
+                    print(epochs_v2.living_seed(root_path, chat_id))
+                else:
+                    print(lp.name)
+                return 0
+            except Exception as e:
+                print(f"warning: epochs_v2 failed ({e}); falling back to v1", file=_sys.stderr)
         summarizer = epochs_mod.epoch_summarizer(root_path)
         s = summarizer(text)
         if s is None:
