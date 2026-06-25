@@ -393,6 +393,40 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         if not epochs_dir.exists():
             return ""
 
+        CARRY_FORWARD_CAP = 8000
+
+        # V2 living-doc: serve predecessor chats' living.md (newest-first) before
+        # the V1 NNN.md chain. Without this, capture writes V2 but resume serves
+        # V1 — the dense living-doc is written and never read (commit 5492569).
+        if os.environ.get("BURNLESS_EPOCH_V2"):
+            from . import epochs_v2
+            v2_cand = []
+            for chat_dir in epochs_dir.iterdir():
+                if not chat_dir.is_dir():
+                    continue
+                if chat_dir.name == "_rolling" or chat_dir.name == current_chat_id:
+                    continue
+                lp = epochs_v2.living_path(root, chat_dir.name)
+                if lp.exists() and lp.read_text(encoding='utf-8').strip():
+                    v2_cand.append((lp.stat().st_mtime, chat_dir.name, lp))
+            if v2_cand:
+                v2_cand.sort(key=lambda c: c[0], reverse=True)
+                out = ["> ordem: documento vivo (living-doc v2), mais NOVO primeiro\n\n"]
+                seen = set()
+                total = 0
+                for _, name, lp in v2_cand:
+                    body = lp.read_text(encoding='utf-8').strip()
+                    if body in seen:
+                        continue
+                    seen.add(body)
+                    block = f"# living:{name[:8]}\n{body}\n\n"
+                    if total > 0 and total + len(block) > CARRY_FORWARD_CAP:
+                        break
+                    out.append(block)
+                    total += len(block)
+                return "".join(out)
+            # no living docs yet -> fall through to V1 chain (backward compat)
+
         # Merge ALL recent predecessor chains, newest-first, deduped, capped.
         # Single-newest-dir selection orphaned a deep working chain whenever a
         # thin throwaway session (1 epoch) happened to have a newer dir mtime —
@@ -400,8 +434,6 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         # its freshest epoch and merging keeps every recent chain alive; the cap
         # (newest-first) preserves the clear-resume top-truncation guarantee, and
         # dedup drops the seed.md / repeated-summary echoes.
-        CARRY_FORWARD_CAP = 8000
-
         candidates = []
         for chat_dir in epochs_dir.iterdir():
             if not chat_dir.is_dir():
