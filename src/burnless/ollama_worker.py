@@ -137,9 +137,28 @@ def run_ollama_tools(
     status = "ERR"
     n = 0
 
+    # Dual-protocol: default ollama (/api/chat); BURNLESS_LOCAL_API=llamacpp routes to a
+    # llama-server + MTP daemon (OpenAI-compat /v1/chat/completions, default :11435). Reversible.
+    api_mode = os.environ.get("BURNLESS_LOCAL_API", "ollama").lower()
+    if api_mode == "llamacpp":
+        local_host = os.environ.get("BURNLESS_LOCAL_HOST", "http://localhost:11435")
+        endpoint = "/v1/chat/completions"
+    else:
+        local_host = host
+        endpoint = "/api/chat"
+
     for n in range(1, max_iters + 1):
-        body = json.dumps(
-            {
+        if api_mode == "llamacpp":
+            payload = {
+                "model": model or "local",
+                "messages": messages,
+                "tools": _TOOLS,
+                "stream": False,
+                "temperature": 1.0,
+                "top_p": 0.95,
+            }
+        else:
+            payload = {
                 "model": model,
                 "messages": messages,
                 "tools": _TOOLS,
@@ -151,11 +170,10 @@ def run_ollama_tools(
                     "top_k": 64,
                     "num_ctx": int(os.environ.get("BURNLESS_OLLAMA_NUM_CTX", "32768")),
                 },
-            },
-            ensure_ascii=False,
-        ).encode("utf-8")
+            }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
-            host.rstrip("/") + "/api/chat",
+            local_host.rstrip("/") + endpoint,
             data=body,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -167,7 +185,11 @@ def run_ollama_tools(
             issues.append(f"iter {n} urlopen error: {e}")
             break
 
-        msg = resp_data.get("message", {})
+        if api_mode == "llamacpp":
+            choices = resp_data.get("choices") or [{}]
+            msg = choices[0].get("message", {}) or {}
+        else:
+            msg = resp_data.get("message", {})
         messages.append(msg)
 
         tool_calls = msg.get("tool_calls")
@@ -192,7 +214,10 @@ def run_ollama_tools(
                     if cmd:
                         validated.append(cmd)
                 evidence.append(f"tool={name} result={result[:200]}")
-                messages.append({"role": "tool", "content": result})
+                if api_mode == "llamacpp":
+                    messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": result})
+                else:
+                    messages.append({"role": "tool", "content": result})
         else:
             raw = msg.get("content", "")
             final_text = _strip_gemma_channels(raw)
