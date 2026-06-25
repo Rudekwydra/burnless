@@ -188,32 +188,35 @@ def trace(burnless_root: Path, did: str, *, model: str = _DEFAULT_MODEL, timeout
     return base
 
 
-def sweep(burnless_root: Path, *, since_hours: int = 24, limit: int = 10, model: str = _DEFAULT_MODEL) -> list[dict]:
-    """Iterate over .burnless/delegations/d*.md whose mtime < since_hours ago,
-       call trace() for each (sequential, no parallel), return list of trace dicts.
-       Skip delegations without a corresponding .burnless/logs/<did>.log file.
-       limit caps results."""
+def _select_delegation_ids(burnless_root: Path, *, since_hours: int, limit: int) -> list[str]:
+    """Return up to `limit` delegation IDs from the last `since_hours`, NEWEST FIRST.
+       A delegation qualifies only if it falls inside the window AND has a
+       corresponding .burnless/logs/<did>.log file."""
     delegations_dir = burnless_root / "delegations"
     logs_dir = burnless_root / "logs"
     if not delegations_dir.exists():
         return []
-
     cutoff = time.time() - since_hours * 3600
-    results = []
-
-    for spec_path in sorted(delegations_dir.glob("d*.md"), key=lambda p: p.stat().st_mtime):
-        if len(results) >= limit:
+    specs = sorted(delegations_dir.glob("d*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    ids: list[str] = []
+    for spec_path in specs:
+        if len(ids) >= limit:
             break
-        if spec_path.stat().st_mtime > cutoff:
+        if spec_path.stat().st_mtime < cutoff:
             continue
         did = spec_path.stem
-        log_path = logs_dir / f"{did}.log"
-        if not log_path.exists():
+        if not (logs_dir / f"{did}.log").exists():
             continue
-        result = trace(burnless_root, did, model=model)
-        results.append(result)
+        ids.append(did)
+    return ids
 
-    return results
+
+def sweep(burnless_root: Path, *, since_hours: int = 24, limit: int = 10, model: str = _DEFAULT_MODEL) -> list[dict]:
+    """Trace the newest `limit` delegations from the last `since_hours` (newest first).
+       Only delegations with a corresponding .burnless/logs/<did>.log are traced.
+       Sequential, no parallel. Returns list of trace dicts."""
+    ids = _select_delegation_ids(burnless_root, since_hours=since_hours, limit=limit)
+    return [trace(burnless_root, did, model=model) for did in ids]
 
 
 def write_capsule(trace_result: dict, burnless_root: Path) -> Path:
