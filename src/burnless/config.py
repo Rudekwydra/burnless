@@ -4,6 +4,10 @@ import os
 import re
 import yaml
 
+# Local ollama model standardized across the fleet (gemma-4 E4B QAT, 2026-06-25).
+# Single source of truth for codec / wizard / debugless local-model defaults.
+DEFAULT_LOCAL_MODEL = "hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL"
+
 DEFAULT_CONFIG: dict = {
     "project_name": "Project",
     "language": "pt-BR",
@@ -42,8 +46,8 @@ DEFAULT_CONFIG: dict = {
             #     name: gemini-pro
             #     command: gemini -p --model gemini-2.5-pro
             #   - provider: ollama-local
-            #     name: qwen-local
-            #     command: ollama run qwen2.5-coder
+            #     name: gemma-local
+            #     provider: ollama-local  (tools: true for agentic; else /api/generate)
             "role": "documentation_structuring",
             "use_for": ["docs", "prd", "prompts", "specs"],
         },
@@ -100,7 +104,7 @@ DEFAULT_CONFIG: dict = {
         "friendly": True,      # True = Haiku expands capsule into prose; False = print raw capsule
         "voice_match": True,   # True (default) = decoder mirrors user's tone/slang/warmth in response. ~5% extra input tokens. False = robotic prose.
         "local_codec": "auto",  # auto | ollama | hint — auto = use ollama if detected, else hint-only
-        "local_codec_model": "qwen2.5-coder:7b",
+        "local_codec_model": DEFAULT_LOCAL_MODEL,
     },
     "cache_policy": {
         "cache_read_ratio": 0.10,

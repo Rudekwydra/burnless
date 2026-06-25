@@ -220,7 +220,7 @@ def suggest(det: Detection) -> dict:
         out["bronze"]["name"] = "gemini-flash-lite"
         out["bronze"]["command"] = "gemini -p --model gemini-flash-lite"
     elif ollama.available and ollama.models:
-        model = _prefer_model(ollama.models, ["qwen2.5-coder", "llama3.2", "llama3", "mistral"])
+        model = _prefer_model(ollama.models, [config_mod.DEFAULT_LOCAL_MODEL, "qwen2.5-coder", "llama3.2", "llama3", "mistral"])
         for tier, role in (
             ("gold", "local_strategy_reasoning"),
             ("silver", "local_execution"),

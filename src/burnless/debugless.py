@@ -5,21 +5,23 @@ calls local ollama to identify vestigials/loops/dead branches/ghost refs,
 and writes a capsule to .burnless/debugless/.
 
 Invoked manually via `burnless trace <did>` or `burnless debugless sweep`.
-All external dependencies: stdlib only + ollama CLI subprocess.
+All external dependencies: stdlib + burnless.config + ollama HTTP API.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
-import subprocess
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import config
+
 _LOG_TAIL_CHARS = 8000
-_DEFAULT_MODEL = "gemma3:27b-cloud"
+_DEFAULT_MODEL = config.DEFAULT_LOCAL_MODEL
 
 
 def _read_delegation(burnless_root: Path, did: str) -> tuple[str, str]:
@@ -68,24 +70,40 @@ def _build_prompt(spec_text: str, log_text: str, did: str) -> str:
 
 
 def _call_ollama(prompt: str, model: str, timeout: int) -> tuple[str, int]:
-    """Invoke `ollama run <model>` via subprocess. stdin=prompt, capture stdout.
-       Returns (raw_output, exit_code). On timeout: returns ('', -1)."""
+    """Invoke ollama via HTTP API POST /api/generate (stream=false, format=json).
+       Uses the HTTP API rather than the `ollama run` CLI because the CLI emits
+       TTY re-render artifacts that corrupt JSON even with TERM=dumb/NO_COLOR.
+       Returns (response_text, exit_code): 0 ok, -1 timeout, -2 unreachable, -3 bad response."""
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").strip()
+    if not host.startswith("http"):
+        host = "http://" + host
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.2},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        host.rstrip("/") + "/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
     try:
-        # e.g.: ollama run qwen2.5-coder:7b
-        env = {**os.environ, "TERM": "dumb", "NO_COLOR": "1"}
-        result = subprocess.run(
-            ["ollama", "run", model],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-        )
-        return result.stdout, result.returncode
-    except subprocess.TimeoutExpired:
-        return "", -1
-    except FileNotFoundError:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8", errors="replace"))
+        # Same gemma-4 post-processing as the tuned epoch path: strip harmony
+        # <channel|> thought tokens + residual ANSI (epochs._ollama does this).
+        from .compression import _strip_gemma_channels
+        return _strip_gemma_channels(body.get("response", "")), 0
+    except urllib.error.URLError as e:
+        if isinstance(getattr(e, "reason", None), TimeoutError):
+            return "", -1
         return "", -2
+    except TimeoutError:
+        return "", -1
+    except (ValueError, OSError):
+        return "", -3
 
 
 def _parse_ollama_json(raw: str) -> dict:
@@ -118,12 +136,12 @@ def _parse_ollama_json(raw: str) -> dict:
         return {"_parse_error": True, "_raw_excerpt": raw[:500]}
 
 
-def trace(burnless_root: Path, did: str, *, model: str = "gemma3:27b-cloud", timeout: int = 90) -> dict:
+def trace(burnless_root: Path, did: str, *, model: str = _DEFAULT_MODEL, timeout: int = 90) -> dict:
     """Trace a single delegation. Returns dict with keys:
        did, model_used, path (list[str]), vestigials (list[str]), loops (list[str]),
        dead_branches (list[str]), ghost_refs (list[str]), recommendation (str),
        ok (bool), error (str | None).
-       Calls ollama via subprocess (`ollama run <model> <prompt>`)."""
+       Calls ollama via HTTP API (POST /api/generate, format=json)."""
     base: dict = {
         "did": did,
         "model_used": model,
@@ -149,7 +167,7 @@ def trace(burnless_root: Path, did: str, *, model: str = "gemma3:27b-cloud", tim
         base["error"] = f"ollama timeout after {timeout}s"
         return base
     if exit_code == -2:
-        base["error"] = "ollama binary not found"
+        base["error"] = "ollama not reachable (is the server running?)"
         return base
     if exit_code != 0:
         base["error"] = f"ollama exited {exit_code}"
@@ -170,7 +188,7 @@ def trace(burnless_root: Path, did: str, *, model: str = "gemma3:27b-cloud", tim
     return base
 
 
-def sweep(burnless_root: Path, *, since_hours: int = 24, limit: int = 10, model: str = "gemma3:27b-cloud") -> list[dict]:
+def sweep(burnless_root: Path, *, since_hours: int = 24, limit: int = 10, model: str = _DEFAULT_MODEL) -> list[dict]:
     """Iterate over .burnless/delegations/d*.md whose mtime < since_hours ago,
        call trace() for each (sequential, no parallel), return list of trace dicts.
        Skip delegations without a corresponding .burnless/logs/<did>.log file.

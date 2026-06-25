@@ -973,7 +973,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
         print("burnless: no .burnless/ found", file=sys.stderr)
         return 2
 
-    result = dbg.trace(bl_root, args.did, model=args.model, timeout=args.timeout)
+    result = dbg.trace(bl_root, args.did, model=args.model or dbg._DEFAULT_MODEL, timeout=args.timeout)
     if not result["ok"]:
         print(f"debugless error: {result['error']}", file=sys.stderr)
         return 1
@@ -1006,7 +1006,7 @@ def cmd_debugless_sweep(args: argparse.Namespace) -> int:
         bl_root,
         since_hours=args.since_hours,
         limit=args.limit,
-        model=args.model,
+        model=args.model or dbg._DEFAULT_MODEL,
     )
     for r in results:
         did = r["did"]
@@ -1621,7 +1621,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("trace", help="GoPro-trace a delegation via local ollama (Debugless)",
                         description="GoPro-trace a delegation via local ollama (Debugless)")
     sp.add_argument("did", help="delegation ID to trace (e.g. d378)")
-    sp.add_argument("--model", default="qwen2.5-coder:7b", help="ollama model to use")
+    sp.add_argument("--model", default=None, help="ollama model to use (default: bronze gemma-4 local)")
     sp.add_argument("--timeout", type=int, default=90, help="ollama timeout in seconds")
     sp.add_argument("--no-capsule", action="store_true", dest="no_capsule",
                     help="skip writing capsule, just print to stdout")
@@ -1634,7 +1634,7 @@ def build_parser() -> argparse.ArgumentParser:
     dsp.add_argument("--since-hours", type=int, default=24, dest="since_hours",
                      help="look back N hours (default 24)")
     dsp.add_argument("--limit", type=int, default=10, help="max delegations to trace (default 10)")
-    dsp.add_argument("--model", default="qwen2.5-coder:7b", help="ollama model to use")
+    dsp.add_argument("--model", default=None, help="ollama model to use (default: bronze gemma-4 local)")
     dsp.set_defaults(func=cmd_debugless_sweep)
 
     sp = sub.add_parser("epoch", help="rolling-memory epoch engine (capture/read/cleanup/on/off/status)")
