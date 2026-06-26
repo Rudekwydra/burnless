@@ -20,6 +20,7 @@ from .. import agents as agents_mod
 from .. import live_runner
 from .. import dashboard
 from .. import savings_footer as savings_footer_mod
+from .. import audit_graph as audit_graph_mod
 from ..estimator import estimate_tokens
 from ..codec.decoder import normalize_worker_envelope
 from ..report_kind import (
@@ -375,6 +376,40 @@ def _build_runner_done_report(did, status_str, summary, include_summary=True):
         evidence_refs=[f"log:{did}", f"capsule:{did}"],
         answer_hint=str(summary.get("answer_hint") or ""),
     )
+
+
+def _emit_audit_record(proj_root, did, summary, capsule_path, log_path, cfg):
+    """Append one audit-graph record for this delegation. Fail-open + gated
+    (config audit.graph_enabled, default True). Never raises."""
+    try:
+        if not (cfg.get("audit", {}) or {}).get("graph_enabled", True):
+            return
+        import re as _re
+        vp = vt = 0
+        for item in (summary.get("validated") or []):
+            m = _re.search(r"verify:\s*(\d+)\s*/\s*(\d+)\s*checks passed", str(item))
+            if m:
+                vp, vt = int(m.group(1)), int(m.group(2))
+                break
+        verify_status = "passed" if (vt and vp == vt) else ("failed" if vt else "")
+        files = summary.get("files_touched") or []
+        if not isinstance(files, list):
+            files = [files]
+        status = str(summary.get("status") or "")
+        rec = audit_graph_mod.build_record(
+            delegation_id=did,
+            status=status,
+            worker_status=status,
+            verify_status=verify_status,
+            files_declared=list(files),
+            capsule_ref=str(capsule_path),
+            raw_log_ref=str(log_path),
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        audit_graph_mod.append_record(proj_root, rec)
+    except Exception:
+        return
+
 
 
 def execute_delegation(opts: RunOpts, root=None) -> int:
@@ -951,6 +986,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     # Increment turn counter for savings footer tracking
     state["turn_counter"] = int(state.get("turn_counter", 0) or 0) + 1
     state_mod.save(p["state"], state)
+    _emit_audit_record(root.parent, did, summary, capsule_path, log_path, cfg)
 
     # Short output — details via `burnless read/log/capsule/metrics`
     # Default = single-line machine-parseable status (avoids polluting maestro
