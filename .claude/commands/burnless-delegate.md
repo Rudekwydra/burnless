@@ -35,7 +35,7 @@ executes the worker, and writes a capsule to session history.
 
 | Tier | Default agent | Use for |
 |------|--------------|---------|
-| gold | claude-opus-4-7 | Architecture, strategy, complex reasoning |
+| gold | claude-opus-4-8 | Architecture, strategy, complex reasoning |
 | silver | claude-sonnet-4-6 | Implementation, docs, code |
 | bronze | claude-haiku-4-5 | Summarize, classify, extract |
 
