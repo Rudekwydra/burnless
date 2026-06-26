@@ -1047,8 +1047,9 @@ def cmd_do(args: argparse.Namespace) -> int:
         success=None,
         tier=args.tier,
         chain=None,
-        force=False,
+        force=getattr(args, "force", False),
         allow_relative_paths=getattr(args, "allow_relative_paths", False),
+        allow_unfenced_verify=getattr(args, "allow_unfenced_verify", False),
     )
     rc = cmd_delegate(delegate_args)
     if rc != 0:
@@ -1597,6 +1598,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="allow_unfenced_verify",
         help="allow dispatch with a ## Verify section that has no fenced block (gate will not run)",
+    )
+    sp.add_argument(
+        "--force",
+        action="store_true",
+        help="override tier escalation policy (forwarded to delegate)",
     )
     for _t in ("diamond", "gold", "silver", "bronze"):
         sp.add_argument(
