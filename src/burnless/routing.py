@@ -243,3 +243,34 @@ def decide_route(
         natural, requested, requested, "allowed", confidence, signals,
         policy_source, reason, matched_kw or "default",
     )
+
+
+def format_route_explain(decision: "RouteDecision", agent_name: str = "", agent_command: str = "") -> str:
+    """Human-readable full route decision for ``burnless route --explain``.
+
+    Prints natural/requested/effective tier, confidence, scored signals, the
+    policy source, the action, and an executable next command.
+    """
+    lines = ["route decision:"]
+    lines.append(f"   natural tier:   {decision.natural_tier}")
+    lines.append(f"   requested tier: {decision.requested_tier or '(none)'}")
+    lines.append(f"   effective tier: {decision.effective_tier}")
+    if agent_name:
+        suffix = f"  ({agent_command})" if agent_command else ""
+        lines.append(f"   agent:          {agent_name}{suffix}")
+    lines.append(f"   confidence:     {decision.confidence}")
+    if decision.signals:
+        sig = ", ".join(f"{s.kind}:{s.value}={s.weight}" for s in decision.signals)
+    else:
+        sig = "(none)"
+    lines.append(f"   signals:        {sig}")
+    lines.append(f"   policy source:  {decision.policy_source}")
+    lines.append(f"   action:         {decision.action}")
+    if decision.action == "blocked":
+        nxt = f'burnless do --tier {decision.requested_tier} --force "<spec>"'
+    elif decision.requested_tier:
+        nxt = f'burnless do --tier {decision.effective_tier} "<spec>"'
+    else:
+        nxt = 'burnless do "<spec>"'
+    lines.append(f"   next command:   {nxt}")
+    return "\n".join(lines)

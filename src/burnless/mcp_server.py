@@ -165,11 +165,18 @@ async def handle_route(text: str, project_root: Optional[str] = None) -> dict:
         agent_info = agents_cfg.get(tier, {})
         agent_name = agent_info.get("name", "haiku")
 
+        decision = routing.decide_route(text, None, rules)
         return {
             "tier": tier,
             "agent": agent_name,
             "matched_keyword": kw or None,
             "default_used": not kw,
+            "natural_tier": decision.natural_tier,
+            "effective_tier": decision.effective_tier,
+            "action": decision.action,
+            "confidence": decision.confidence,
+            "signals": [{"kind": s.kind, "value": s.value, "weight": s.weight} for s in decision.signals],
+            "policy_source": decision.policy_source,
             "routing_rules_snapshot": rules,
         }
     except Exception as e:
