@@ -106,3 +106,59 @@ def test_agents_run_routes_ollama_tools(monkeypatch):
     assert result["returncode"] == 0
     env_out = json.loads(result["stdout"])
     assert env_out["status"] == "OK"
+
+
+def test_run_ollama_tools_generic_done_with_file_synthesizes_summary(tmp_path, monkeypatch):
+    """Generic final text ('done') + a real file write => summary is synthesized
+    from concrete signals, not left as the low-information 'done'."""
+    from burnless.ollama_worker import run_ollama_tools
+
+    target = tmp_path / "synth.txt"
+    call_count = [0]
+
+    def fake_urlopen(req, timeout=None):
+        c = call_count[0]
+        call_count[0] += 1
+        if c == 0:
+            return _MockResponse({
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "escrever_arquivo",
+                                "arguments": {
+                                    "caminho": str(target),
+                                    "conteudo": "x",
+                                },
+                            }
+                        }
+                    ],
+                }
+            })
+        return _MockResponse({"message": {"role": "assistant", "content": "done"}})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    env = run_ollama_tools("test-model", "write the file", cwd=str(tmp_path))
+    assert env["status"] == "OK"
+    assert str(target) in env["files_touched"]
+    # low-information 'done' must be replaced by a synthesized summary
+    assert env["summary"] != "done"
+    assert env["summary"].startswith("wrote 1 file(s):")
+    assert str(target) in env["summary"]
+
+
+def test_run_ollama_tools_generic_done_no_tools_keeps_generic_summary(monkeypatch):
+    """Generic final text with no tool calls and no files: nothing to synthesize,
+    so the generic summary is preserved and no files are reported."""
+    from burnless.ollama_worker import run_ollama_tools
+
+    def fake_urlopen(req, timeout=None):
+        return _MockResponse({"message": {"role": "assistant", "content": "done"}})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    env = run_ollama_tools("test-model", "just think")
+    assert env["status"] == "OK"
+    assert env["files_touched"] == []
+    assert env["summary"] == "done"
