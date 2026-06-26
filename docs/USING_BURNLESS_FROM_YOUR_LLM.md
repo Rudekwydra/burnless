@@ -52,7 +52,7 @@ burnless read d104
 - implement / write / refactor / fix / test / document → **silver**
 - summarize / list / classify / extract / read / compare → **bronze**
 
-The user can pass `--tier` to override. With `BURNLESS_HARDCORE=1`, the maestro **cannot self-upgrade** beyond what the keyword router resolved — so routing rules are guarantees, not hints.
+The user can pass `--tier` to override. Under the **tier escalation policy** (`routing.escalation_policy: block`, or `BURNLESS_HARDCORE=1`), the maestro **cannot self-upgrade** beyond what the keyword router resolved without `--force` — so routing rules are guarantees, not hints.
 
 ## Worker output contract (the JSON envelope)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Filtro hardcore de delegação Ouro/Prata/Bronze.
+# Tier escalation policy de delegação Ouro/Prata/Bronze.
 # Bloqueia comandos Bash MUTATIVOS no main loop (Opus), exigindo delegação via Agent tool.
 # SSH/sudo read-only liberados (Opus interpreta output direto = economiza tokens).
 # Sub-agents do Task tool são detectados via transcript_path e liberados.
@@ -89,7 +89,7 @@ fi
 if [[ $HEAVY -eq 1 || $SSH_BLOCK -eq 1 || $SUDO_BLOCK -eq 1 ]]; then
   log_decision BLOCK "heavy=$HEAVY ssh=$SSH_BLOCK sudo=$SUDO_BLOCK"
   cat >&2 <<EOF
-🚨 FILTRO HARDCORE: tarefa Bronze/Prata detectada. Opus bloqueado.
+🚦 TIER ESCALATION POLICY: tarefa Bronze/Prata detectada. Opus bloqueado.
 
 Comando: ${COMMAND:0:120}...
 
