@@ -36,6 +36,7 @@ from .report_kind import (
 )
 from . import init_claude_code as _init_claude_code_mod
 from . import epochs as epochs_mod
+from . import audit_graph
 from .prompt_context import (_with_runtime_context, _build_cacheable_runtime_prefix, _TELEGRAPHIC_OUTPUT_HINT, _QTP_F_FIXED_SUFFIX)
 
 from .delegation_parse import (
@@ -745,6 +746,18 @@ def cmd_capsule(args: argparse.Namespace) -> int:
         print(f"burnless: no capsule for {args.id} (run it first?)", file=sys.stderr)
         return 2
     print(capsule_path.read_text(encoding="utf-8"))
+    return 0
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    root = paths_mod.require_root()
+    delegation_id = None if args.session else args.delegation_id
+    records = audit_graph.read_records(root.parent, delegation_id)
+    if args.json:
+        print(json.dumps(records, indent=2))
+    else:
+        output = audit_graph.render(records)
+        print(output if output else "no audit records")
     return 0
 
 
@@ -1478,6 +1491,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("capsule", help="show the operational capsule for a delegation")
     sp.add_argument("id")
     sp.set_defaults(func=cmd_capsule)
+
+    sp = sub.add_parser("audit", help="read and render audit graph records")
+    sp.add_argument("delegation_id", nargs="?", default=None, help="delegation ID (e.g. d123)")
+    sp.add_argument("--session", action="store_true", help="show all records for project")
+    sp.add_argument("--json", action="store_true", help="emit raw JSON")
+    sp.set_defaults(func=cmd_audit)
 
     sp = sub.add_parser("watch", help="Stream liveness events from a delegation (.burnless/runs/<did>/liveness.jsonl)")
     sp.add_argument("did", help="delegation ID to watch (e.g. d378)")

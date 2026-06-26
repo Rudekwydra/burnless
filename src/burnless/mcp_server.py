@@ -16,6 +16,7 @@ from mcp.types import Tool, TextContent
 
 from . import paths, state as state_mod
 from . import delegations, routing, live_runner, config as config_mod
+from . import audit_graph
 from .agents import resolve_command
 
 
@@ -58,6 +59,13 @@ class ReadInput:
 @dataclass
 class StatusInput:
     id: Optional[str] = None
+    project_root: Optional[str] = None
+
+
+@dataclass
+class AuditInput:
+    delegation_id: Optional[str] = None
+    session: bool = False
     project_root: Optional[str] = None
 
 
@@ -420,6 +428,16 @@ def _status_project_wide(burnless_root: Path) -> dict:
     }
 
 
+async def handle_audit(delegation_id: Optional[str] = None, session: bool = False, project_root: Optional[str] = None) -> dict:
+    burnless_root = _resolve_root(project_root)
+    if burnless_root is None:
+        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+
+    did = None if session else delegation_id
+    records = audit_graph.read_records(burnless_root.parent, did)
+    return {"records": records}
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
@@ -497,6 +515,18 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="audit",
+            description="Read and render audit graph records",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "delegation_id": {"type": ["string", "null"], "description": "Delegation ID. None with session=true"},
+                    "session": {"type": "boolean", "description": "Show all records (default false)"},
+                    "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                },
+            },
+        ),
     ]
 
 
@@ -509,6 +539,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "capsule": handle_capsule,
         "read": handle_read,
         "status": handle_status,
+        "audit": handle_audit,
     }
 
     handler = handlers.get(name)
