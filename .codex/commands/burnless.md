@@ -31,7 +31,7 @@ tiers instead of editing files or running shell directly. Burnless is your execu
 ## Deprecated (do not use)
 
 `burnless compress` / `burnless decode` (cipher capsule round-trip) and `burnless brain` are retired.
-Use `burnless chat` for an interactive session; the live decode is semantic (no cipher). See DOCTRINE.
+For an interactive session, run the Maestro in your Claude CLI session (`/burnless on`) or the desktop app — there is no `burnless chat`/`burnless shell` CLI. See DOCTRINE.
 
 ## Notes
 

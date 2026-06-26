@@ -21,11 +21,8 @@ In `.burnless/config.yaml`:
 maestro_adapter: openai     # anthropic | openai | gemini | openrouter (brain_adapter still accepted for back-compat)
 ```
 
-Then start the chat:
-
-```bash
-burnless chat --model gpt-4o
-```
+The adapter applies on the next turn. There is no standalone CLI chat: the
+Maestro runs in your Claude Code session (`/burnless on`) or the desktop app.
 
 The adapter is loaded via `maestro_adapters.load_adapter()`, which returns a
 declarative `MaestroAdapter` dataclass (key, models, capabilities, env var) from
@@ -44,7 +41,7 @@ Anthropic is the only adapter with **explicit** cache control via
 `cache_control` blocks. Other providers report cache hits but cache state is
 managed automatically based on prefix repetition.
 
-## Common slash commands in chat
+## Common slash commands in the Maestro chat (desktop app)
 
 - `/model NAME` — switch model within the active adapter
 - `/native` — show the native worker agents
