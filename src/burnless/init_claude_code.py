@@ -20,15 +20,26 @@ _MANAGED = [
     ("scripts/burnless_epoch_session.sh", ".claude/scripts/burnless_epoch_session.sh"),
 ]
 
-_NEXT_STEPS = """\
-Next steps (opt-in, manual):
-  1. Test agent: claude --agent burnless-planner "smoke test"
-  2. To make burnless-planner the DEFAULT agent for all new sessions:
-     edit ~/.claude/settings.json and add "agent": "burnless-planner"
-  3. To enable the Claude Code engagement hook:
-     add the hook entry in settings.json hooks.UserPromptSubmit
-     and use /burnless off|on in-session
-"""
+def _next_steps(wired: bool) -> str:
+    """Next-steps text reflecting the actual install path (auto-wired vs manual)."""
+    if wired:
+        head = (
+            "Next steps:\n"
+            "  1. Hooks were auto-wired into ~/.claude/settings.json.\n"
+            "     Verify with: burnless doctor   (or inspect ~/.claude/settings.json)\n"
+        )
+    else:
+        head = (
+            "Next steps (manual wiring, --no-wire):\n"
+            "  1. Enable the Claude Code engagement hook:\n"
+            "     add the hook entry in ~/.claude/settings.json hooks.UserPromptSubmit\n"
+        )
+    return head + (
+        "  2. Switch engagement mode in-session: /burnless on|observe|off\n"
+        "     (/burnless menu shows the tier/provider table)\n"
+        "  3. Optional — make burnless-planner the default agent for new sessions:\n"
+        "     edit ~/.claude/settings.json and add \"agent\": \"burnless-planner\"\n"
+    )
 
 
 def is_wired(home: Path, templates_dir: Path | None = None) -> dict:
@@ -258,6 +269,7 @@ def run(args: argparse.Namespace) -> int:
         
         status = unwire_settings_hook(home)
         print(f"  hook unwiring: {status}")
+        print("  remaining: project .burnless/ state and config are left intact")
         return 0
 
     if templates_dir is None:
@@ -310,10 +322,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"\nburnless init --claude-code: {len(results)} file(s) processed")
         for action, path in non_skipped:
             print(f"  {action}: {path}")
-        if not getattr(args, "no_wire", False):
+        wired = not getattr(args, "no_wire", False)
+        if wired:
             status = wire_settings_hook(home)
             print(f"  hook wiring: {status}")
         print()
-        print(_NEXT_STEPS, end="")
+        print(_next_steps(wired=wired), end="")
 
     return 0

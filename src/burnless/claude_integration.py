@@ -16,22 +16,30 @@ BLOCK_PATTERN = re.compile(
 
 
 def render_block(version: str, project_name: str) -> str:
-    """Emit a SHORT POINTER to the canonical doctrine.
+    """Emit a SHORT, self-contained Burnless policy block.
 
-    Doctrine is no longer inlined per-project (that forked stale copies into
-    every CLAUDE.md). The single source of truth lives in the burnless repo at
-    `docs/DOCTRINE.md` (how it works) and `docs/COMMANDS.md` (verified commands).
+    Self-contained on purpose: a project that runs `burnless init` may not have
+    the burnless repo docs available locally, so the block points at the
+    installed CLI (`burnless --help`, the `/burnless` menu) and the local
+    `.burnless/` state instead of repo-relative doc paths that may be absent.
     """
     return f"""<!-- burnless:start -->
 <!-- burnless version: v{version} -->
 ## Burnless — orchestration active in this project
 
-This project has a `.burnless/` directory. Delegate work with `burnless do`
-instead of editing files directly when possible.
+This project has a `.burnless/` directory. Prefer delegating work with
+`burnless do "<spec>"` (atomic) over editing files directly; use
+`burnless delegate "<spec>"` then `burnless run <id>` for staged execution.
 
-Doctrine is canonical in the burnless repo (do not inline/copy it here):
-- **How it works / how to use it:** `docs/DOCTRINE.md`
-- **Verified command reference:** `docs/COMMANDS.md`
+- **Engagement modes:** `off` (raw chat), `observe` (measure/explain, no
+  constraints), `on` (delegate-only + rolling memory + retrieval hints). Switch
+  in-session with `/burnless on|observe|off`; `/burnless menu` shows the
+  tier/provider table.
+- **Worker specs must use absolute paths** (for example `/Users/.../file.py`);
+  relative paths fail in the worker's isolated working directory.
+- **Recovery:** after `/clear` or a new session, Burnless restores working
+  state from its own session memory — no manual raw-log replay.
+- **Reference:** run `burnless --help` for current commands and flags.
 
 Project: {project_name}
 <!-- burnless:end -->"""
