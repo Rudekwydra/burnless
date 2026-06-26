@@ -968,7 +968,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         if verbose or _terse:
             head = f"{status_str}:{did}"
         else:
-            head = _build_runner_done_report(did, status_str, summary, include_summary=False).one_line
+            head = _build_runner_done_report(did, status_str, summary, include_summary=True).one_line
         if verbose:
             summary_text = (summary.get("summary") or "").strip()
             if summary_text:
