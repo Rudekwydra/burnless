@@ -126,6 +126,7 @@ DEFAULT_CONFIG: dict = {
         "raw_retention": "plain",  # current default: plain | none | encrypted (planned)
         "key_store": "memory",     # memory | local (planned for audit mode)
     },
+    "epochs": {"enabled": True, "version": 3, "budget_tokens": 2500, "contract_max_age_turns": 15, "recoverables_max_items": 12},
     "display": {
         "progress_detail": "brief",  # minimal | brief | full
         # stale_timeout_seconds intentionally absent from DEFAULT_CONFIG so that

@@ -428,7 +428,24 @@ def push_ring(root, chat_id: str, exchange: str) -> None:
             oldest.unlink()
 
 
-def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], str | None] | None = None) -> Path:
+def _epochs_version(root) -> int:
+    # Read the project config file DIRECTLY (no DEFAULT_CONFIG merge): a project
+    # whose config.yaml carries an epochs.version honors it; a root with no
+    # .burnless config falls back to 2 (V2 / backward-compatible capture path).
+    try:
+        from . import paths
+        cfg_path = paths.paths_for(str(Path(root) / ".burnless"))["config"]
+        if not Path(cfg_path).exists():
+            return 2
+        import yaml
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return int(data.get("epochs", {}).get("version", 2))
+    except Exception:
+        return 2
+
+
+def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], str | None] | None = None, *, version: int | None = None) -> Path:
     try:
         root = Path(root)
         lp = living_path(root, chat_id)
@@ -456,7 +473,12 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
         if rewriter is None:
             rewriter = living_rewriter(root)
 
-        prompt = living_rewrite_prompt(prev_md, exchange)
+        eff_version = version if version is not None else _epochs_version(root)
+
+        if eff_version >= 3:
+            prompt = living_rewrite_prompt_v3(prev_md, exchange)
+        else:
+            prompt = living_rewrite_prompt(prev_md, exchange)
         new_md = rewriter(prompt)
 
         if not new_md or not new_md.strip():
@@ -468,7 +490,10 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
 
         ages = update_contract_ages(prev_ages, new_md, turn)
         new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)
-        new_md = enforce_budget(new_md, contract_ages=ages, turn=turn)
+        if eff_version >= 3:
+            new_md = enforce_budget_v3(new_md, contract_ages=ages, turn=turn)
+        else:
+            new_md = enforce_budget(new_md, contract_ages=ages, turn=turn)
         ages = update_contract_ages(ages, new_md, turn)
 
         lp.parent.mkdir(parents=True, exist_ok=True)
