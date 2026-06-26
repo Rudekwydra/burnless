@@ -24,14 +24,16 @@ The three layers: **Encoder/Decoder** (compaction) → **Maestro** (routing) →
 ## Flags by subcommand (verified vs `--help`)
 
 ### `burnless do` — delegate + run atomically
-- `--tier {diamond,gold,silver,bronze}` — force a tier (diamond = explicit escalation only).
+- `--tier {diamond,gold,silver,bronze}` — force a tier (diamond = explicit escalation only). Shortcuts: `--gold` / `--silver` / `--bronze` / `--diamond`.
+- `--force` — override the tier escalation policy (forwarded to delegate).
 - `--cold-cache` — inject a nonce to force a cache miss (cold-cache benchmarks).
 - `--timeout TIMEOUT` — worker timeout in seconds, forwarded to the embedded run *(added v0.9.0; before that `do` rejected it)*.
 - `--stale-timeout-s STALE_TIMEOUT_S` — abort if no worker output for N seconds, forwarded to the embedded run *(added v0.9.0)*.
 - `--allow-relative-paths` — skip the absolute-path guard (workers run in isolated cwd; relative paths may fail).
+- `--allow-unfenced-verify` — accept a `## Verify` block that is not fenced in ```` ```sh ````.
 
 ### `burnless delegate` — create a delegation (does not run)
-- `--goal`, `--success`, `--tier`, `--chain CSV`, `--force`, `--chat`, `--allow-relative-paths`.
+- `--goal`, `--success`, `--tier`, `--chain CSV`, `--force`, `--allow-relative-paths`, `--allow-unfenced-verify`.
 - **No `--timeout`/`--stale-timeout-s`** — `delegate` does not execute, so they have nowhere to go. Use `do` (forwards them) or `run dXXX --timeout N`.
 
 ### `burnless run dXXX` — execute a delegation

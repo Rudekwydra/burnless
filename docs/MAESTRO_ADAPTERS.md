@@ -8,7 +8,7 @@ strategic layer that delegates and audits.
 
 | Provider            | `maestro_adapter` value | Env var                                | Default model                    | Optional extra        |
 |---------------------|-----------------------|----------------------------------------|----------------------------------|-----------------------|
-| Anthropic (default) | `anthropic`           | `ANTHROPIC_API_KEY`                    | `claude-sonnet-4-6`              | (built-in)            |
+| Anthropic (default) | `anthropic`           | `ANTHROPIC_API_KEY`                    | `claude-opus-4-8`               | (built-in)            |
 | OpenAI              | `openai`              | `OPENAI_API_KEY`                       | `gpt-4o`                         | `burnless[brain-openai]` |
 | Gemini              | `gemini`              | `GEMINI_API_KEY` or `GOOGLE_API_KEY`   | `gemini-2.5-pro`                 | `burnless[brain-gemini]` |
 | OpenRouter          | `openrouter`          | `OPENROUTER_API_KEY`                   | `anthropic/claude-sonnet-4`      | `burnless[brain-openai]` (uses OpenAI SDK) |
@@ -27,8 +27,9 @@ Then start the chat:
 burnless chat --model gpt-4o
 ```
 
-The adapter is loaded via `maestro_adapters.load_adapter()` and the streaming
-implementation lives in `src/burnless/maestro/brain_streams/{provider}.py`.
+The adapter is loaded via `maestro_adapters.load_adapter()`, which returns a
+declarative `MaestroAdapter` dataclass (key, models, capabilities, env var) from
+the matching `*_adapter()` factory in `src/burnless/maestro_adapters.py`.
 
 ## Cache + thinking semantics by provider
 
@@ -55,10 +56,11 @@ managed automatically based on prefix repetition.
 
 1. Add a `*_adapter()` factory in `src/burnless/maestro_adapters.py`
    (mirror the shape of `openai_adapter()`).
-2. Wire it into `load_adapter()` switch.
-3. Implement `create_stream(client, *, model, system, messages, thinking_kw)`
-   in `src/burnless/maestro/brain_streams/PROVIDER.py`. Yield `NormalizedEvent`
-   instances with `kind` ∈ {`text_delta`, `think_delta`, `usage`, `done`}.
+2. In that factory, return a `MaestroAdapter` declaring `key`, `kind`,
+   `api_key_env`, `default_model`, `models`, and a `MaestroCapabilities`
+   (single_shot / interactive / streaming / delegation / …). Set
+   `base_url` and `supports_thinking` if relevant.
+3. Wire the new `kind` into the `load_adapter()` switch.
 4. Add tests in `tests/test_maestro_adapters.py` covering shape + routing.
 5. Document the env var, default model, and cache/thinking behaviour here.
 6. Add a `pyproject.toml` optional-dependency block if a new SDK is required.
