@@ -1215,6 +1215,106 @@ def cmd_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _event_oneliner(events_list) -> str | None:
+    if not events_list:
+        return None
+    data = events_list[-1].get("data")
+    if data is None:
+        return None
+    if isinstance(data, str):
+        return data
+    try:
+        return json.dumps(data, ensure_ascii=True, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(data)
+
+
+def cmd_session(args: argparse.Namespace) -> int:
+    from . import events as events_mod
+    from . import scope as scope_mod
+    from . import session_hud
+    root = paths_mod.find_root()
+    if root is None:
+        print("burnless: not initialized in this directory tree. run `burnless init` first.", file=sys.stderr)
+        return 1
+
+    epochs_on = (root / "epochs.on").exists()
+    mode = "rolling" if epochs_on else "default"
+
+    deleg = events_mod.read_events(root, event_type="delegation_completed", limit=1)
+    last_status = None
+    if deleg:
+        d = deleg[-1].get("data")
+        if isinstance(d, dict):
+            last_status = d.get("status")
+        elif isinstance(d, str):
+            last_status = d
+
+    savings = None
+    turns = None
+    try:
+        st = state_mod.load(root / "state.json")
+        if isinstance(st, dict):
+            sv = st.get("savings")
+            savings = sv if isinstance(sv, dict) else None
+            t = st.get("turns")
+            turns = t if isinstance(t, int) else None
+    except Exception:
+        savings = None
+        turns = None
+
+    try:
+        scope_hash = scope_mod.stable_project_hash(root.parent)
+    except Exception:
+        scope_hash = None
+
+    state = {
+        "project": str(root.parent),
+        "mode": mode,
+        "last_status": last_status,
+        "savings": savings,
+        "scope_hash": scope_hash,
+        "turns": turns,
+    }
+
+    if getattr(args, "json", False):
+        print(json.dumps(state))
+        return 0
+
+    cfg = config_mod.load(root / "config.yaml")
+    display = cfg.get("display") if isinstance(cfg.get("display"), dict) else {}
+    style = display.get("session_hud", "compact") if isinstance(display, dict) else "compact"
+    print(session_hud.render_hud(state, style=style))
+    return 0
+
+
+def cmd_explain(args: argparse.Namespace) -> int:
+    from . import events as events_mod
+    from . import session_hud
+    root = paths_mod.find_root()
+    if root is None:
+        print("burnless: not initialized in this directory tree. run `burnless init` first.", file=sys.stderr)
+        return 1
+
+    def latest(event_type):
+        return _event_oneliner(events_mod.read_events(root, event_type=event_type, limit=1))
+
+    active_mode = latest("mode_changed")
+    if active_mode is None:
+        active_mode = "rolling" if (root / "epochs.on").exists() else "default"
+
+    sections = {
+        "active_mode": active_mode,
+        "last_hook_injection": latest("hook_injected"),
+        "last_compaction_decision": latest("compaction_decision"),
+        "last_route_decision": latest("route_decision"),
+        "last_retrieval": latest("retrieve_called"),
+        "last_delegation_status": latest("delegation_completed"),
+    }
+    print(session_hud.render_explain(sections))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="burnless", description=TAGLINE)
     p.add_argument("--version", action="version", version=f"burnless {__version__}")
@@ -1349,6 +1449,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("economy", help="show real $ savings split into 4 buckets")
     sp.add_argument("--json", action="store_true", help="emit raw JSON")
     sp.set_defaults(func=cmd_economy)
+
+    sp = sub.add_parser("session", help="show the session HUD")
+    sp.add_argument("--json", action="store_true", dest="json", help="emit raw state JSON")
+    sp.set_defaults(func=cmd_session)
+
+    sp = sub.add_parser("explain", help="explain the latest state/cost/route decisions")
+    sp.add_argument("--last", action="store_true", dest="last", help="focus on the last delegation")
+    sp.set_defaults(func=cmd_explain)
 
     sp = sub.add_parser("providers", help="inspect or reset multi-provider health stats")
     providers_sub = sp.add_subparsers(dest="providers_cmd")
