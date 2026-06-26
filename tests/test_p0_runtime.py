@@ -280,9 +280,9 @@ def test_cmd_run_output_is_short(tmp_path: Path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
 
-    # Silent-default prints only status:id — summary suppressed
+    # Silent-default prints the bounded one-line DoneReport with summary (Phase 6A)
     assert "OK:d001" in out
-    assert "All done fine." not in out   # summary suppressed under silent-default
+    assert "All done fine." in out   # summary included in silent-default one-line (Phase 6A)
     # Verbose fields must NOT appear
     assert "Audit:" not in out
     assert "Evidence:" not in out
