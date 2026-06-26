@@ -141,9 +141,6 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-TIER_RANK = {"bronze": 1, "silver": 2, "gold": 3, "diamond": 2}
-
-
 def _hardcore_blocked(
     cfg: dict,
     text: str,
@@ -152,21 +149,16 @@ def _hardcore_blocked(
 ) -> tuple[bool, str, str, str]:
     """Return (blocked, natural_tier, matched_kw, policy_source).
 
-    Block when the requested tier upgrades above the natural route under the
-    tier escalation policy (internal key: routing.hardcore_filter / env
-    BURNLESS_HARDCORE) without --force.
+    Thin adapter over routing.decide_route: blocks only when the scored route
+    decision is ``blocked`` (policy=block + requested tier above natural route)
+    and --force was not passed.
     """
-    if not tier_override:
+    if not tier_override or getattr(args, "force", False):
         return False, "", "", ""
-    env_on = os.environ.get("BURNLESS_HARDCORE") in ("1", "true", "yes")
-    cfg_on = bool(cfg.get("routing", {}).get("hardcore_filter", False))
-    if (not (cfg_on or env_on)) or getattr(args, "force", False):
-        return False, "", "", ""
-    policy_source = "env:BURNLESS_HARDCORE" if env_on else "config:routing.hardcore_filter"
-    natural_tier, kw = routing_mod.route(text, cfg["routing"])
-    if TIER_RANK.get(tier_override, 0) > TIER_RANK.get(natural_tier, 0):
-        return True, natural_tier, kw or "default", policy_source
-    return False, natural_tier, kw or "", policy_source
+    decision = routing_mod.decide_route(text, tier_override, cfg.get("routing", {}))
+    if decision.action == "blocked":
+        return True, decision.natural_tier, decision.matched_keyword or "default", decision.policy_source
+    return False, decision.natural_tier, "", decision.policy_source
 
 
 def cmd_delegate(args: argparse.Namespace) -> int:

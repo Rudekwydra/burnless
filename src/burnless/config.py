@@ -86,8 +86,12 @@ DEFAULT_CONFIG: dict = {
             "classificar", "classify", "extrair", "extract", "organizar log",
             "tag",
         ],
-        # Opt-in hardcore filter: blocks --tier override upgrades when the
-        # natural route resolved to a smaller tier.
+        # Tier escalation policy. Opt-in, default off (toggle-default-off).
+        # To enable, add `escalation_policy` to .burnless/config.yaml under
+        # `routing`: off | explain | block | confirm. When absent, the legacy
+        # `hardcore_filter` below governs (true == block). Resolution lives in
+        # routing.resolve_escalation_policy (env BURNLESS_HARDCORE wins).
+        # "escalation_policy": "explain",
         "hardcore_filter": False,
     },
     "audit": {
