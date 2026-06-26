@@ -39,3 +39,22 @@ def test_explicit_gold_keyword_wins_over_path_hint():
 
     assert tier == "gold"
     assert matched == "arquitetura"
+
+
+def test_format_escalation_block_en():
+    from burnless.routing import format_escalation_block
+    msg = format_escalation_block("en", "gold", "silver", "architecture", "config:routing.hardcore_filter")
+    assert "tier escalation policy" in msg
+    assert "\U0001f6a8" not in msg  # old alarm emoji gone
+    assert "gold" in msg and "silver" in msg
+    assert "--force" in msg
+    assert "config:routing.hardcore_filter" in msg
+
+
+def test_format_escalation_block_pt():
+    from burnless.routing import format_escalation_block
+    msg = format_escalation_block("pt-BR", "gold", "bronze", "default", "env:BURNLESS_HARDCORE")
+    assert "escalonamento de tier" in msg
+    assert "\U0001f6a8" not in msg
+    assert "--force" in msg
+    assert "env:BURNLESS_HARDCORE" in msg

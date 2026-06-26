@@ -149,19 +149,24 @@ def _hardcore_blocked(
     text: str,
     tier_override: str | None,
     args: argparse.Namespace,
-) -> tuple[bool, str, str]:
-    """Return (blocked, natural_tier, matched_kw). Block when override upgrades vs route."""
+) -> tuple[bool, str, str, str]:
+    """Return (blocked, natural_tier, matched_kw, policy_source).
+
+    Block when the requested tier upgrades above the natural route under the
+    tier escalation policy (internal key: routing.hardcore_filter / env
+    BURNLESS_HARDCORE) without --force.
+    """
     if not tier_override:
-        return False, "", ""
-    enabled = cfg.get("routing", {}).get("hardcore_filter", False) or os.environ.get(
-        "BURNLESS_HARDCORE"
-    ) in ("1", "true", "yes")
-    if not enabled or getattr(args, "force", False):
-        return False, "", ""
+        return False, "", "", ""
+    env_on = os.environ.get("BURNLESS_HARDCORE") in ("1", "true", "yes")
+    cfg_on = bool(cfg.get("routing", {}).get("hardcore_filter", False))
+    if (not (cfg_on or env_on)) or getattr(args, "force", False):
+        return False, "", "", ""
+    policy_source = "env:BURNLESS_HARDCORE" if env_on else "config:routing.hardcore_filter"
     natural_tier, kw = routing_mod.route(text, cfg["routing"])
     if TIER_RANK.get(tier_override, 0) > TIER_RANK.get(natural_tier, 0):
-        return True, natural_tier, kw or "default"
-    return False, natural_tier, kw or ""
+        return True, natural_tier, kw or "default", policy_source
+    return False, natural_tier, kw or "", policy_source
 
 
 def cmd_delegate(args: argparse.Namespace) -> int:
@@ -191,21 +196,10 @@ def cmd_delegate(args: argparse.Namespace) -> int:
         if _spec_validator.should_block_unfenced_verify(text, _enforce_fence, _allow_unfenced):
             return 6
 
-    is_blocked, natural_tier, matched_kw = _hardcore_blocked(cfg, text, tier_override, args)
+    is_blocked, natural_tier, matched_kw, policy_source = _hardcore_blocked(cfg, text, tier_override, args)
     if is_blocked:
         lang = cfg.get("language", "pt-BR")
-        if lang.startswith("pt"):
-            print(
-                f"\n🚨 burnless hardcore: rota natural detectou {natural_tier} ({matched_kw}).\n"
-                f"   override pra {tier_override} bloqueado.\n"
-                f"   manual override: --force  ou  unset routing.hardcore_filter\n"
-            )
-        else:
-            print(
-                f"\n🚨 burnless hardcore: natural route resolved to {natural_tier} ({matched_kw}).\n"
-                f"   override to {tier_override} blocked.\n"
-                f"   manual override: --force  or  unset routing.hardcore_filter\n"
-            )
+        print(routing_mod.format_escalation_block(lang, tier_override, natural_tier, matched_kw, policy_source))
         return 5
 
     if tier_override:
