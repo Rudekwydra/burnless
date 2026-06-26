@@ -432,3 +432,39 @@ def status(burnless_root: Path, model: str | None = None) -> dict:
         except ValueError:
             pass
     return out
+
+
+def explain(burnless_root: Path, model: str | None = None) -> dict:
+    """Rich, pure view over status() for `burnless warm explain`.
+
+    model=None -> {model: explain(model)} for every warm file (mirrors status()).
+    Adds: provider, uuid_prefix, ttl_status, ttl_remaining_min, compaction_caution.
+    Never raises; returns {"exists": False, "provider": "codex"} when absent.
+    """
+    if model is None:
+        return {p.stem: explain(burnless_root, model=p.stem) for p in list_warm_files()}
+    s = status(burnless_root, model)
+    if not s.get("exists"):
+        return {"exists": False, "provider": "codex", "model": model}
+    out = dict(s)
+    out["provider"] = "codex"
+    out["model"] = model
+    uuid = s.get("uuid") or ""
+    out["uuid_prefix"] = uuid[:8]
+    age_min = (s.get("age_s") / 60.0) if isinstance(s.get("age_s"), (int, float)) else None
+    alive = s.get("alive")
+    ttl_min = 60.0
+    aging_threshold = 59.0
+    if age_min is None or not alive or age_min >= ttl_min:
+        out["ttl_status"] = "expired"
+    elif age_min >= aging_threshold:
+        out["ttl_status"] = "aging"
+    else:
+        out["ttl_status"] = "fresh"
+    out["ttl_remaining_min"] = round(max(0.0, ttl_min - age_min), 1) if isinstance(age_min, (int, float)) else 0.0
+    if out["ttl_status"] == "expired":
+        out["compaction_caution"] = "warm prefix is cold; compaction is safe (no hot prefix to bust)"
+    else:
+        out["compaction_caution"] = "warm prefix is hot; a deep compaction may bust the cached prefix"
+    out.setdefault("last_cache_ratio", s.get("last_cache_ratio", 0.0))
+    return out
