@@ -1378,11 +1378,6 @@ def build_parser() -> argparse.ArgumentParser:
         dest="cold_cache",
         help="inject a nonce into the system block to guarantee a cache miss (useful for cold-cache benchmarks)",
     )
-    sp.add_argument(
-        "--no-decode",
-        action="store_true",
-        help="skip Haiku roundtrip decode; print terse capsule status instead",
-    )
     modes = sp.add_mutually_exclusive_group()
     modes.add_argument("--watch", action="store_const", const="watch", dest="mode", help="show a live worker panel")
     modes.add_argument("--quiet", action="store_const", const="quiet", dest="mode", help="show one-line running status")
