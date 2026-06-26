@@ -121,3 +121,15 @@ def test_forbidden_patterns_are_compiled():
     """FORBIDDEN list should contain compiled regex objects."""
     for name, rx in isc.FORBIDDEN:
         assert isinstance(rx, type(isc.re.compile("")))
+
+
+def test_rtk_flagged_without_marker():
+    """Bare 'rtk' on an active surface is flagged (rtk fully removed 2026-06-26)."""
+    findings = isc.scan_text("prefix rtk to the agent command")
+    assert any(f["rule"] == "rtk wrapper" for f in findings)
+
+
+def test_rtk_suppressed_with_removed_marker():
+    """An rtk mention on a line marked removed/historical is suppressed."""
+    findings = isc.scan_text("rtk wrapper removed 2026-06-26")
+    assert findings == []

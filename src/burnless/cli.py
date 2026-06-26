@@ -68,86 +68,6 @@ from .exec.runner import (
 
 
 
-def cmd_rtk(args: argparse.Namespace) -> int:
-    """Toggle the RTK wrapper in the current project's .burnless/config.yaml.
-
-    RTK (https://www.rtk-ai.app/) is a CLI proxy that compresses git diff /
-    tool output before it hits the LLM, saving tokens on dev-heavy sessions.
-    Fully opt-in: burnless works without it; turning it on prefixes `rtk` to
-    every tier command so the worker subprocess passes through it.
-    """
-    import yaml
-    root = paths_mod.require_root()
-    p = paths_mod.paths_for(root)
-    cfg_path = p["config"]
-    if not cfg_path.exists():
-        print(f"burnless: no config at {cfg_path}. Run `burnless init` first.", file=sys.stderr)
-        return 1
-    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-
-    def _has_rtk(command: str) -> bool:
-        return any(
-            tok == "rtk" or Path(tok).name in ("rtk", "rtk.exe")
-            for tok in shlex.split(command)
-        )
-
-    def _strip_rtk(command: str) -> str:
-        return shlex.join(
-            tok for tok in shlex.split(command)
-            if not (tok == "rtk" or Path(tok).name in ("rtk", "rtk.exe"))
-        )
-
-    def _prefix_rtk(command: str) -> str:
-        if _has_rtk(command):
-            return command
-        return "rtk " + command
-
-    if args.action == "status":
-        try:
-            from . import rtk_loader
-            resolved = rtk_loader.resolve_rtk()
-        except Exception as e:
-            resolved = f"(unavailable: {e})"
-        enabled_tiers: list[str] = []
-        for tier, agent in (cfg.get("agents") or {}).items():
-            if _has_rtk(agent.get("command", "")):
-                enabled_tiers.append(tier)
-        print(f"RTK binary: {resolved}")
-        print(f"RTK wrapping: {', '.join(enabled_tiers) if enabled_tiers else '(none)'}")
-        return 0
-
-    changed = False
-    for tier, agent in (cfg.get("agents") or {}).items():
-        cmd = agent.get("command", "")
-        if not cmd:
-            continue
-        new = _prefix_rtk(cmd) if args.action == "enable" else _strip_rtk(cmd)
-        if new != cmd:
-            agent["command"] = new
-            changed = True
-        for provider in agent.get("providers", []) or []:
-            pcmd = provider.get("command", "")
-            if not pcmd:
-                continue
-            pnew = _prefix_rtk(pcmd) if args.action == "enable" else _strip_rtk(pcmd)
-            if pnew != pcmd:
-                provider["command"] = pnew
-                changed = True
-
-    if not changed:
-        print(f"RTK already {'enabled' if args.action == 'enable' else 'disabled'} in {cfg_path.name}.")
-        return 0
-    cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
-    print(f"RTK {args.action}d in {cfg_path}.")
-    if args.action == "enable":
-        try:
-            from . import rtk_loader
-            print(f"  binary: {rtk_loader.resolve_rtk()}")
-        except Exception as e:
-            print(f"  warning: rtk binary not yet available — {e}")
-    return 0
-
-
 def cmd_init(args: argparse.Namespace) -> int:
     if getattr(args, "claude_code", False):
         return _init_claude_code_mod.run(args)
@@ -1329,11 +1249,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-wire", action="store_true", dest="no_wire",
                     help="(with --claude-code) skip auto-wiring of the UserPromptSubmit hook")
     sp.set_defaults(func=cmd_init)
-
-    sp = sub.add_parser("rtk", help="toggle the RTK wrapper (token-saving CLI proxy) for tier commands")
-    sp.add_argument("action", choices=["enable", "disable", "status"],
-                    help="enable: prefix `rtk` to every agent command; disable: strip it; status: show current state")
-    sp.set_defaults(func=cmd_rtk)
 
     sp = sub.add_parser("plan", help="set the project plan (compact state)")
     sp.add_argument("text")
