@@ -182,6 +182,8 @@ def cmd_delegate(args: argparse.Namespace) -> int:
             return 6
 
     from . import spec_validator as _spec_validator
+    if _spec_validator.uses_deprecated_validation_heading(text):
+        print(_spec_validator.format_validation_alias_warning(cfg.get("language", "pt-BR")), file=sys.stderr)
     if _spec_validator.verify_block_is_silent_noop(text):
         print(_spec_validator.format_verify_warning(cfg.get("language", "pt-BR")), file=sys.stderr)
         _enforce_fence = cfg.get("validation", {}).get("enforce_verify_fence", True)

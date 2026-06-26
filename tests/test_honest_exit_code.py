@@ -160,3 +160,12 @@ def test_verify_gate_captures_stdout_in_issue(tmp_path):
     )
     assert s["status"] == "PART"
     assert "42" in " ".join(s.get("issues", []))  # 42 is produced by 6*7, not in the command text
+
+
+def test_validation_alias_extracts_like_verify():
+    from burnless.delegation_parse import extract_verify_block
+    f = "`" * 3
+    md_v = "## Verify\n" + f + "sh\necho hi\n" + f
+    md_a = "## Validation\n" + f + "sh\necho hi\n" + f
+    assert extract_verify_block(md_v) == ["echo hi"]
+    assert extract_verify_block(md_a) == ["echo hi"]
