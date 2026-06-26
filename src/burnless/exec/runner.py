@@ -18,6 +18,7 @@ from .. import compression as compression_mod
 from .. import lifetime as lifetime_mod
 from .. import agents as agents_mod
 from .. import events as events_mod
+from .. import retrieve as retrieve_mod
 from .. import live_runner
 from .. import dashboard
 from .. import savings_footer as savings_footer_mod
@@ -1000,6 +1001,24 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     # or auto-on for TTY humans.
     status_str = summary.get("status", "?")
     events_mod.append_event(root, "delegation_completed", {"id": did, "status": status_str}, actor="cli")
+    try:
+        _idx_files = summary.get("files_touched") or []
+        _idx_entities = sorted(set(_idx_files) | {did})
+        _idx_rr = (cfg.get("privacy", {}) or {}).get("raw_retention")
+        _idx_content = None if _idx_rr == "none" else raw_log_text
+        retrieve_mod.index_record(
+            root, delegation_id=did, kind="worker_log",
+            raw_ref=str(log_path), capsule_ref=str(capsule_path),
+            entities=_idx_entities, files=_idx_files, status=status_str,
+            content=_idx_content,
+        )
+        retrieve_mod.index_record(
+            root, delegation_id=did, kind="capsule",
+            capsule_ref=str(capsule_path), raw_ref=str(log_path),
+            entities=_idx_entities, files=_idx_files, status=status_str,
+        )
+    except Exception:
+        pass
     verbose = bool(opts.verbose) or sys.stdout.isatty()
     if interrupted and not stale:
         if verbose:
