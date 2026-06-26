@@ -105,6 +105,8 @@ Privacy in Burnless is a property of **where each component runs** (local vs clo
 
 6. **Português direct, no rodeios.** If the user speaks Portuguese, respond in Portuguese. No emoji excess.
 
+7. **Trust a sufficient done report.** After `OK:dNNN`, the one-line done report already states what was done (files changed, verify N/N, summary). Answer from it directly — do **not** reflexively run `burnless read dNNN`. Reach for `burnless read`/`burnless retrieve` only when the report is insufficient: status is `PART`/`ERR`, `reread_recommended` is set, or the `answer_hint` is empty for a report-style task.
+
 ## Common pitfalls
 
 - **Spawning a long-running task on the Maestro side**: don't. The Maestro (your session) is supposed to stay cache-hot. Workers run long tasks; the Maestro plans and delegates only.
@@ -170,7 +172,7 @@ fi
 M=off; [ -n "$SID" ] && [ -f "$ST/session-$SID.mode" ] && M=$(cat "$ST/session-$SID.mode")
 case "$M" in partner|rollover) M=on;; esac
 [ "$M" = off ] && { [ -f "$ST/global.on" ] && M=on; }
-[ "$M" = on ] && emit "[BURNLESS ON] You are the Maestro. Compress intent and ONLY delegate via burnless do/delegate (--tier bronze|silver|gold) with a tight spec + a ## Verify block. Do not write code or edit disk yourself. Read only the capsule (burnless read dXXX), never the raw log. Answer from the capsule, briefly."
+[ "$M" = on ] && emit "[BURNLESS ON] You are the Maestro. Compress intent and ONLY delegate via burnless do/delegate (--tier bronze|silver|gold) with a tight spec + a ## Verify block. Do not write code or edit disk yourself. After OK:dNNN, answer from the one-line done report; only run 'burnless read dXXX' if it is insufficient (PART/ERR or reread_recommended). Never read the raw log. Answer briefly."
 # on = Maestro injection + rolling memory (via epoch Stop/SessionStart hooks); off = no-op
 exit 0
 ```

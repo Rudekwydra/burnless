@@ -72,6 +72,7 @@ class Capsule:
     mode: str = "faithful"
     tokens: dict = field(default_factory=dict)
     created_at: str = ""
+    done_report: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -87,6 +88,7 @@ class Capsule:
             "risks": list(self.risks),
             "next": self.next,
             "tokens": dict(self.tokens),
+            "done_report": self.done_report,
         }
 
 
@@ -136,8 +138,28 @@ def compress(
 
     next_step = _trim(summary.get("next") or "", per_field)
 
+    import re as _re
+    from .done_report import build_done_report
+    _vp = _vt = 0
+    for _v in validations:
+        _m = _re.search(r"verify:\s*(\d+)\s*/\s*(\d+)\s*checks passed", str(_v))
+        if _m:
+            _vp, _vt = int(_m.group(1)), int(_m.group(2))
+            break
+    _dr = build_done_report(
+        delegation_id=delegation_id,
+        status=status,
+        kind=summary.get("kind") or "execution",
+        summary=objective,
+        files_changed=files,
+        verify_passed=_vp,
+        verify_total=_vt,
+        evidence_refs=[f"capsule:{delegation_id}"],
+        answer_hint=str(summary.get("answer_hint") or ""),
+    )
     return Capsule(
         id=delegation_id,
+        done_report=_dr.one_line,
         objective=objective,
         status=status,
         files=files,
