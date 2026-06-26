@@ -13,6 +13,9 @@ from typing import Callable
 
 SECTIONS = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs"]
 
+# Living Memory V3 — additive 8-section model (V2 stays intact above)
+SECTIONS_V3 = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs", "Riscos", "Última validação", "Recuperáveis"]
+
 # Entity patterns: absolute paths, delegation ids, commit hashes, file.ext tokens
 _ENTITY_PATTERNS = [
     re.compile(r'/[\w][\w./\-]+'),
@@ -284,6 +287,129 @@ def _rebuild_md(parsed: dict[str, list[str]]) -> str:
                 lines.append(body_line)
         lines.append('')
     return '\n'.join(lines)
+
+
+def parse_living_v3(md: str) -> dict[str, list[str]]:
+    """Parse a Living Memory doc into the 8-section V3 model.
+
+    Result dict always contains all 8 SECTIONS_V3 keys (empty if missing).
+    Accepts a 5-section V2 doc too: the 3 new sections come back empty.
+    Unknown ``## X`` headers outside the 8 are still captured as extra keys,
+    mirroring parse_living's dynamic behavior.
+    """
+    result = {section: [] for section in SECTIONS_V3}
+    if not md.strip():
+        return result
+
+    lines = md.split('\n')
+    current_section = None
+    current_body = []
+
+    for line in lines:
+        if line.startswith('## '):
+            if current_section and current_body:
+                body_lines = [l.strip() for l in current_body if l.strip()]
+                result[current_section] = [l.lstrip('- ').strip() if l.lstrip().startswith('- ') else l for l in body_lines]
+            current_section = line[3:].strip()
+            current_body = []
+        else:
+            if current_section:
+                current_body.append(line)
+
+    if current_section and current_body:
+        body_lines = [l.strip() for l in current_body if l.strip()]
+        result[current_section] = [l.lstrip('- ').strip() if l.lstrip().startswith('- ') else l for l in body_lines]
+
+    return result
+
+
+def _rebuild_md_v3(parsed: dict[str, list[str]]) -> str:
+    lines = []
+    for section in SECTIONS_V3:
+        lines.append(f'## {section}')
+        for body_line in parsed.get(section, []):
+            if not body_line.startswith('- '):
+                lines.append(f'- {body_line}')
+            else:
+                lines.append(body_line)
+        lines.append('')
+    return '\n'.join(lines)
+
+
+def living_rewrite_prompt_v3(prev_md: str, exchange: str, budget_tokens: int = 2500) -> str:
+    prompt = f"""Você é um assistente de memória do Burnless. Sua tarefa é ATUALIZAR um documento vivo em markdown (Living Memory V3).
+
+## Instrução CRÍTICA
+Retorne o documento COMPLETO atualizado com EXATAMENTE 8 seções (nesta ordem):
+1. ## Foco atual
+2. ## Threads abertas
+3. ## Decisões
+4. ## Contracts
+5. ## Refs
+6. ## Riscos
+7. ## Última validação
+8. ## Recuperáveis
+
+**NUNCA altere strings de Contracts existentes**: caminhos, IDs (d000), hashes, assinaturas. Copie verbatim ou REMOVA a linha inteira.
+Mantenha todo o doc sob ~{budget_tokens} tokens; comprima 'Decisões' ao máximo.
+Sem pensamento/debate/markdown extra — apenas as 8 seções.
+
+## Guia das seções V3
+- 'Riscos': riscos abertos / o que pode dar errado, ainda não mitigado.
+- 'Última validação': último comando/teste/auditoria verificado e seu status (ex: 'pytest -q OK', 'd724 OK').
+- 'Recuperáveis': ids dNNN + dicas de comando para recuperar contexto (NÃO logs crus). Ex: 'd725 — pytest tests/test_epochs_v3.py'.
+
+## Documento anterior (vazio se primeira vez)
+```
+{prev_md if prev_md else '<vazio>'}
+```
+
+## Nova troca/evento
+```
+{exchange}
+```
+
+## Atualização esperada
+- Mova pendências resolvidas de 'Threads abertas' → uma linha em 'Decisões'
+- Mantenha apenas threads relevantes; descarte resolvidas antigas
+- Preserve Contracts verbatim; deixe Refs e Threads evaporarem se irrelevantes
+- Comprima 'Decisões': uma linha por decisão, resumida
+- 'Recuperáveis' guarda dNNN + dica de comando, nunca logs crus
+- 'Última validação' guarda o último comando/teste/auditoria verificado
+- 'Riscos' guarda riscos abertos
+
+Retorne apenas o documento markdown atualizado. Sem markdown fence. Pronto."""
+    return prompt
+
+
+def enforce_budget_v3(md: str, budget_tokens: int = 2500, contract_ages: dict | None = None, turn: int = 0, max_age: int = 15) -> str:
+    """Trim a V3 doc to fit budget while honoring V3 invariants.
+
+    Trim order until within budget: Decisões (oldest first), then Refs
+    (oldest first), then Riscos (oldest first).
+
+    Invariants (never violated even to meet budget):
+    - Foco atual is never trimmed here (never reduced to empty while
+      Threads abertas is non-empty).
+    - A Contracts line whose first extracted entity appears anywhere in
+      Threads abertas text is pinned (never removed).
+    """
+    estimated_tokens = len(md) // 4
+    if estimated_tokens <= budget_tokens:
+        return md
+
+    parsed = parse_living_v3(md)
+
+    for section in ('Decisões', 'Refs', 'Riscos'):
+        entries = parsed.get(section, [])
+        while entries and (len(md) // 4) > budget_tokens:
+            entries.pop(0)
+            parsed[section] = entries
+            md = _rebuild_md_v3(parsed)
+        if (len(md) // 4) <= budget_tokens:
+            break
+
+    return md
 
 
 def push_ring(root, chat_id: str, exchange: str) -> None:
