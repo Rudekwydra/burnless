@@ -37,7 +37,7 @@ The three layers: **Encoder/Decoder** (compaction) → **Maestro** (routing) →
 - **No `--timeout`/`--stale-timeout-s`** — `delegate` does not execute, so they have nowhere to go. Use `do` (forwards them) or `run dXXX --timeout N`.
 
 ### `burnless run dXXX` — execute a delegation
-- `--timeout`, `--stale-timeout-s`, `--dry-run`, `--maestro` / `--no-cache-worker`, `--cold-cache`, `--no-decode`, `--watch` / `--quiet` / `--full` / `--verbose`, `--progress {minimal,brief,full}`.
+- `--timeout`, `--stale-timeout-s`, `--dry-run`, `--maestro` / `--no-cache-worker`, `--cold-cache`, `--watch` / `--quiet` / `--full` / `--verbose`, `--progress {minimal,brief,full}`.
 
 ## Behavior contracts (verified)
 
