@@ -102,8 +102,10 @@ Never pipe `do`/`run` through `tail`/`head` — it masks the exit code. Capture 
 
 ## Ops
 
-- `BURNLESS_HARDCORE=1` (env) gates tier-creep: if the router classifies bronze and you force a higher
-  tier without `--force`, burnless blocks.
+- **Tier escalation policy** gates tier-creep: if the router classifies a task at a lower tier and you
+  request a higher one without `--force`, burnless blocks and prints the full decision plus the exact
+  `--force` command to proceed. Set `routing.escalation_policy: off | explain | block | confirm` in
+  config; `BURNLESS_HARDCORE=1` (env) forces `block`. Inspect any decision with `burnless route "<spec>" --tier <t> --explain`.
 - Config commands use **absolute paths** — subprocess workers don't inherit full `PATH`. `burnless
   init` resolves them via `shutil.which()`.
 - Before pushing the public repo: run `./scripts/public_git_check.sh`.

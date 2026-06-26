@@ -191,7 +191,7 @@ agents:
   bronze: { command: "claude --model claude-haiku-4-5 -p --allowedTools Read,Bash" }
 ```
 
-With `routing.hardcore_filter: true` (or `BURNLESS_HARDCORE=1`), the Maestro cannot self-upgrade above the tier the keyword router resolved — manual override requires explicit `--force`.
+Under the **tier escalation policy** (`routing.escalation_policy: block`, or `BURNLESS_HARDCORE=1`), the Maestro cannot self-upgrade above the tier the keyword router resolved — manual override requires explicit `--force`. Use `burnless route "<spec>" --tier <t> --explain` to see the scored decision (natural/requested/effective tier, signals, policy source, next command).
 
 ## Compression
 
