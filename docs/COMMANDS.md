@@ -39,6 +39,11 @@ The three layers: **Encoder/Decoder** (compaction) → **Maestro** (routing) →
 ### `burnless run dXXX` — execute a delegation
 - `--timeout`, `--stale-timeout-s`, `--dry-run`, `--maestro` / `--no-cache-worker`, `--cold-cache`, `--watch` / `--quiet` / `--full` / `--verbose`, `--progress {minimal,brief,full}`.
 
+### `burnless route "TASK"` — preview routing (no execution)
+- (default) — prints the natural tier, agent, and matched keyword (3-line summary).
+- `--explain` — full scored route decision: natural/requested/effective tier, confidence, the signals that drove it, the active escalation-policy source, the action (`allowed`/`downgraded`/`blocked`/`confirmed`), and an executable next command.
+- `--tier {diamond,gold,silver,bronze}` — test a requested-tier upgrade against the natural route (pairs with `--explain` to see whether the escalation policy would block it and the `--force` command to override).
+
 ## Behavior contracts (verified)
 
 - **Atomic id allocation:** delegation ids are allocated under an exclusive file lock (`alloc_delegation_id`). Parallel `burnless do` never collide. *(Proven: 30 concurrent processes → 0 collisions.)*

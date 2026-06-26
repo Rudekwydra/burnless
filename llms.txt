@@ -98,7 +98,7 @@ Manifests at `~/.burnless/plugins/NAME.json`. Reference: `PLUGIN_PROTOCOL.md`.
 
 CURRENT STATUS (PyPI live: `pip install burnless`)
 Works today:
-- Workers via any CLI; keyword routing with `hardcore_filter` to prevent silent tier upgrades
+- Workers via any CLI; keyword routing with a tier escalation policy (`off|explain|block|confirm`, or `BURNLESS_HARDCORE=1` to force block) that prevents silent tier upgrades; inspect any decision with `burnless route --explain`
 - Capsules, exec logs, three compression layers
 - Shared cache with 1h TTL, real-time compaction with break-even math
 - Audit loop with execution/thought typing

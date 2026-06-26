@@ -28,7 +28,7 @@ Add to `~/.claude.json`:
 | Tool | Purpose |
 |------|---------|
 | `delegate` | Create delegation file + route to tier |
-| `route` | Preview tier routing (read-only) |
+| `route` | Preview tier routing (read-only): returns the scored decision — natural/effective tier, action, confidence, signals, and escalation-policy source |
 | `run` | Execute delegation (sync or background) |
 | `capsule` | Read finalized result JSON |
 | `read` | Fallback read: capsule → envelope → log |
