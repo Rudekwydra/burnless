@@ -23,6 +23,9 @@ def build_record(
     capsule_ref="",
     raw_log_ref="",
     created_at="",
+    files_changed=None,
+    diff_stats=None,
+    suspicious=False,
 ):
     return {
         "schema_version": SCHEMA_VERSION,
@@ -41,6 +44,9 @@ def build_record(
         "capsule_ref": capsule_ref,
         "raw_log_ref": raw_log_ref,
         "created_at": created_at,
+        "files_changed": files_changed if files_changed is not None else [],
+        "diff_stats": diff_stats if diff_stats is not None else {},
+        "suspicious": bool(suspicious),
     }
 
 
@@ -118,7 +124,19 @@ def render_one(record):
     if commands > 0:
         parts.append(f"cmds {commands}")
 
-    return " · ".join(parts)
+    out = " · ".join(parts)
+
+    diff_stats = record.get("diff_stats") or {}
+    if isinstance(diff_stats, dict):
+        ins = diff_stats.get("insertions", 0) or 0
+        dels = diff_stats.get("deletions", 0) or 0
+        if ins or dels:
+            out += f" +{ins}/-{dels}"
+
+    if record.get("suspicious"):
+        out += " ⚠SUSPICIOUS"
+
+    return out
 
 
 def render(records):
