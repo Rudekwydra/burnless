@@ -100,7 +100,8 @@ def test_auditor_failure_downgrades_ok_and_persists_audit(tmp_path: Path, monkey
     )
 
     assert summary["status"] == "PART"
-    assert summary["audit"]["status"] == "FAIL"
+    # canonical verdict vocabulary is OK/ERR (legacy PASS/FAIL retired)
+    assert summary["audit"]["status"] == "ERR"
     assert "Add concrete evidence" in summary["next"]
     assert "Add concrete evidence" in summary["audit"]["feedback"]
     assert "audit_failed" in summary["issues"]
@@ -272,7 +273,8 @@ def test_bronze_and_silver_unavailable_escalates_to_gold_ok(tmp_path: Path, monk
     )
 
     assert summary["status"] == "OK"
-    assert summary["audit"]["status"] == "PASS"
+    # canonical verdict vocabulary is OK/ERR (legacy PASS/FAIL retired)
+    assert summary["audit"]["status"] == "OK"
     assert summary["audit"]["auditor_tier"] == "gold"
     assert summary["audit"]["attempted_tiers"] == ["bronze", "silver", "gold"]
     assert "audit_unavailable" not in summary["issues"]
