@@ -1025,6 +1025,11 @@ def cmd_route(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
+    if getattr(args, "explain", False):
+        decision = routing_mod.decide_route(args.text, getattr(args, "tier", None), cfg["routing"])
+        agent = cfg["agents"].get(decision.effective_tier, {})
+        print(routing_mod.format_route_explain(decision, agent.get("name", ""), agent.get("command", "")))
+        return 0
     info = routing_mod.explain_route(args.text, cfg["routing"])
     agent = cfg["agents"][info["tier"]]
     print(f"tier:    {info['tier']}")
@@ -1429,6 +1434,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("route", help="dry-run routing for a piece of text")
     sp.add_argument("text")
+    sp.add_argument("--explain", action="store_true", help="show full scored route decision + escalation policy")
+    sp.add_argument("--tier", choices=["diamond", "gold", "silver", "bronze"], help="test routing a requested-tier upgrade against the natural route")
     sp.set_defaults(func=cmd_route)
 
     sp = sub.add_parser("setup", help="detect CLIs/keys and write a sensible config")

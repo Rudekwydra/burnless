@@ -139,3 +139,26 @@ def test_route_decision_to_event_shape():
     assert ev["action"] == "blocked"
     assert isinstance(ev["signals"], list)
     assert ev["policy_source"] == "config:routing.hardcore_filter"
+
+
+def test_format_route_explain_blocked_next_command():
+    from burnless.routing import decide_route, format_route_explain
+    rules = {"bronze": ["summarize"], "hardcore_filter": True}
+    d = decide_route("summarize this log", "gold", rules, env={})
+    out = format_route_explain(d, "haiku", "claude")
+    assert "natural tier:   bronze" in out
+    assert "requested tier: gold" in out
+    assert "effective tier: bronze" in out
+    assert "action:         blocked" in out
+    assert "policy source:  config:routing.hardcore_filter" in out
+    assert 'burnless do --tier gold --force "<spec>"' in out
+    assert "agent:          haiku" in out
+
+
+def test_format_route_explain_no_override():
+    from burnless.routing import decide_route, format_route_explain
+    d = decide_route("just summarize", None, {"bronze": ["summarize"]}, env={})
+    out = format_route_explain(d)
+    assert "requested tier: (none)" in out
+    assert 'burnless do "<spec>"' in out
+    assert "confidence:" in out
