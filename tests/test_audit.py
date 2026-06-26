@@ -84,7 +84,7 @@ def test_auditor_failure_downgrades_ok_and_persists_audit(tmp_path: Path, monkey
 
     summary = cli._audit_summary_evidence(
         p,
-        cfg={"agents": {"bronze": {"name": "haiku", "command": "haiku -p"}}},
+        cfg={"audit": {"llm_ladder": True}, "agents": {"bronze": {"name": "haiku", "command": "haiku -p"}}},
         did="d002",
         prompt="task",
         summary={
@@ -117,7 +117,7 @@ def test_auditor_unavailable_keeps_execution_nonfatal(tmp_path: Path, monkeypatc
 
     summary = cli._audit_summary_evidence(
         p,
-        cfg={"agents": {"bronze": {"name": "haiku", "command": "haiku -p"}}},
+        cfg={"audit": {"llm_ladder": True}, "agents": {"bronze": {"name": "haiku", "command": "haiku -p"}}},
         did="d003",
         prompt="task",
         summary={
@@ -160,7 +160,7 @@ def test_audit_feedback_appends_to_existing_next(tmp_path: Path, monkeypatch):
 
     summary = cli._audit_summary_evidence(
         p,
-        cfg={"agents": {"bronze": {"name": "haiku", "command": "haiku -p"}}},
+        cfg={"audit": {"llm_ladder": True}, "agents": {"bronze": {"name": "haiku", "command": "haiku -p"}}},
         did="d004",
         prompt="task",
         summary={
@@ -203,6 +203,7 @@ def test_bronze_unavailable_escalates_to_silver_ok(tmp_path: Path, monkeypatch):
     summary = cli._audit_summary_evidence(
         p,
         cfg={
+            "audit": {"llm_ladder": True},
             "agents": {
                 "bronze": {"name": "bronze", "command": "bronze -p"},
                 "silver": {"name": "silver", "command": "silver -p"},
@@ -252,6 +253,7 @@ def test_bronze_and_silver_unavailable_escalates_to_gold_ok(tmp_path: Path, monk
     summary = cli._audit_summary_evidence(
         p,
         cfg={
+            "audit": {"llm_ladder": True},
             "agents": {
                 "bronze": {"name": "bronze", "command": "bronze -p"},
                 "silver": {"name": "silver", "command": "silver -p"},
@@ -311,6 +313,7 @@ def test_all_configured_auditors_unavailable_downgrades_ok(tmp_path: Path, monke
     summary = cli._audit_summary_evidence(
         p,
         cfg={
+            "audit": {"llm_ladder": True},
             "agents": {
                 "bronze": {"name": "bronze", "command": "bronze -p"},
                 "silver": {"name": "silver", "command": "silver -p"},
@@ -361,7 +364,7 @@ def test_multiple_cheap_auditors_escalate_to_silver(tmp_path: Path, monkeypatch)
     summary = cli._audit_summary_evidence(
         p,
         cfg={
-            "audit": {"auditors": ["bronze", "local-bronze", "silver", "gold"]},
+            "audit": {"llm_ladder": True, "auditors": ["bronze", "local-bronze", "silver", "gold"]},
             "agents": {
                 "bronze": {"name": "bronze", "command": "bronze -p"},
                 "local-bronze": {"name": "local-bronze", "command": "local -p"},
@@ -414,7 +417,7 @@ def test_custom_auditor_name_execution(tmp_path: Path, monkeypatch):
     summary = cli._audit_summary_evidence(
         p,
         cfg={
-            "audit": {"auditors": ["ollama-cheap", "silver", "gold"]},
+            "audit": {"llm_ladder": True, "auditors": ["ollama-cheap", "silver", "gold"]},
             "agents": {
                 "ollama-cheap": {"name": "ollama-cheap", "command": "ollama -p"},
                 "silver": {"name": "silver", "command": "silver -p"},
@@ -439,3 +442,29 @@ def test_custom_auditor_name_execution(tmp_path: Path, monkeypatch):
     assert summary["audit"]["status"] == "OK"
     assert summary["audit"]["auditor_name"] == "ollama-cheap"
     assert summary["audit"]["attempted_auditors"] == ["ollama-cheap"]
+
+
+def test_llm_ladder_disabled_by_default_skips_audit(tmp_path: Path, monkeypatch):
+    p = _paths(tmp_path)
+    log_path = p["logs"] / "d010.log"
+    log_path.write_text("pytest passed\n", encoding="utf-8")
+
+    def _boom(*a, **k):
+        raise AssertionError("LLM auditor must not run when llm_ladder is off")
+    monkeypatch.setattr(cli.agents_mod, "is_available", lambda cfg: True)
+    monkeypatch.setattr(cli.agents_mod, "run", _boom)
+
+    summary = cli._audit_summary_evidence(
+        p,
+        cfg={"agents": {"bronze": {"name": "bronze", "command": "bronze -p"}}},
+        did="d010",
+        prompt="task",
+        summary={"id": "d010", "status": "OK", "summary": "done", "evidence": ["some prose with no verifiable token"], "issues": []},
+        log_path=log_path,
+        timeout=30,
+        cwd=tmp_path,
+    )
+
+    assert summary["status"] == "OK"
+    assert summary["audit"]["status"] == "SKIPPED"
+    assert "llm_ladder" in summary["audit"]["summary"].lower() or "ladder disabled" in summary["audit"]["summary"].lower()
