@@ -16,7 +16,7 @@ from mcp.types import Tool, TextContent
 
 from . import paths, state as state_mod
 from . import delegations, routing, live_runner, config as config_mod
-from . import audit_graph
+from . import audit_graph, retrieve as retrieve_mod, events as events_mod
 from .agents import resolve_command
 
 
@@ -445,6 +445,91 @@ async def handle_audit(delegation_id: Optional[str] = None, session: bool = Fals
     return {"records": records}
 
 
+async def handle_retrieve(id: Optional[str] = None, query: Optional[str] = None, file: Optional[str] = None, entity: Optional[str] = None, project_root: Optional[str] = None, max_chars: int = 4000) -> dict:
+    burnless_root = _resolve_root(project_root)
+    if burnless_root is None:
+        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+
+    try:
+        cfg = _get_config(burnless_root)
+        privacy = cfg.get("privacy", {})
+        if privacy.get("raw_retention") == "none":
+            return {"error": "raw_retention_disabled", "capsule_available": True}
+
+        results = retrieve_mod.search(burnless_root, query=query, file=file, entity=entity, delegation_id=id)
+
+        events_mod.append_event(burnless_root, "retrieve_called", {
+            "id": id,
+            "query": query,
+            "file": file,
+            "entity": entity,
+            "count": len(results)
+        }, actor="mcp")
+
+        results_with_snippets = []
+        for rec in results:
+            snippet = retrieve_mod.snippet(burnless_root, rec["ref_id"], max_chars=max_chars, full=False)
+            rec_with_snippet = {**rec, "snippet": snippet}
+            results_with_snippets.append(rec_with_snippet)
+
+        return {"count": len(results_with_snippets), "results": results_with_snippets}
+    except Exception as e:
+        return {"error": "retrieve_failed", "hint": str(e)}
+
+
+async def handle_search_capsules(query: str, project_root: Optional[str] = None, limit: int = 10) -> dict:
+    burnless_root = _resolve_root(project_root)
+    if burnless_root is None:
+        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+
+    try:
+        all_results = retrieve_mod.search(burnless_root, query=query)
+        results = [r for r in all_results if r.get("kind") == "capsule"][:limit]
+
+        events_mod.append_event(burnless_root, "retrieve_called", {
+            "search_capsules": query,
+            "count": len(results)
+        }, actor="mcp")
+
+        return {"count": len(results), "results": results}
+    except Exception as e:
+        return {"error": "search_failed", "hint": str(e)}
+
+
+async def handle_explain_capsule(id: str, project_root: Optional[str] = None) -> dict:
+    burnless_root = _resolve_root(project_root)
+    if burnless_root is None:
+        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+
+    try:
+        refs = retrieve_mod.search(burnless_root, delegation_id=id)
+
+        evidence = []
+        for rec in refs:
+            metadata = {
+                "ref_id": rec.get("ref_id"),
+                "kind": rec.get("kind"),
+                "raw_ref": rec.get("raw_ref"),
+                "capsule_ref": rec.get("capsule_ref"),
+                "files": rec.get("files"),
+                "entities": rec.get("entities"),
+                "status": rec.get("status")
+            }
+            evidence.append(metadata)
+
+        capsule = None
+        capsule_path = burnless_root / "capsules" / f"{id}.json"
+        if capsule_path.exists():
+            try:
+                capsule = json.loads(capsule_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        return {"id": id, "evidence": evidence, "capsule": capsule}
+    except Exception as e:
+        return {"error": "explain_failed", "hint": str(e)}
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
@@ -534,6 +619,46 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="retrieve",
+            description="Retrieve local evidence snippets for a delegation/file/entity",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {"type": ["string", "null"], "description": "Delegation ID"},
+                    "query": {"type": ["string", "null"], "description": "Search query"},
+                    "file": {"type": ["string", "null"], "description": "Filter by file"},
+                    "entity": {"type": ["string", "null"], "description": "Filter by entity"},
+                    "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                    "max_chars": {"type": "integer", "description": "Max snippet size (default 4000)"},
+                },
+            },
+        ),
+        Tool(
+            name="search_capsules",
+            description="Search indexed capsules by text",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                    "limit": {"type": "integer", "description": "Max results (default 10)"},
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="explain_capsule",
+            description="Show a capsule and its provenance evidence refs",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Capsule ID"},
+                    "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                },
+                "required": ["id"],
+            },
+        ),
     ]
 
 
@@ -547,6 +672,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "read": handle_read,
         "status": handle_status,
         "audit": handle_audit,
+        "retrieve": handle_retrieve,
+        "search_capsules": handle_search_capsules,
+        "explain_capsule": handle_explain_capsule,
     }
 
     handler = handlers.get(name)

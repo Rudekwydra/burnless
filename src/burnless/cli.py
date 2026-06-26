@@ -37,6 +37,8 @@ from .report_kind import (
 from . import init_claude_code as _init_claude_code_mod
 from . import epochs as epochs_mod
 from . import audit_graph
+from . import retrieve as retrieve_mod
+from . import events as events_mod
 from .prompt_context import (_with_runtime_context, _build_cacheable_runtime_prefix, _TELEGRAPHIC_OUTPUT_HINT, _QTP_F_FIXED_SUFFIX)
 
 from .delegation_parse import (
@@ -654,6 +656,83 @@ def cmd_capsule(args: argparse.Namespace) -> int:
         print(f"burnless: no capsule for {args.id} (run it first?)", file=sys.stderr)
         return 2
     print(capsule_path.read_text(encoding="utf-8"))
+    return 0
+
+
+def cmd_retrieve(args: argparse.Namespace) -> int:
+    root = paths_mod.require_root()
+    p = paths_mod.paths_for(root)
+    cfg = config_mod.load(p["config"])
+    if cfg.get("privacy", {}).get("raw_retention") == "none":
+        print(json.dumps({"error": "raw_retention_disabled", "capsule_available": True}))
+        return 0
+    results = retrieve_mod.search(
+        root,
+        query=args.query,
+        file=args.file,
+        entity=args.entity,
+        delegation_id=args.id,
+    )
+    events_mod.append_event(
+        root,
+        "retrieve_called",
+        {
+            "id": args.id,
+            "query": args.query,
+            "file": args.file,
+            "entity": args.entity,
+            "count": len(results),
+        },
+        actor="cli",
+    )
+    if args.json:
+        output = {
+            "count": len(results),
+            "results": [
+                {
+                    **rec,
+                    "snippet": retrieve_mod.snippet(root, rec["ref_id"], max_chars=4000, full=args.full),
+                }
+                for rec in results
+            ],
+        }
+        print(json.dumps(output, ensure_ascii=False))
+    else:
+        if not results:
+            print("no matches")
+        else:
+            for rec in results:
+                ref_id = rec.get("ref_id", "?")
+                kind = rec.get("kind", "?")
+                status = rec.get("status", "?")
+                snippet_text = retrieve_mod.snippet(root, ref_id, max_chars=4000, full=args.full)
+                print(f"{ref_id} [{kind}] {status}")
+                for line in snippet_text.split("\n"):
+                    print(f"  {line}")
+    return 0
+
+
+def cmd_search_capsules(args: argparse.Namespace) -> int:
+    root = paths_mod.require_root()
+    results = retrieve_mod.search(root, query=args.query)
+    results = [r for r in results if r.get("kind") == "capsule"]
+    results = results[:args.limit]
+    events_mod.append_event(
+        root,
+        "retrieve_called",
+        {"search_capsules": args.query, "count": len(results)},
+        actor="cli",
+    )
+    if args.json:
+        print(json.dumps({"count": len(results), "results": results}, ensure_ascii=False))
+    else:
+        if not results:
+            print("no matches")
+        else:
+            for rec in results:
+                capsule_id = rec.get("capsule_id", "?")
+                capsule_ref = rec.get("capsule_ref", "?")
+                print(f"{capsule_id} -> {capsule_ref}")
     return 0
 
 
@@ -1513,6 +1592,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("capsule", help="show the operational capsule for a delegation")
     sp.add_argument("id")
     sp.set_defaults(func=cmd_capsule)
+
+    sp = sub.add_parser("retrieve", help="retrieve local evidence for a delegation/file/entity")
+    sp.add_argument("id", nargs="?", default=None, help="delegation id (optional)")
+    sp.add_argument("--query", default=None)
+    sp.add_argument("--file", default=None)
+    sp.add_argument("--entity", default=None)
+    sp.add_argument("--json", action="store_true", dest="json")
+    sp.add_argument("--full", action="store_true", dest="full")
+    sp.set_defaults(func=cmd_retrieve)
+
+    sp = sub.add_parser("search-capsules", help="search indexed capsules by text")
+    sp.add_argument("query")
+    sp.add_argument("--limit", type=int, default=10)
+    sp.add_argument("--json", action="store_true", dest="json")
+    sp.set_defaults(func=cmd_search_capsules)
 
     sp = sub.add_parser("audit", help="read and render audit graph records")
     sp.add_argument("delegation_id", nargs="?", default=None, help="delegation ID (e.g. d123)")
