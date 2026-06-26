@@ -83,9 +83,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   whitelist of commands the maestro is allowed to issue; out-of-whitelist
   attempts trigger a rotating helpful-block-message instead of opaque
   rejection.
-- **RTK integration.** `burnless rtk {enable,disable,status}` and a
-  pinned-version loader with PATH-first opt-in resolution. Default tracks
-  the latest RTK release with a 24h cached upstream lookup.
 - **Subprocess IO liveness probe.** Opt-in `psutil`-based check that
   distinguishes a stuck-but-alive worker from a stalled one, so the
   tool-aware stale timeout fires only on real stalls.

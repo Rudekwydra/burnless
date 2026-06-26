@@ -50,6 +50,7 @@ FORBIDDEN = [
     ("base64_ciphertext", re.compile(r"base64_ciphertext", re.IGNORECASE)),
     ("burnless decode", re.compile(r"burnless\s+decode\b", re.IGNORECASE)),
     ("burnless compress", re.compile(r"burnless\s+compress\b", re.IGNORECASE)),
+    ("rtk wrapper", re.compile(r"\brtk\b", re.IGNORECASE)),
 ]
 
 
