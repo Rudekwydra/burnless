@@ -33,13 +33,16 @@ executes the worker, and writes a capsule to session history.
 
 ## Tiers
 
-| Tier | Default agent | Use for |
-|------|--------------|---------|
-| gold | claude-opus-4-8 | Architecture, strategy, complex reasoning |
-| silver | claude-sonnet-4-6 | Implementation, docs, code |
-| bronze | claude-haiku-4-5 | Summarize, classify, extract |
+| Tier | Role | Use for |
+|------|------|---------|
+| gold | architect | Architecture, strategy, complex reasoning |
+| silver | implementer | Implementation, docs, code |
+| bronze | mechanical | Summarize, classify, extract, local code |
 
-Tier is chosen automatically. Override: `burnless delegate --tier gold "<task>"`
+Tiers are roles; the model bound to each tier comes from your config. Run
+`burnless menu` to see the current tier→provider/model table (do not assume
+specific model IDs). Tier is chosen automatically; override with
+`burnless delegate --tier gold "<task>"`.
 
 ## Notes
 
