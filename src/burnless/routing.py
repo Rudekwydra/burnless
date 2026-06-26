@@ -48,3 +48,34 @@ def route(text: str, routing_rules: dict[str, list[str]], default_tier: str = "b
 def explain_route(text: str, routing_rules: dict[str, list[str]]) -> dict:
     tier, kw = route(text, routing_rules)
     return {"tier": tier, "matched_keyword": kw or None}
+
+
+def format_escalation_block(lang: str, requested: str, natural: str, signal: str, policy_source: str) -> str:
+    """User-facing message when the tier escalation policy blocks a tier upgrade.
+
+    The internal config key stays ``routing.hardcore_filter`` (and the
+    ``BURNLESS_HARDCORE`` env) for one release; the user-facing concept is the
+    'tier escalation policy'. The block always names the full decision and an
+    executable next command, never a bare refusal.
+    """
+    if (lang or "").startswith("pt"):
+        return (
+            "\n\U0001f6a6 burnless: politica de escalonamento de tier bloqueou este upgrade.\n"
+            f"   tier pedido:   {requested}\n"
+            f"   rota natural:  {natural} (sinal: {signal})\n"
+            f"   politica:      {policy_source}\n"
+            "   motivo:        tier pedido acima da rota natural sem --force\n"
+            "   pra prosseguir:\n"
+            f"     burnless do --tier {requested} --force \"<spec>\"\n"
+            "     (ou desligue: unset BURNLESS_HARDCORE  /  routing.hardcore_filter: false)\n"
+        )
+    return (
+        "\n\U0001f6a6 burnless: tier escalation policy blocked this upgrade.\n"
+        f"   requested tier: {requested}\n"
+        f"   natural route:  {natural} (signal: {signal})\n"
+        f"   policy:         {policy_source}\n"
+        "   reason:         requested tier above natural route without --force\n"
+        "   to proceed:\n"
+        f"     burnless do --tier {requested} --force \"<spec>\"\n"
+        "     (or disable: unset BURNLESS_HARDCORE  /  routing.hardcore_filter: false)\n"
+    )
