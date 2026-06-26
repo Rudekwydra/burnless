@@ -399,6 +399,29 @@ def _commits_since_mtime(root, mtime: float, cap: int = 15) -> str:
         return ""
 
 
+def _semantic_recon(root, base_body, recon_text):
+    """Fold post-checkpoint commits into the freshest living-doc via the encoder
+    model so 'Foco atual'/'Decisões' reflect what actually landed. Returns the
+    updated markdown, or None on any failure / when no model is configured
+    (fail-open: caller falls back to the raw commit append)."""
+    try:
+        from . import epochs_v2
+        rewrite = epochs_v2.living_rewriter(root)
+        exchange = (
+            "## Commits recem-aterrissados (fonte de verdade do que JA foi concluido)\n"
+            + recon_text
+            + "\n\nInstrucao: atualize 'Foco atual' e 'Decisoes' para refletir que "
+            "estes commits JA foram feitos/commitados. Nao invente nada alem do que "
+            "os assuntos dos commits indicam."
+        )
+        prompt = epochs_v2.living_rewrite_prompt(base_body, exchange)
+        folded = rewrite(prompt)
+        folded = (folded or "").strip()
+        return folded or None
+    except Exception:
+        return None
+
+
 def carry_forward_chain(root, current_chat_id=None) -> str:
     """Render carry-forward memory chain from predecessor chats or rolling seed.
 
@@ -450,7 +473,21 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
                     total += len(block)
                 recon = _commits_since_mtime(root, v2_cand[0][0])
                 if recon:
-                    out.append(recon)
+                    mode = "raw"
+                    try:
+                        from . import config as _cfg, paths as _paths
+                        _c = _cfg.load(_paths.paths_for(root / ".burnless")["config"])
+                        mode = str((_c.get("epoch") or {}).get("resume_recon") or "raw").strip().lower()
+                    except Exception:
+                        mode = "raw"
+                    folded = None
+                    if mode == "semantic" and len(out) >= 2:
+                        base_body = v2_cand[0][2].read_text(encoding="utf-8").strip()
+                        folded = _semantic_recon(root, base_body, recon)
+                    if folded and len(out) >= 2:
+                        out[1] = f"# living:reconciled\n{folded}\n\n"
+                    else:
+                        out.append(recon)
                 return "".join(out)
             # no living docs yet -> fall through to V1 chain (backward compat)
 
