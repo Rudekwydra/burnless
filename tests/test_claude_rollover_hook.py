@@ -9,10 +9,10 @@ from pathlib import Path
 HOOK = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "burnless_mode_hook.sh"
 
 
-def _run_hook(home: Path, payload: dict, *, rollover_turns: int = 2) -> dict:
+def _run_hook(home: Path, payload: dict) -> dict:
+    """Run the hook expecting injected context (non-empty JSON stdout)."""
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["BURNLESS_ROLLOVER_TURNS"] = str(rollover_turns)
     proc = subprocess.run(
         ["bash", str(HOOK)],
         input=json.dumps(payload),
@@ -26,196 +26,144 @@ def _run_hook(home: Path, payload: dict, *, rollover_turns: int = 2) -> dict:
     return json.loads(proc.stdout)
 
 
-def test_rollover_mode_creates_and_reuses_capsule(tmp_path):
+def _run_hook_raw(home: Path, payload: dict) -> subprocess.CompletedProcess:
+    """Run the hook allowing empty stdout (e.g. off / no-op)."""
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    return subprocess.run(
+        ["bash", str(HOOK)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+
+def _mode_file(home: Path, sid: str) -> Path:
+    return home / ".burnless" / "state" / f"session-{sid}.mode"
+
+
+def _no_rollover_artifacts(home: Path, sid: str) -> None:
+    state = home / ".burnless" / "state"
+    assert not (state / f"session-{sid}.rollover.md").exists()
+    assert not (state / f"session-{sid}.rollover.json").exists()
+    assert not (state / f"session-{sid}.seed.md").exists()
+    assert not (state / "rotation_due").exists()
+
+
+# ---- legacy alias coercion via /burnless command -------------------------
+
+def test_command_rollover_coerced_to_on(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    transcript = home / "session.jsonl"
-    transcript.write_text(
-        "\n".join(
-            [
-                json.dumps({"type": "user", "message": {"role": "user", "content": "first goal"}}),
-                json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "first reply"}}),
-                json.dumps({"type": "user", "message": {"role": "user", "content": "second goal"}}),
-                json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "second reply"}}),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    activate = _run_hook(
+    out = _run_hook(
         home,
-        {
-            "session_id": "sess-1",
-            "transcript_path": str(transcript),
-            "cwd": str(tmp_path),
-            "permission_mode": "default",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "/burnless rollover",
-        },
+        {"session_id": "sess-1", "hook_event_name": "UserPromptSubmit", "prompt": "/burnless rollover"},
     )
-    assert "Burnless mode -> rollover" in activate["hookSpecificOutput"]["additionalContext"]
-
-    mode_file = home / ".burnless" / "state" / "session-sess-1.mode"
-    assert mode_file.read_text(encoding="utf-8").strip() == "rollover"
-
-    rollover = _run_hook(
-        home,
-        {
-            "session_id": "sess-1",
-            "transcript_path": str(transcript),
-            "cwd": str(tmp_path),
-            "permission_mode": "default",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "third goal",
-        },
-    )
-
-    ctx = rollover["hookSpecificOutput"]["additionalContext"]
-    assert "[BURNLESS ROLLOVER]" in ctx
-    assert "third goal" in ctx
-    assert "second reply" in ctx
-
-    capsule_path = home / ".burnless" / "state" / "session-sess-1.rollover.md"
-    meta_path = home / ".burnless" / "state" / "session-sess-1.rollover.json"
-    assert capsule_path.exists()
-    assert meta_path.exists()
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    # legacy alias is acknowledged as deprecated and mapped to canonical 'on'
+    assert "deprecated" in ctx.lower()
+    assert "on" in ctx.lower()
+    # persisted value is canonical, never the legacy string
+    assert _mode_file(home, "sess-1").read_text(encoding="utf-8").strip() == "on"
 
 
-def test_seed_survives_rewind(tmp_path):
+def test_command_partner_coerced_to_observe(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    sid = "sess-rewind"
-
-    # Transcript: 1 user + 1 assistant; prompt will be 2nd user → turns=2, 2%2==0 → rotation
-    transcript = home / "transcript.jsonl"
-    transcript.write_text(
-        json.dumps({"type": "user", "message": {"role": "user", "content": "first message"}}) + "\n"
-        + json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "first reply"}}) + "\n",
-        encoding="utf-8",
-    )
-
-    # Activate rollover mode
-    _run_hook(
+    out = _run_hook(
         home,
-        {
-            "session_id": sid,
-            "transcript_path": str(transcript),
-            "cwd": str(tmp_path),
-            "permission_mode": "default",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "/burnless rollover",
-        },
-        rollover_turns=2,
+        {"session_id": "sess-2", "hook_event_name": "UserPromptSubmit", "prompt": "/burnless partner"},
     )
-
-    # Run at rotation point: transcript has 1 user turn, prompt adds 2nd → turns=2 → seed written
-    _run_hook(
-        home,
-        {
-            "session_id": sid,
-            "transcript_path": str(transcript),
-            "cwd": str(tmp_path),
-            "permission_mode": "default",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "second user turn",
-        },
-        rollover_turns=2,
-    )
-
-    state_dir = home / ".burnless" / "state"
-    seed_path = state_dir / f"session-{sid}.seed.md"
-    assert seed_path.exists(), "seed.md must exist after rotation point"
-    seed_content = seed_path.read_text(encoding="utf-8")
-    assert seed_content.strip(), "seed.md must not be empty"
-
-    # Simulate /rewind: empty transcript, same session → turns=1 < prev_max=2 → rewound=True
-    truncated = home / "truncated.jsonl"
-    truncated.write_text("", encoding="utf-8")
-
-    result = _run_hook(
-        home,
-        {
-            "session_id": sid,
-            "transcript_path": str(truncated),
-            "cwd": str(tmp_path),
-            "permission_mode": "default",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "after rewind prompt",
-        },
-        rollover_turns=2,
-    )
-
-    # Seed must NOT have been overwritten
-    assert seed_path.exists(), "seed.md must still exist after rewind"
-    assert seed_path.read_text(encoding="utf-8") == seed_content, "seed.md must not be overwritten on rewind"
-
-    # additionalContext must contain the durable seed block
-    ctx = result["hookSpecificOutput"]["additionalContext"]
-    assert "[BURNLESS ROLLING MEMORY" in ctx, "additionalContext must contain the durable seed header"
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "deprecated" in ctx.lower()
+    assert _mode_file(home, "sess-2").read_text(encoding="utf-8").strip() == "observe"
 
 
-def test_rotation_due_flag_written(tmp_path):
+# ---- canonical command sets ----------------------------------------------
+
+def test_command_sets_observe(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    sid = "sess-rotdue"
-
-    transcript = home / "transcript.jsonl"
-    transcript.write_text(
-        json.dumps({"type": "user", "message": {"role": "user", "content": "first message"}}) + "\n"
-        + json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "first reply"}}) + "\n",
-        encoding="utf-8",
-    )
-
-    # Activate rollover mode
-    _run_hook(
+    out = _run_hook(
         home,
-        {
-            "session_id": sid,
-            "transcript_path": str(transcript),
-            "cwd": str(tmp_path),
-            "permission_mode": "default",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "/burnless rollover",
-        },
-        rollover_turns=2,
+        {"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "/burnless observe"},
     )
+    assert "observe" in out["hookSpecificOutput"]["additionalContext"].lower()
+    assert _mode_file(home, "s").read_text(encoding="utf-8").strip() == "observe"
 
-    # Run at rotation point: transcript has 1 user turn, prompt adds 2nd → turns=2 → rotation_due written
-    _run_hook(
+
+# ---- runtime dispatch per mode -------------------------------------------
+
+def test_on_mode_injects_maestro(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    mf = _mode_file(home, "on-sid")
+    mf.parent.mkdir(parents=True, exist_ok=True)
+    mf.write_text("on", encoding="utf-8")
+    out = _run_hook(
         home,
-        {
-            "session_id": sid,
-            "transcript_path": str(transcript),
-            "cwd": str(tmp_path),
-            "permission_mode": "default",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "second user turn",
-        },
-        rollover_turns=2,
+        {"session_id": "on-sid", "hook_event_name": "UserPromptSubmit", "prompt": "do a thing"},
     )
+    assert "[BURNLESS ON]" in out["hookSpecificOutput"]["additionalContext"]
+    _no_rollover_artifacts(home, "on-sid")
 
-    state_dir = home / ".burnless" / "state"
-    flag_path = state_dir / "rotation_due"
-    assert flag_path.exists(), "rotation_due must exist after rotation point"
-    assert flag_path.read_text(encoding="utf-8").strip(), "rotation_due must not be empty"
 
-    # Simulate /rewind: delete flag, then run with empty transcript → rewound=True → flag must NOT reappear
-    flag_path.unlink()
-    truncated = home / "truncated.jsonl"
-    truncated.write_text("", encoding="utf-8")
-
-    _run_hook(
+def test_observe_mode_injects_note(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    mf = _mode_file(home, "obs-sid")
+    mf.parent.mkdir(parents=True, exist_ok=True)
+    mf.write_text("observe", encoding="utf-8")
+    out = _run_hook(
         home,
-        {
-            "session_id": sid,
-            "transcript_path": str(truncated),
-            "cwd": str(tmp_path),
-            "permission_mode": "default",
-            "hook_event_name": "UserPromptSubmit",
-            "prompt": "after rewind prompt",
-        },
-        rollover_turns=2,
+        {"session_id": "obs-sid", "hook_event_name": "UserPromptSubmit", "prompt": "do a thing"},
     )
+    assert "[BURNLESS OBSERVE]" in out["hookSpecificOutput"]["additionalContext"]
+    _no_rollover_artifacts(home, "obs-sid")
 
-    assert not flag_path.exists(), "rotation_due must NOT be written on rewind"
+
+def test_off_mode_is_noop(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    proc = _run_hook_raw(
+        home,
+        {"session_id": "off-sid", "hook_event_name": "UserPromptSubmit", "prompt": "do a thing"},
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
+# ---- persisted legacy value migrates on read -----------------------------
+
+def test_persisted_rollover_migrates_to_on(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    mf = _mode_file(home, "mig-sid")
+    mf.parent.mkdir(parents=True, exist_ok=True)
+    mf.write_text("rollover", encoding="utf-8")  # legacy value on disk
+    out = _run_hook(
+        home,
+        {"session_id": "mig-sid", "hook_event_name": "UserPromptSubmit", "prompt": "next prompt"},
+    )
+    # coerced to 'on' behavior...
+    assert "[BURNLESS ON]" in out["hookSpecificOutput"]["additionalContext"]
+    # ...and the file is migrated to canonical, no legacy value left
+    assert mf.read_text(encoding="utf-8").strip() == "on"
+    _no_rollover_artifacts(home, "mig-sid")
+
+
+# ---- menu lists only canonical modes -------------------------------------
+
+def test_menu_lists_canonical_modes(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    out = _run_hook(
+        home,
+        {"session_id": "menu-sid", "hook_event_name": "UserPromptSubmit", "prompt": "/burnless"},
+    )
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "/burnless on" in ctx
+    assert "/burnless observe" in ctx
+    assert "/burnless off" in ctx
