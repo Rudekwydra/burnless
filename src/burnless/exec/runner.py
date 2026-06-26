@@ -348,6 +348,35 @@ def _verify_badge(summary: dict) -> str:
             return f"✓ runner-verified ({m.group(1)}/{m.group(2)})"
     return "⚠ unverified — no ## Verify gate ran (worker-claimed OK)"
 
+def _build_runner_done_report(did, status_str, summary, include_summary=True):
+    """Build a one-line DoneReport from the worker summary envelope."""
+    import re as _re
+    from ..done_report import build_done_report
+
+    verify_passed = verify_total = 0
+    for item in (summary.get("validated") or []):
+        m = _re.search(r"verify:\s*(\d+)\s*/\s*(\d+)\s*checks passed", str(item))
+        if m:
+            verify_passed, verify_total = int(m.group(1)), int(m.group(2))
+            break
+    files = summary.get("files_touched") or []
+    if not isinstance(files, list):
+        files = [files]
+    # For silent-default mode, suppress summary in one_line output
+    report_summary = (summary.get("summary") or "") if include_summary else ""
+    return build_done_report(
+        delegation_id=did,
+        status=status_str,
+        kind=summary.get("kind") or "execution",
+        summary=report_summary,
+        files_changed=list(files),
+        verify_passed=verify_passed,
+        verify_total=verify_total,
+        evidence_refs=[f"log:{did}", f"capsule:{did}"],
+        answer_hint=str(summary.get("answer_hint") or ""),
+    )
+
+
 def execute_delegation(opts: RunOpts, root=None) -> int:
     root = root or paths_mod.require_root()
     p = paths_mod.paths_for(root)
@@ -935,7 +964,11 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         else:
             print(f"INT:{did}")
     else:
-        head = f"{status_str}:{did}"
+        _terse = opts.mode == "quiet" or str(cfg.get("display", {}).get("done_report", "")).lower() == "terse"
+        if verbose or _terse:
+            head = f"{status_str}:{did}"
+        else:
+            head = _build_runner_done_report(did, status_str, summary, include_summary=False).one_line
         if verbose:
             summary_text = (summary.get("summary") or "").strip()
             if summary_text:

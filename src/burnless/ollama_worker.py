@@ -234,9 +234,24 @@ def run_ollama_tools(
     if status != "OK" and not issues and (files_touched or final_text):
         status = "OK"
 
+    summary_text = final_text[:180] if final_text else "gemma tool-worker completed"
+    from .done_report import is_low_information
+
+    if is_low_information(summary_text):
+        _synth = []
+        if files_touched:
+            _synth.append(
+                f"wrote {len(files_touched)} file(s): "
+                + ", ".join(list(dict.fromkeys(files_touched))[:3])
+            )
+        if validated:
+            _synth.append(f"ran {len(validated)} shell cmd(s)")
+        if _synth:
+            summary_text = "; ".join(_synth)
+
     return {
         "status": status,
-        "summary": final_text[:180] if final_text else "gemma tool-worker completed",
+        "summary": summary_text,
         "files_touched": list(dict.fromkeys(files_touched)),
         "validated": validated,
         "evidence": evidence,
