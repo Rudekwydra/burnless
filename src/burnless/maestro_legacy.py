@@ -17,6 +17,8 @@ import anthropic
 
 from .cache_policy import estimate_compacted_tokens, should_compact
 from . import config
+from . import events as events_mod
+from . import paths as paths_mod
 
 
 DEFAULT_MAIN_MODEL = config.DEFAULT_TIER_MODELS["gold"]
@@ -329,6 +331,9 @@ class MaestroSession:
         )
         if decision.should_compact:
             self._append_jsonl("cache_policy", decision.__dict__)
+        _root = paths_mod.find_root(self.path.parent)
+        if _root is not None:
+            events_mod.append_event(_root, "compaction_decision", {"should_compact": decision.should_compact, "break_even_turns": decision.break_even_turns, "expected_savings_tokens": decision.expected_savings_tokens, "reason": decision.reason, "old_tokens": old_tokens}, actor="maestro")
         return decision.should_compact
 
     # ---- usage recording ------------------------------------------------
