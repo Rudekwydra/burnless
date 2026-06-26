@@ -407,6 +407,9 @@ def _emit_audit_record(proj_root, did, summary, capsule_path, log_path, cfg):
             capsule_ref=str(capsule_path),
             raw_log_ref=str(log_path),
             created_at=datetime.now(timezone.utc).isoformat(),
+            files_changed=summary.get("files_changed") if isinstance(summary.get("files_changed"), list) else None,
+            diff_stats=summary.get("diff_stats") if isinstance(summary.get("diff_stats"), dict) else None,
+            suspicious=bool(summary.get("suspicious")),
         )
         audit_graph_mod.append_record(proj_root, rec)
     except Exception:
@@ -514,6 +517,14 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         json.dumps(run_plan, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+    # Deterministic snapshot-diff audit (Wave 2 W3.5): capture pre-state of the
+    # working tree. Fail-open — never blocks the run.
+    from .. import integrity as _integrity
+    try:
+        _pre_snapshot = _integrity.snapshot_tree(root.parent)
+    except Exception:
+        _pre_snapshot = {}
 
     api_key = _load_anthropic_key()
     multi_provider = _tier_has_multiple_providers(agent_cfg)
@@ -947,6 +958,28 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         summary=summary,
         stdout=result.get("stdout", ""),
     )
+
+    # Deterministic snapshot-diff audit (Wave 2 W3.5): post-state + SUSPICIOUS
+    # annotation. Never changes the final OK/PART/ERR status; annotation only.
+    try:
+        _post_snapshot = _integrity.snapshot_tree(root.parent)
+        _snap_diff = _integrity.diff_snapshots(_pre_snapshot, _post_snapshot, root.parent)
+    except Exception:
+        _snap_diff = {"files_changed": [], "diff_stats": {}}
+    summary["files_changed"] = _snap_diff.get("files_changed", [])
+    summary["diff_stats"] = _snap_diff.get("diff_stats", {})
+    # SUSPICIOUS: worker said OK on an execution task but nothing changed on
+    # disk AND no ## Verify gate confirmed. Deterministic annotation only.
+    _status_now = str(summary.get("status") or "").upper()
+    _kind_now = str(summary.get("kind") or "").lower()
+    _verify_ok = any("checks passed" in str(v) for v in (summary.get("validated") or []))
+    if _status_now == "OK" and _kind_now == "execution" and not summary["files_changed"] and not _verify_ok:
+        summary["suspicious"] = True
+        _iss = list(summary.get("issues") or [])
+        _iss.append("suspicious: worker reported OK but no files changed and no ## Verify gate passed")
+        summary["issues"] = _iss
+    else:
+        summary["suspicious"] = False
 
     deleg_mod.write_summary(p["temp"] / f"{did}.json", summary)
 
