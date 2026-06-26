@@ -26,7 +26,8 @@ _PATH_RE = re.compile(
     r"\b"
 )
 
-_VERIFY_SECTION_RE = re.compile(r'^##+\s*Verify\b', re.IGNORECASE | re.MULTILINE)
+_VERIFY_SECTION_RE = re.compile(r'^##+\s*(?:Verify|Validation)\b', re.IGNORECASE | re.MULTILINE)
+_VALIDATION_ALIAS_RE = re.compile(r'^##+\s*Validation\b', re.IGNORECASE | re.MULTILINE)
 
 
 @dataclass
@@ -80,6 +81,24 @@ def format_verify_warning(lang: str = "pt-BR") -> str:
         "\n[WARN] burnless: ## Verify section present but NO fenced code block (```).\n"
         "   extract_verify_block returns [] -> the honest-exit-code gate will NOT run.\n"
         "   Wrap the verify commands in ```sh ... ``` to enable the gate.\n"
+    )
+
+
+def uses_deprecated_validation_heading(text: str) -> bool:
+    """True when the spec uses the deprecated `## Validation` heading instead of
+    the canonical `## Verify`. Drives a one-time deprecation warning at dispatch."""
+    return bool(_VALIDATION_ALIAS_RE.search(text))
+
+
+def format_validation_alias_warning(lang: str = "pt-BR") -> str:
+    if lang.startswith("pt"):
+        return (
+            "\n[WARN] burnless: secao ## Validation aceita como alias DEPRECADO de ## Verify.\n"
+            "   Use ## Verify nas proximas specs e templates; o alias sai numa release futura.\n"
+        )
+    return (
+        "\n[WARN] burnless: ## Validation section accepted as a DEPRECATED alias of ## Verify.\n"
+        "   Use ## Verify in future specs and templates; the alias will be removed in a later release.\n"
     )
 
 

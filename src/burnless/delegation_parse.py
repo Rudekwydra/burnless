@@ -64,7 +64,7 @@ def extract_verify_block(md: str) -> list[str]:
     Returns each non-blank, non-comment line as one command string (stripped).
     Returns [] when the section or a matching fenced block is absent.
     """
-    section_match = re.search(r'^##+\s*Verify\b', md, re.IGNORECASE | re.MULTILINE)
+    section_match = re.search(r'^##+\s*(?:Verify|Validation)\b', md, re.IGNORECASE | re.MULTILINE)
     if not section_match:
         return []
     after = md[section_match.end():]

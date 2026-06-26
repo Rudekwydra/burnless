@@ -23,3 +23,14 @@ def test_fenced_never_blocks():
 
 def test_no_verify_section_never_blocks():
     assert should_block_unfenced_verify(NO_VERIFY, enforce=True, allow_override=False) is False
+
+
+def test_validation_heading_flagged_as_deprecated():
+    from burnless import spec_validator as s
+    f = "`" * 3
+    md_a = "## Validation\n" + f + "sh\necho x\n" + f
+    md_v = "## Verify\n" + f + "sh\necho x\n" + f
+    assert s.uses_deprecated_validation_heading(md_a) is True
+    assert s.uses_deprecated_validation_heading(md_v) is False
+    w = s.format_validation_alias_warning("en")
+    assert "Validation" in w and "Verify" in w
