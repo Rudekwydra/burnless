@@ -8,5 +8,5 @@ export BURNLESS_EPOCH_V2=1
 BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 CHAIN=$("$BB" epoch resume --cwd "$CWD" --chat-id "$SID" --workspace "$HOME/antigravity" 2>/dev/null)
 [[ -z "$CHAIN" ]] && exit 0
-/usr/bin/jq -n --arg c "$CHAIN" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:("## Rolling memory (carry-forward)\n\n"+$c)}}'
+/usr/bin/jq -n --arg c "$CHAIN" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:("## Burnless restore (rolling memory carry-forward)\n\n"+$c)}}'
 exit 0
