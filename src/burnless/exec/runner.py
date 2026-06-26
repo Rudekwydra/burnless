@@ -17,6 +17,7 @@ from .. import delegations as deleg_mod
 from .. import compression as compression_mod
 from .. import lifetime as lifetime_mod
 from .. import agents as agents_mod
+from .. import events as events_mod
 from .. import live_runner
 from .. import dashboard
 from .. import savings_footer as savings_footer_mod
@@ -425,6 +426,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         print(f"burnless: delegation {did} not found at {deleg_path}", file=sys.stderr)
         return 2
     deleg_text = deleg_path.read_text(encoding="utf-8")
+    events_mod.append_event(root, "delegation_started", {"id": did}, actor="cli")
     _verify_cmds = _extract_verify_block(deleg_text) if cfg.get("validation", {}).get("honest_exit_code", True) else []
     if _verify_cmds and cfg.get("validation", {}).get("preflight_verify", True):
         _pf = _preflight_verify_block(
@@ -828,6 +830,9 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         cwd=root.parent, did=did, log_path=log_path,
         timeout=cfg.get("validation", {}).get("verify_timeout_s", 120),
     )
+    if _verify_cmds:
+        _vb = _verify_badge(summary)
+        events_mod.append_event(root, "verify_gate_passed" if _vb.startswith("\u2713") else "verify_gate_failed", {"id": did, "badge": _vb}, actor="cli")
 
     # ── PART/ERR automatic retry loop (before audit) ─────────────────────────
     retry_cfg = cfg.get("retry", {})
@@ -959,6 +964,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     savings = compression_mod.measure_savings(raw_log_text, capsule)
     capsule.tokens = savings
     compression_mod.write(capsule_path, capsule)
+    events_mod.append_event(root, "capsule_created", {"id": did, "capsule": str(capsule_path)}, actor="cli")
     if savings["saved_tokens"] > 0:
         _record_and_bump(
             p,
@@ -993,6 +999,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     # session history). Verbose (3-line summary+reason) opt-in via --verbose
     # or auto-on for TTY humans.
     status_str = summary.get("status", "?")
+    events_mod.append_event(root, "delegation_completed", {"id": did, "status": status_str}, actor="cli")
     verbose = bool(opts.verbose) or sys.stdout.isatty()
     if interrupted and not stale:
         if verbose:
