@@ -67,6 +67,7 @@ def render_explain(sections: dict) -> str:
         ("last_route_decision", "Last route decision"),
         ("last_retrieval", "Last retrieval"),
         ("last_delegation_status", "Last delegation status"),
+        ("last_warm_status", "Warm session"),
     ]
     lines = []
     for key, label in order:

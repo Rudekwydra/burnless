@@ -869,6 +869,56 @@ def cmd_warm_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_warm_explain(args):
+    bl_root = _resolve_burnless_root()
+    if bl_root is None:
+        print("burnless: no .burnless/ directory found.", file=sys.stderr)
+        return 2
+    provider = getattr(args, "provider", "both")
+    result = {}
+    if provider in ("claude", "both"):
+        from . import warm_session as ws
+        result["claude"] = ws.explain(bl_root)
+    if provider in ("codex", "both"):
+        from . import warm_session_codex as ws_codex
+        result["codex"] = ws_codex.explain(bl_root)
+    # Record one warm_session_status event summarizing what we observed.
+    try:
+        summary = {}
+        for prov, models in result.items():
+            if isinstance(models, dict) and "exists" in models:
+                summary[prov] = {"exists": models.get("exists")}
+            elif isinstance(models, dict):
+                summary[prov] = {m: d.get("ttl_status") for m, d in models.items() if isinstance(d, dict)}
+        events_mod.append_event(bl_root, "warm_session_status", {"provider": provider, "summary": summary})
+    except Exception:
+        pass
+    if getattr(args, "json", False):
+        import json as _json
+        print(_json.dumps(result, indent=2, default=str))
+        return 0
+    for prov, models in result.items():
+        if isinstance(models, dict) and "exists" in models and not models.get("exists"):
+            print(f"warm session [{prov}]: NOT INITIALIZED.")
+            continue
+        if isinstance(models, dict) and "exists" in models:
+            models = {models.get("model", "?"): models}
+        for model, d in (models or {}).items():
+            if not isinstance(d, dict):
+                continue
+            print(f"warm session [{prov}/{model}]:")
+            print(f"  project_root:       {d.get('project_root')}")
+            print(f"  uuid_prefix:        {d.get('uuid_prefix')}")
+            print(f"  alive:              {d.get('alive')}")
+            print(f"  needs_refresh:      {d.get('needs_refresh')}")
+            print(f"  ttl_status:         {d.get('ttl_status')}")
+            print(f"  ttl_remaining_min:  {d.get('ttl_remaining_min')}")
+            print(f"  cache_read:         {d.get('cache_read')}")
+            print(f"  cache_write:        {d.get('cache_write')}")
+            print(f"  compaction_caution: {d.get('compaction_caution')}")
+    return 0
+
+
 def cmd_warm_refresh(args: argparse.Namespace) -> int:
     bl_root = _resolve_burnless_root()
     if bl_root is None:
@@ -1389,6 +1439,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
         "last_route_decision": latest("route_decision"),
         "last_retrieval": latest("retrieve_called"),
         "last_delegation_status": latest("delegation_completed"),
+        "last_warm_status": latest("warm_session_status"),
     }
     print(session_hud.render_explain(sections))
     return 0
@@ -1663,6 +1714,10 @@ def build_parser() -> argparse.ArgumentParser:
     wsp.add_argument("--provider", choices=["claude", "codex", "both"], default="both",
                      help="Which warm pool to operate on (default: both)")
     wsp.set_defaults(func=cmd_warm_refresh)
+    wsp = warm_sub.add_parser("explain", help="explain warm pool state, TTL, and compaction caution")
+    wsp.add_argument("--provider", choices=["claude", "codex", "both"], default="both")
+    wsp.add_argument("--json", action="store_true", dest="json")
+    wsp.set_defaults(func=cmd_warm_explain)
 
     wdp = warm_sub.add_parser("daemon", help="background daemon to keep warm pools hot")
     wdp.set_defaults(func=lambda args, parser=wdp: parser.print_help() or 0)

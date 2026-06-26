@@ -54,7 +54,9 @@ def test_render_explain_all_none_six_times():
         "last_delegation_status": None,
     }
     out = render_explain(sections)
-    assert out.count("(none recorded)") == 6
+    # render_explain now renders 7 lines; the 7th (last_warm_status) is absent
+    # from `sections`, so it also renders as "(none recorded)".
+    assert out.count("(none recorded)") == 7
     assert _is_ascii(out)
 
 
