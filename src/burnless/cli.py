@@ -756,6 +756,9 @@ def cmd_audit(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(records, indent=2))
     else:
+        if args.session:
+            from . import audit_stats
+            print(audit_stats.render_summary(audit_stats.summarize(records)))
         output = audit_graph.render(records)
         print(output if output else "no audit records")
     return 0
