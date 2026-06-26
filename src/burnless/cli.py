@@ -1235,6 +1235,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd")
 
+    from .check_primitives import register_check_parser
+    register_check_parser(sub)
+
     sp = sub.add_parser("init", help="initialize .burnless/ in current directory")
     sp.add_argument("--project", help="project name (default: current dir name)")
     sp.add_argument("--force", action="store_true")
