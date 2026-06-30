@@ -641,3 +641,97 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         return ""
     except Exception:
         return ""
+
+
+def build_refine_owner_candidates(root, current_chat_id=None) -> tuple[list[tuple[str, str]], str] | None:
+    """Build predecessors list and deterministic floor for owner-loop refine_seed.
+
+    Returns:
+        (predecessors, floor_md) tuple where:
+        - predecessors: list of (chat_id, living_doc_text) tuples, newest-first
+        - floor_md: consolidated living-doc markdown (deterministic floor)
+        None if BURNLESS_EPOCH_V2 not set or no V2 predecessors exist.
+    """
+    if not os.environ.get("BURNLESS_EPOCH_V2"):
+        return None
+
+    try:
+        root = Path(root) if isinstance(root, str) else root
+
+        if not is_enabled(root):
+            return None
+
+        epochs_dir = root / ".burnless" / "epochs"
+        if not epochs_dir.exists():
+            return None
+
+        from . import epochs_v2
+
+        v2_cand = []
+        for chat_dir in epochs_dir.iterdir():
+            if not chat_dir.is_dir():
+                continue
+            if chat_dir.name == "_rolling" or chat_dir.name == current_chat_id:
+                continue
+            lp = epochs_v2.living_path(root, chat_dir.name)
+            if lp.exists() and lp.read_text(encoding='utf-8').strip():
+                v2_cand.append((lp.stat().st_mtime, chat_dir.name, lp))
+
+        if not v2_cand:
+            return None
+
+        v2_cand.sort(key=lambda c: c[0], reverse=True)
+        predecessors = [(name, lp.read_text(encoding='utf-8')) for _, name, lp in v2_cand]
+
+        merged = {section: [] for section in epochs_v2.SECTIONS_V3}
+        extra_order = []
+        seen_lines = {}
+        seen_docs = set()
+
+        for _, name, lp in v2_cand:
+            body = lp.read_text(encoding='utf-8').strip()
+            if not body or body in seen_docs:
+                continue
+            seen_docs.add(body)
+            parsed = epochs_v2.parse_living_v3(body)
+            for section, entries in parsed.items():
+                if section not in merged:
+                    merged[section] = []
+                    extra_order.append(section)
+                bucket = seen_lines.setdefault(section, set())
+                for entry in entries:
+                    key = entry.strip()
+                    if not key or key in bucket:
+                        continue
+                    bucket.add(key)
+                    merged[section].append(entry)
+
+        def _render(slots):
+            lines = []
+            for section in list(epochs_v2.SECTIONS_V3) + list(extra_order):
+                entries = slots.get(section, [])
+                if not entries:
+                    continue
+                lines.append(f'## {section}')
+                for body_line in entries:
+                    lines.append(body_line if body_line.startswith('- ') else f'- {body_line}')
+                lines.append('')
+            return '\n'.join(lines)
+
+        CARRY_FORWARD_CAP = 8000
+        trim_order = ['Decisões', 'Refs', 'Riscos'] + list(extra_order)
+        while len(_render(merged)) > CARRY_FORWARD_CAP:
+            removed = False
+            for sec in trim_order:
+                if merged.get(sec):
+                    merged[sec].pop()
+                    removed = True
+                    break
+            if not removed:
+                break
+
+        floor_md = _render(merged)
+        return (predecessors, floor_md)
+
+    except Exception:
+        return None

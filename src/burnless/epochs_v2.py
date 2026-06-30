@@ -614,15 +614,29 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
 
         try:
             if provider == "ollama-local":
-                data = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
+                local_api = os.environ.get("BURNLESS_LOCAL_API", "").strip().lower()
+                if local_api == "llamacpp":
+                    url = "http://localhost:11435/completion"
+                    data = json.dumps({"prompt": prompt}).encode()
+                    timeout_val = 120
+                else:
+                    url = "http://localhost:11434/api/generate"
+                    data = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
+                    timeout_val = 20
+
                 req = urllib.request.Request(
-                    "http://localhost:11434/api/generate",
+                    url,
                     data=data,
                     headers={"Content-Type": "application/json"},
                 )
-                with urllib.request.urlopen(req, timeout=20) as resp:
+                with urllib.request.urlopen(req, timeout=timeout_val) as resp:
                     body = json.loads(resp.read())
-                out = body["response"]
+
+                if local_api == "llamacpp":
+                    out = body.get("content") or body.get("response") or ""
+                else:
+                    out = body.get("response", "")
+
                 from .compression import _strip_gemma_channels
                 out = _strip_gemma_channels(out)
             else:
