@@ -446,7 +446,7 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         # the V1 NNN.md chain. Without this, capture writes V2 but resume serves
         # V1 — the dense living-doc is written and never read (commit 5492569).
         if os.environ.get("BURNLESS_EPOCH_V2"):
-            from . import epochs_v2
+            from . import epochs_v2, owner_cache
             v2_cand = []
             for chat_dir in epochs_dir.iterdir():
                 if not chat_dir.is_dir():
@@ -458,6 +458,16 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
                     v2_cand.append((lp.stat().st_mtime, chat_dir.name, lp))
             if v2_cand:
                 v2_cand.sort(key=lambda c: c[0], reverse=True)
+                # Cache read (step 3b): serve refined seed if fingerprint matches, else floor
+                try:
+                    predecessors = [(name, lp.read_text(encoding='utf-8')) for _, name, lp in v2_cand]
+                    fp = owner_cache.compute_base_fingerprint(predecessors)
+                    cache_path = str(epochs_dir / "_rolling" / "refined_seed.json")
+                    cached = owner_cache.read_valid_refined_seed(cache_path, fp)
+                    if cached:
+                        return cached
+                except Exception:
+                    pass  # Fail-closed: continue to deterministic floor
                 # Slot-merge into ONE consolidated living-doc instead of stacking
                 # N whole docs newest-first. The old stack buried the live thread
                 # 4th in the pile and made the new session inherit the freshest
