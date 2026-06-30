@@ -461,7 +461,15 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
                 # Cache read (step 3b): serve refined seed if fingerprint matches, else floor
                 try:
                     predecessors = [(name, lp.read_text(encoding='utf-8')) for _, name, lp in v2_cand]
-                    fp = owner_cache.compute_base_fingerprint(predecessors)
+                    owner_model_for_fp = ""
+                    try:
+                        from . import config as _cfg, paths as _paths
+                        _c = _cfg.load(_paths.paths_for(root / ".burnless")["config"])
+                        _enc = _c.get("encoder") or {}
+                        owner_model_for_fp = (_enc.get("model") or "").strip()
+                    except Exception:
+                        owner_model_for_fp = ""
+                    fp = owner_cache.compute_base_fingerprint(predecessors, owner_model=owner_model_for_fp, prompt_version="v3")
                     cache_path = str(epochs_dir / "_rolling" / "refined_seed.json")
                     cached = owner_cache.read_valid_refined_seed(cache_path, fp)
                     if cached:

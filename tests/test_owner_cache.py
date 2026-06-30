@@ -86,3 +86,28 @@ def test_read_missing_returns_none():
     cache_path = "/nonexistent/path/cache.json"
     read_seed = read_valid_refined_seed(cache_path, "any_fingerprint")
     assert read_seed is None
+
+
+def test_fingerprint_model_sensitive():
+    """Changing owner_model changes digest."""
+    pred = [("c1", "x")]
+    fp1 = compute_base_fingerprint(pred, owner_model="haiku")
+    fp2 = compute_base_fingerprint(pred, owner_model="gemma")
+    assert fp1 != fp2, "owner_model must affect digest"
+
+
+def test_fingerprint_prompt_version_sensitive():
+    """Changing prompt_version changes digest."""
+    pred = [("c1", "x")]
+    fp1 = compute_base_fingerprint(pred, prompt_version="v3")
+    fp2 = compute_base_fingerprint(pred, prompt_version="v4")
+    assert fp1 != fp2, "prompt_version must affect digest"
+
+
+def test_fingerprint_backcompat_default():
+    """Calling with defaults only (no model/prompt_version) is deterministic and stable."""
+    pred = [("c1", "x")]
+    fp1 = compute_base_fingerprint(pred)
+    fp2 = compute_base_fingerprint(pred)
+    assert fp1 == fp2
+    assert len(fp1) == 64
