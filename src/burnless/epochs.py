@@ -446,7 +446,7 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         # the V1 NNN.md chain. Without this, capture writes V2 but resume serves
         # V1 — the dense living-doc is written and never read (commit 5492569).
         if os.environ.get("BURNLESS_EPOCH_V2"):
-            from . import epochs_v2, owner_cache
+            from . import epochs_v2, owner_cache, owner_loop
             v2_cand = []
             for chat_dir in epochs_dir.iterdir():
                 if not chat_dir.is_dir():
@@ -473,7 +473,15 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
                     cache_path = str(epochs_dir / "_rolling" / "refined_seed.json")
                     cached = owner_cache.read_valid_refined_seed(cache_path, fp)
                     if cached:
+                        try:
+                            owner_loop.log_owner_event(root, {"phase": "carry_forward", "served": "refined", "cache_hit": True, "fingerprint": fp})
+                        except Exception:
+                            pass
                         return cached
+                    try:
+                        owner_loop.log_owner_event(root, {"phase": "carry_forward", "served": "floor", "cache_hit": False, "fingerprint": fp})
+                    except Exception:
+                        pass
                 except Exception:
                     pass  # Fail-closed: continue to deterministic floor
                 # Slot-merge into ONE consolidated living-doc instead of stacking
