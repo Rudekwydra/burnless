@@ -31,31 +31,79 @@ def validate_owner_output(
     floor_md: str, candidate_md: str, min_core_len: int = 4
 ) -> str:
     """
-    Valida que cada linha do candidato é suportada pelo floor.
-    Se alguma linha não for suportada, retorna floor intacto.
+    Valida linha-a-linha. Mantém linhas suportadas, dropa não-suportadas.
+    Remove headers órfãos. Se resultado <25% conteúdo do floor ou vazio, retorna floor.
     Nunca levanta exceção — em erro, retorna floor.
     """
     try:
-        if not isinstance(floor_md, str) or not isinstance(candidate_md, str):
+        if not isinstance(floor_md, str):
+            return floor_md
+        if not isinstance(candidate_md, str) or not candidate_md.strip():
             return floor_md
 
-        # Constrói blob de suporte (concatenação dos núcleos do floor)
+        # Constrói blob de suporte e conta linhas de conteúdo do floor
         floor_lines = floor_md.split("\n")
         support_blob = " ".join(_normalize_core(line) for line in floor_lines)
+        floor_content_count = sum(
+            1 for line in floor_lines
+            if len(_normalize_core(line)) >= min_core_len
+        )
 
-        # Valida cada linha do candidato
+        # Filtra candidato linha-a-linha
         candidate_lines = candidate_md.split("\n")
+        filtered = []
         for line in candidate_lines:
             core = _normalize_core(line)
-            # Ignora linhas muito curtas (headers, vazias, triviais)
-            if len(core) < min_core_len:
-                continue
-            # Núcleo DEVE estar em support_blob
-            if core not in support_blob:
-                return floor_md  # Falha — retorna floor intacto
+            # Headers, vazias ou suportadas: mantém
+            if core == "" or core in support_blob:
+                filtered.append(line)
+            # Senão: dropa linha
 
-        # Tudo OK — retorna candidato
-        return candidate_md
+        # Agrupa em seções (header + conteúdo) e remove seções sem conteúdo
+        result = []
+        i = 0
+        while i < len(filtered):
+            line = filtered[i]
+            if line.startswith("##"):
+                # Coleta header + seu conteúdo até próximo header
+                section = [line]
+                j = i + 1
+                while j < len(filtered) and not filtered[j].startswith("##"):
+                    section.append(filtered[j])
+                    j += 1
+                # Verifica se seção tem conteúdo
+                has_content = any(
+                    len(_normalize_core(l)) >= min_core_len for l in section
+                )
+                if has_content:
+                    result.extend(section)
+                i = j
+            else:
+                # Não-header fora de seção (antes do primeiro header)
+                result.append(line)
+                i += 1
+
+        # Remove linhas vazias no início/fim
+        while result and not result[0].strip():
+            result.pop(0)
+        while result and not result[-1].strip():
+            result.pop()
+
+        result_md = "\n".join(result)
+
+        # Guarda de degeneração
+        candidate_content_count = sum(
+            1 for line in result
+            if len(_normalize_core(line)) >= min_core_len
+        )
+
+        # Se floor vazio, retorna resultado
+        if floor_content_count == 0:
+            return result_md
+        # Se candidato vazio ou <25% do floor, fallback
+        if candidate_content_count == 0 or candidate_content_count < floor_content_count * 0.25:
+            return floor_md
+
+        return result_md
     except Exception:
-        # Erro interno — fail-closed
         return floor_md
