@@ -679,6 +679,9 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
     Detects (provider, model) from the command parts. If provider has warm
     support (claude/codex), loads the per-model warm pool via the unified
     warm protocol (warm_args + warm_prefix), auto-initializes if missing/expired.
+
+    Validates that the imported warm module's PROVIDER matches the detected
+    provider; silently falls back to COLD if not (defesa contra provider mismatch).
     If provider has no warm support (gemini, ollama), returns (parts, "", None) silently.
 
     Per [[rule-worker-never-fresh-2026-05-24]] + per-model refactor.
@@ -705,33 +708,30 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
         if not _cmode.warm_module:
             return parts, "", None  # structural cold — silent (gemini/ollama)
         _ws = importlib.import_module(_cmode.warm_module)
+
+        # Defesa contra provider mismatch: validar que o módulo importado é do provider correto.
+        # Se PROVIDER constante não bate, cair para COLD silenciosamente.
+        _ws_provider = getattr(_ws, "PROVIDER", None)
+        if _ws_provider is not None and _ws_provider != provider:
+            return parts, "", None
+
         fn = getattr(_ws, "warm_args", None) or getattr(_ws, "fork_args", None)
         extra = fn(burnless_root, model)
         if not extra:
             try:
                 _ws.init(burnless_root, model=model)
                 extra = fn(burnless_root, model)
-            except Exception as _init_e:
-                print(
-                    f"[burnless] WARN: warm pool auto-init failed for "
-                    f"{provider}/{model} ({_init_e}); worker will spawn COLD.",
-                    file=sys.stderr, flush=True,
-                )
+            except Exception:
+                # Warm pool auto-init failed: cair para COLD silenciosamente
+                # (não logar para primeira tentativa não dar output ruim).
                 extra = []
-    except Exception as _ws_e:
-        print(
-            f"[burnless] WARN: warm_session module unavailable ({_ws_e}); "
-            f"worker will spawn COLD.",
-            file=sys.stderr, flush=True,
-        )
+    except Exception:
+        # Warm_session module unavailable: cair para COLD silenciosamente.
         return parts, "", None
     if not extra:
-        print(
-            f"[burnless] WARN: no warm fork args available for {provider}/{model} "
-            f"after init; worker spawning COLD.",
-            file=sys.stderr, flush=True,
-        )
-        return parts, "", None
+        # Sem warm args após init: retornar COLD com parts deduplicadas.
+        return _dedup_valueless_flags(parts), "", None
+
     prefix_fn = getattr(_ws, "warm_prefix", None)
     warm_prefix = prefix_fn(burnless_root, model) if prefix_fn else ""
     # Strip --append-system-prompt <text> pair to keep prefix byte-stable
