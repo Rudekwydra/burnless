@@ -33,12 +33,32 @@ def _token_set(core: str) -> set[str]:
     return {t for t in tokens if len(t) >= 2}
 
 
-def _is_supported_fuzzy(cand_core: str, floor_cores: list[str], threshold: float = 0.6) -> bool:
-    """Check if candidate's token containment in any floor line >= threshold."""
+def _is_supported_fuzzy(cand_core: str, floor_cores: list[str], threshold: float = 0.6, max_new_ratio: float = 0.4) -> bool:
+    """Check if candidate's token containment in any floor line >= threshold.
+
+    Additionally, enforce that new tokens (in candidate but not in any floor line)
+    comprise at most max_new_ratio of the candidate's token count.
+    This blocks substantial invented tails while allowing faithful micro-edits.
+    """
     cand_tokens = _token_set(cand_core)
     if not cand_tokens:
         return True  # Cores with no tokens are supported
 
+    # Union of all tokens across all floor lines
+    floor_union = set()
+    for floor_core in floor_cores:
+        floor_tokens = _token_set(floor_core)
+        floor_union.update(floor_tokens)
+
+    # Calculate new tokens (in candidate but not in any floor line)
+    new_tokens = cand_tokens - floor_union
+    new_ratio = len(new_tokens) / max(1, len(cand_tokens))
+
+    # If too many new tokens, reject immediately
+    if new_ratio > max_new_ratio:
+        return False
+
+    # Check containment threshold against any floor line
     for floor_core in floor_cores:
         floor_tokens = _token_set(floor_core)
         if not floor_tokens:
