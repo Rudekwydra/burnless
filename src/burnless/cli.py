@@ -1277,6 +1277,46 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         print(chain)
         return 0
 
+    elif epoch_cmd == "refine-owner":
+        try:
+            from datetime import datetime, timezone
+            from . import epochs_v2, owner_loop, owner_cache
+
+            result = epochs_mod.build_refine_owner_candidates(root_path, getattr(args, "chat_id", None))
+            if result is None:
+                return 0
+
+            predecessors, floor_md = result
+
+            try:
+                cfg = config_mod.load(paths_mod.paths_for(root_path / ".burnless")["config"])
+                enc = cfg.get("encoder") or {}
+                owner_model = (enc.get("model") or "").strip()
+            except Exception:
+                owner_model = ""
+
+            rewriter = epochs_v2.living_rewriter(root_path)
+            if rewriter is None:
+                return 0
+
+            cache_path = str(root_path / ".burnless" / "epochs" / "_rolling" / "refined_seed.json")
+            generated_at = datetime.now(timezone.utc).isoformat()
+
+            owner_loop.refine_seed(
+                cache_path=cache_path,
+                predecessors=predecessors,
+                floor_md=floor_md,
+                rewriter=rewriter,
+                owner_model=owner_model,
+                generated_at=generated_at,
+                exchange="",
+                prompt_version="v3",
+            )
+
+            return 0
+        except Exception:
+            return 0
+
     return 2
 
 
@@ -1856,6 +1896,8 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="resolve-root")
     esp = epoch_sub.add_parser("resume", parents=[epoch_common], help="emit carry-forward chain")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="resume")
+    esp = epoch_sub.add_parser("refine-owner", parents=[epoch_common], help="async refine owner-loop seed from V2 predecessors")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="refine-owner")
 
     sp = sub.add_parser("doctor", help="healthcheck install/config/wiring/MCP; --fix auto-remediates safe issues")
     sp.add_argument("--json", action="store_true", help="emit machine-readable JSON")
