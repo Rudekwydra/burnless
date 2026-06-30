@@ -507,6 +507,12 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
                             key = entry.strip()
                             if not key or key in bucket:
                                 continue
+                            # DROP placeholder entries (d000: <contrato>, d001: [contrato])
+                            if re.match(r"^d\d+\s*:\s*[<\[]", key):
+                                continue
+                            # CAP Foco atual: keep only the 3 most recent (newest-first)
+                            if section == "Foco atual" and len(merged[section]) >= 3:
+                                continue
                             bucket.add(key)
                             merged[section].append(entry)
 
@@ -702,6 +708,12 @@ def build_refine_owner_candidates(root, current_chat_id=None) -> tuple[list[tupl
                 for entry in entries:
                     key = entry.strip()
                     if not key or key in bucket:
+                        continue
+                    # DROP placeholder entries (d000: <contrato>, d001: [contrato])
+                    if re.match(r"^d\d+\s*:\s*[<\[]", key):
+                        continue
+                    # CAP Foco atual: keep only the 3 most recent (newest-first)
+                    if section == "Foco atual" and len(merged[section]) >= 3:
                         continue
                     bucket.add(key)
                     merged[section].append(entry)
