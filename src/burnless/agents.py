@@ -605,6 +605,29 @@ def _detect_provider_from_parts(parts: list[str]) -> str | None:
     return None
 
 
+def _dedup_valueless_flags(parts: list[str]) -> list[str]:
+    """Remove duplicate valueless flags, preserving first occurrence.
+
+    Deduplicates: --skip-git-repo-check, --ignore-user-config, --ignore-rules, --full-auto.
+    Value-taking flags (--cd, --sandbox, --model, -m) and their values are preserved as-is.
+    """
+    valueless_flags = {"--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--full-auto"}
+    seen_valueless = set()
+    result = []
+    i = 0
+    while i < len(parts):
+        tok = parts[i]
+        if tok in valueless_flags:
+            if tok not in seen_valueless:
+                seen_valueless.add(tok)
+                result.append(tok)
+            i += 1
+        else:
+            result.append(tok)
+            i += 1
+    return result
+
+
 def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str], str, str | None]:
     """Inject warm CLI args and return (parts, warm_prefix, iso_cwd) for a worker command.
 
@@ -683,7 +706,7 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
         iso_cwd = _ws.worker_cwd(burnless_root, model)
     except Exception:
         iso_cwd = None
-    return stripped + list(extra), warm_prefix, iso_cwd
+    return _dedup_valueless_flags(stripped + list(extra)), warm_prefix, iso_cwd
 
 
 def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None) -> dict:
