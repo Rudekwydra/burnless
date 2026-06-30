@@ -1,5 +1,5 @@
 import pytest
-from burnless.owner_validate import validate_owner_output, _normalize_core
+from burnless.owner_validate import validate_owner_output, _normalize_core, _token_set, _is_supported_fuzzy
 
 
 def test_normalize_core_basic():
@@ -107,3 +107,49 @@ def test_empty_candidate_returns_floor():
     floor = "## Decisões\n- fix bug"
     assert validate_owner_output(floor, "") == floor
     assert validate_owner_output(floor, None) == floor
+
+
+def test_token_set_basic():
+    """Token set extracts words of len >= 2."""
+    assert _token_set("alpha beta gamma") == {"alpha", "beta", "gamma"}
+    assert _token_set("alpha a beta") == {"alpha", "beta"}  # "a" excluded
+    assert _token_set("fix-the-parser-bug") == {"fix", "the", "parser", "bug"}
+    assert _token_set("") == set()
+
+
+def test_fuzzy_accepts_faithful_tightening():
+    """Floor line tightened with tags. validate returns CANDIDATE."""
+    floor = "## D\n- Esperando notificacao apos despacho do worker"
+    candidate = "## D\n- [state] Aguardando notificacao apos despacho do worker [chat:a]"
+    result = validate_owner_output(floor, candidate)
+    # Result is different from floor (candidate has [state] tag)
+    assert result.strip() != floor.strip()
+    # Candidate text is present
+    assert "Aguardando" in result
+    # Shared content is present
+    assert "notificacao" in result
+
+
+def test_fuzzy_rejects_invented():
+    """Candidate has 1 invented line among 4 supported ones. Drops invented, keeps supported."""
+    floor = "## D\n- alpha keep\n- beta keep\n- gamma keep\n- delta keep"
+    candidate = "## D\n- alpha keep\n- beta keep\n- gamma keep\n- delta keep\n- ship rocket mars"
+    result = validate_owner_output(floor, candidate)
+    # Should have the 4 supported lines
+    assert "alpha keep" in result
+    assert "beta keep" in result
+    assert "gamma keep" in result
+    assert "delta keep" in result
+    # Should NOT have the invented one
+    assert "ship rocket mars" not in result
+
+
+def test_fuzzy_threshold_blocks_lowoverlap():
+    """Candidate line with <60% token overlap is dropped."""
+    floor = "## D\n- alpha beta gamma delta"
+    candidate = "## D\n- alpha beta gamma delta\n- alpha xyz"
+    result = validate_owner_output(floor, candidate)
+    # Should keep the first line (100% overlap)
+    assert "alpha beta gamma delta" in result
+    # "alpha xyz" has tokens {alpha, xyz}, overlap = 1/2 = 0.5 < 0.6, not supported
+    assert "alpha xyz" not in result
