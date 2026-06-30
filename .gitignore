@@ -106,3 +106,8 @@ bench/results/2026*.json
 
 # macOS
 .DS_Store
+
+# Local audit/session reports (not for public repo)
+AUDIT_*.md
+GPT_AUDIT_REPORT.md
+GPT_REAUDIT_REPORT.md
