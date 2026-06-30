@@ -26,6 +26,38 @@ Every Burnless session has three configurable components:
 The Maestro never sees raw text — only capsules. Workers never see conversation
 history — only the specific task capsule they receive.
 
+## The economy: separating verbose, execution, and thinking
+
+The base economy of Burnless is not compression — it is **separating three
+intents that a single LLM turn conflates**:
+
+- **Verbose** — narration, explanation, justification written for the human.
+- **Execution** — the actual action (tool call, edit, command, artifact).
+- **Thinking** — reasoning needed to produce the action.
+
+Conflated in one turn, verbose and thinking become **dead weight**: they are
+re-sent as input on every subsequent turn, which is the O(N²) blow-up. The win
+comes from keeping each intent on its own surface:
+
+- **Thinking is one-shot** — consumed in the turn that produces the action,
+  never carried forward as context. Reasoning is leverage at the moment of the
+  decision, dead weight the moment after.
+- **Execution returns a compact capsule**, not its own transcript — the capsule
+  is what the next turn sees.
+- **Verbose is routed to the human surface**, not into the model's working
+  context. The human reads it; the model never re-ingests it.
+
+This is why the Maestro sees only capsules and workers see only their task: the
+architecture *enforces* the separation rather than hoping the model self-limits.
+
+> **Evolution note.** Mechanically compacting verbose *after the fact* (a
+> context-GC / input-collapse pass) was an earlier attempt at this same goal —
+> separating the intents downstream. It was superseded: input to the model is
+> already cache-cheap (cache reads ~0.1×), so compacting it is marginal, and
+> rewriting the prefix fights the cache. The correct lever is separating the
+> intents **at the source**, not compressing them after they have already been
+> conflated.
+
 ## Privacy Levels
 
 Privacy is a consequence of where each component runs, not a mode flag.

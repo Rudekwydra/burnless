@@ -458,20 +458,90 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
                     v2_cand.append((lp.stat().st_mtime, chat_dir.name, lp))
             if v2_cand:
                 v2_cand.sort(key=lambda c: c[0], reverse=True)
-                out = ["> ordem: documento vivo (living-doc v2), mais NOVO primeiro\n\n"]
-                seen = set()
-                total = 0
+                # Slot-merge into ONE consolidated living-doc instead of stacking
+                # N whole docs newest-first. The old stack buried the live thread
+                # 4th in the pile and made the new session inherit the freshest
+                # checkpoint's indecision (each doc carried its own `## Foco
+                # atual`, `## Decisões`, ...). We keep the SAME chains/ranking/cap
+                # (anti-orphan merge of all recent chains stays) and only change
+                # the OUTPUT FORMAT: parse each predecessor living-doc into V3
+                # slots and fuse PER SLOT — one `## Foco atual`, one `## Decisões`,
+                # ... with newest-chain entries first inside each slot, exact-line
+                # deduped. Mechanical/deterministic, zero-LLM (10s hook path).
+                merged = {section: [] for section in epochs_v2.SECTIONS_V3}
+                extra_order = []
+                seen_lines = {}
+                seen_docs = set()
+                source_names = []  # provenance: predecessor chat-ids actually merged, newest-first
                 for _, name, lp in v2_cand:
                     body = lp.read_text(encoding='utf-8').strip()
-                    if body in seen:
+                    if not body or body in seen_docs:
                         continue
-                    seen.add(body)
-                    block = f"# living:{name[:8]}\n{body}\n\n"
-                    if total > 0 and total + len(block) > CARRY_FORWARD_CAP:
+                    seen_docs.add(body)
+                    source_names.append(name)
+                    parsed = epochs_v2.parse_living_v3(body)
+                    for section, entries in parsed.items():
+                        if section not in merged:
+                            merged[section] = []
+                            extra_order.append(section)
+                        bucket = seen_lines.setdefault(section, set())
+                        for entry in entries:
+                            key = entry.strip()
+                            if not key or key in bucket:
+                                continue
+                            bucket.add(key)
+                            merged[section].append(entry)
+
+                def _render(slots):
+                    # Local rebuild that SUPPRESSES empty sections (defeito 5):
+                    # an empty `## Riscos` wastes budget and signals empty-schema
+                    # as state. Local only — never mutate epochs_v2._rebuild_md_v3
+                    # (other callers rely on the always-8-headers contract).
+                    lines = []
+                    for section in list(epochs_v2.SECTIONS_V3) + list(extra_order):
+                        entries = slots.get(section, [])
+                        if not entries:
+                            continue
+                        lines.append(f'## {section}')
+                        for body_line in entries:
+                            lines.append(body_line if body_line.startswith('- ') else f'- {body_line}')
+                        lines.append('')
+                    return '\n'.join(lines)
+
+                # Cap newest-first per slot-entry: trim OLDEST entries (slot tail)
+                # from least-critical sections first, preserving the clear-resume
+                # top-truncation guarantee. Align with enforce_budget_v3
+                # (epochs_v2.py): trim ONLY Decisões, Refs, Riscos (oldest first),
+                # then extra sections. NEVER trim Foco atual / Threads abertas /
+                # Contracts / Última validação / Recuperáveis (defeito 2). Entries
+                # are appended newest-chain-first, so pop() removes the oldest.
+                trim_order = ['Decisões', 'Refs', 'Riscos'] + list(extra_order)
+                while len(_render(merged)) > CARRY_FORWARD_CAP:
+                    removed = False
+                    for sec in trim_order:
+                        if merged.get(sec):
+                            merged[sec].pop()
+                            removed = True
+                            break
+                    if not removed:
                         break
-                    out.append(block)
-                    total += len(block)
+
+                consolidated = _render(merged)
+
+                # Provenance footer (defeito 3): keep a pointer to the recoverable
+                # raw predecessor docs without re-stacking them. One compact line
+                # of chat-ids, newest-first.
+                sources_block = ""
+                if source_names:
+                    src_ids = ", ".join(n[:8] for n in source_names)
+                    sources_block = f"\n## Sources\n- {src_ids}\n"
+
+                header = "> ordem: documento vivo (living-doc v2) consolidado por slot — entradas mais NOVAS primeiro em cada secao\n\n"
+
+                # Reconcile post-checkpoint commits.
                 recon = _commits_since_mtime(root, v2_cand[0][0])
+                core = consolidated
+                recon_block = ""
                 if recon:
                     mode = "raw"
                     try:
@@ -481,14 +551,27 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
                     except Exception:
                         mode = "raw"
                     folded = None
-                    if mode == "semantic" and len(out) >= 2:
-                        base_body = v2_cand[0][2].read_text(encoding="utf-8").strip()
-                        folded = _semantic_recon(root, base_body, recon)
-                    if folded and len(out) >= 2:
-                        out[1] = f"# living:reconciled\n{folded}\n\n"
+                    if mode == "semantic":
+                        # Feed recon the CONSOLIDATED doc, not v2_cand[0] raw
+                        # (defeito 1): otherwise the multi-chain consolidation is
+                        # discarded and the anti-orphan merge is defeated.
+                        folded = _semantic_recon(root, consolidated, recon)
+                    if folded:
+                        core = f"# living:reconciled\n{folded}"
                     else:
-                        out.append(recon)
-                return "".join(out)
+                        recon_block = recon
+
+                # Apply CARRY_FORWARD_CAP to the FINAL payload (defeito 4): the
+                # consolidated doc + provenance has priority and is never trimmed
+                # here; only the appended recon block absorbs the overflow.
+                fixed = header + core + "\n\n" + sources_block
+                if recon_block:
+                    budget_left = CARRY_FORWARD_CAP - len(fixed)
+                    if budget_left <= 0:
+                        recon_block = ""
+                    elif len(recon_block) > budget_left:
+                        recon_block = recon_block[:budget_left]
+                return fixed + recon_block
             # no living docs yet -> fall through to V1 chain (backward compat)
 
         # Merge ALL recent predecessor chains, newest-first, deduped, capped.
