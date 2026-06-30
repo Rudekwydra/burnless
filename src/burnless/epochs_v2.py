@@ -296,6 +296,9 @@ def parse_living_v3(md: str) -> dict[str, list[str]]:
     Accepts a 5-section V2 doc too: the 3 new sections come back empty.
     Unknown ``## X`` headers outside the 8 are still captured as extra keys,
     mirroring parse_living's dynamic behavior.
+
+    Code blocks (lines between ``` markers) are treated as atomic multi-line entries.
+    Empty entries and orphan fences are discarded.
     """
     result = {section: [] for section in SECTIONS_V3}
     if not md.strip():
@@ -308,8 +311,8 @@ def parse_living_v3(md: str) -> dict[str, list[str]]:
     for line in lines:
         if line.startswith('## '):
             if current_section and current_body:
-                body_lines = [l.strip() for l in current_body if l.strip()]
-                result[current_section] = [l.lstrip('- ').strip() if l.lstrip().startswith('- ') else l for l in body_lines]
+                entries = _parse_section_entries(current_body)
+                result[current_section] = entries
             current_section = line[3:].strip()
             current_body = []
         else:
@@ -317,23 +320,74 @@ def parse_living_v3(md: str) -> dict[str, list[str]]:
                 current_body.append(line)
 
     if current_section and current_body:
-        body_lines = [l.strip() for l in current_body if l.strip()]
-        result[current_section] = [l.lstrip('- ').strip() if l.lstrip().startswith('- ') else l for l in body_lines]
+        entries = _parse_section_entries(current_body)
+        result[current_section] = entries
 
     return result
 
 
-def _rebuild_md_v3(parsed: dict[str, list[str]]) -> str:
-    lines = []
-    for section in SECTIONS_V3:
-        lines.append(f'## {section}')
-        for body_line in parsed.get(section, []):
-            if not body_line.startswith('- '):
-                lines.append(f'- {body_line}')
+def _parse_section_entries(body_lines: list[str]) -> list[str]:
+    """Parse section body into entries, grouping code blocks into atomic units.
+
+    - Lines outside code blocks: one entry per non-empty line (strip, lstrip '- ')
+    - Code blocks (``` ... ```): one entry per complete block (multi-line, verbatim)
+    - Discard empty entries and orphan fences
+    """
+    entries = []
+    i = 0
+
+    while i < len(body_lines):
+        line = body_lines[i]
+        stripped = line.strip()
+
+        if not stripped:
+            i += 1
+            continue
+
+        if stripped == '```':
+            fence_start = i
+            i += 1
+            fence_found = False
+
+            while i < len(body_lines):
+                if body_lines[i].strip() == '```':
+                    fence_found = True
+                    i += 1
+                    break
+                i += 1
+
+            if fence_found:
+                block_lines = body_lines[fence_start:i]
+                block_text = '\n'.join(block_lines)
+                entries.append(block_text)
+        else:
+            if line.lstrip().startswith('- '):
+                entry = line.lstrip('- ').strip()
             else:
-                lines.append(body_line)
-        lines.append('')
-    return '\n'.join(lines)
+                entry = line.strip()
+
+            if entry:
+                entries.append(entry)
+
+            i += 1
+
+    return entries
+
+
+def _rebuild_md_v3(parsed: dict[str, list[str]]) -> str:
+    result_lines = []
+    for section in SECTIONS_V3:
+        result_lines.append(f'## {section}')
+        for entry in parsed.get(section, []):
+            if '\n' in entry:
+                result_lines.append(entry)
+            else:
+                if not entry.startswith('- '):
+                    result_lines.append(f'- {entry}')
+                else:
+                    result_lines.append(entry)
+        result_lines.append('')
+    return '\n'.join(result_lines)
 
 
 def living_rewrite_prompt_v3(prev_md: str, exchange: str, budget_tokens: int = 2500) -> str:
