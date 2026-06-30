@@ -421,6 +421,11 @@ Sem pensamento/debate/markdown extra — apenas as 8 seções.
 - Slot-routing: roteie cada fato pela SEMÂNTICA — tarefa ainda aberta → 'Threads abertas'; decisão fechada → 'Decisões'; comando/teste verificado → 'Última validação'. Não deixe tarefa aberta cair só em 'Decisões'.
 - Evidence-retrieval: 'Recuperáveis' guarda só dNNN + dica de comando + `chat:CURTO·tN`, nunca conteúdo cru.
 
+## Regra VERBATIM (crítica)
+- Você é um TRANSDUTOR, não um redator. NUNCA reescreva, parafraseie, resuma ou traduza o texto de uma entrada existente.
+- Para cada entrada que mantiver: copie o TEXTO-NÚCLEO exatamente como está (mesmas palavras), e só (a) mova-a para a seção semanticamente correta, (b) prefixe a faixa `[doctrine]/[state]/[inflight]`, (c) anexe provenance `[chat:ID·tN]` ou marque supersede. O núcleo entre as decorações deve ser substring exata do original.
+- Pode REMOVER entradas (dedup, superadas, irrelevantes) e REORDENAR. NÃO pode inventar frases novas nem juntar duas entradas numa paráfrase.
+
 ## Documento anterior (vazio se primeira vez)
 ```
 {prev_md if prev_md else '<vazio>'}
