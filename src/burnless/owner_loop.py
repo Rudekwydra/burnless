@@ -13,6 +13,7 @@ def refine_seed(
     owner_model: str,
     generated_at: str,
     exchange: str = "",
+    prompt_version: str = "v3",
 ) -> bool:
     """
     Activate owner-loop: rewrite floor → validate → cache refined seed.
@@ -28,6 +29,7 @@ def refine_seed(
         owner_model: Model identifier (stored in cache).
         generated_at: ISO timestamp (injected by caller, not generated here).
         exchange: Optional context exchange for rewrite prompt.
+        prompt_version: Prompt version tag for fingerprint (default "v3").
 
     Returns:
         True if refined seed written to cache (safe != floor).
@@ -51,7 +53,7 @@ def refine_seed(
             return False
 
         # 5. Write refined seed to cache
-        fp = compute_base_fingerprint(predecessors)
+        fp = compute_base_fingerprint(predecessors, owner_model=owner_model, prompt_version=prompt_version)
         write_refined_seed(cache_path, safe, fp, owner_model, generated_at)
 
         return True

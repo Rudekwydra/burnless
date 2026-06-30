@@ -5,21 +5,26 @@ from tempfile import NamedTemporaryFile
 
 
 def compute_base_fingerprint(
-    predecessors: list[tuple[str, str]], schema_version: str = "v3"
+    predecessors: list[tuple[str, str]], schema_version: str = "v3", owner_model: str = "", prompt_version: str = ""
 ) -> str:
     """
     Compute stable SHA256 fingerprint of predecessors list.
-    
+
     Args:
         predecessors: List of (chat_id, living_doc_text) tuples, newest-first.
         schema_version: Version tag for schema compatibility (default "v3").
-    
+        owner_model: Model identifier used to generate seed (default "").
+        prompt_version: Prompt version tag for schema compatibility (default "").
+
     Returns:
-        Hex digest SHA256 of concatenated: each chat_id + sha256(living_doc_text) + schema_version.
+        Hex digest SHA256 of concatenated: schema_version + owner_model + prompt_version + each (chat_id + sha256(living_doc_text)).
         Order-sensitive; same input order -> same digest byte-for-byte.
+        Changing owner_model or prompt_version changes digest (cache invalidation on model/prompt change).
     """
     h = hashlib.sha256()
     h.update(schema_version.encode())
+    h.update(owner_model.encode())
+    h.update(prompt_version.encode())
     for chat_id, living_doc_text in predecessors:
         h.update(chat_id.encode())
         h.update(hashlib.sha256(living_doc_text.encode()).digest())

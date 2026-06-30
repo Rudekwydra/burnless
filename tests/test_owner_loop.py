@@ -67,8 +67,8 @@ def test_valid_refinement_written(floor_md, predecessors, cache_dir):
     assert result is True
     assert cache_path.exists()
 
-    # Verify cache content matches
-    fp = compute_base_fingerprint(predecessors)
+    # Verify cache content matches (must pass same owner_model and prompt_version as refine_seed)
+    fp = compute_base_fingerprint(predecessors, owner_model="gemma", prompt_version="v3")
     cached_md = read_valid_refined_seed(str(cache_path), fp)
     assert cached_md is not None
     assert "[inflight] decision-1" in cached_md
@@ -195,16 +195,16 @@ def test_written_seed_matches_fingerprint(floor_md, predecessors, cache_dir):
     )
     assert result is True
 
-    # Read with correct fingerprint
-    fp_correct = compute_base_fingerprint(predecessors)
+    # Read with correct fingerprint (must pass same owner_model and prompt_version as refine_seed)
+    fp_correct = compute_base_fingerprint(predecessors, owner_model="gemma", prompt_version="v3")
     cached_md = read_valid_refined_seed(str(cache_path), fp_correct)
     assert cached_md is not None
 
-    # Read with different (stale) fingerprint
+    # Read with different (stale) fingerprint (same model/prompt_version, different predecessors)
     different_predecessors = [
         ("chat-2", "different doc"),
         ("chat-3", "more different"),
     ]
-    fp_different = compute_base_fingerprint(different_predecessors)
+    fp_different = compute_base_fingerprint(different_predecessors, owner_model="gemma", prompt_version="v3")
     cached_md_stale = read_valid_refined_seed(str(cache_path), fp_different)
     assert cached_md_stale is None  # Stale cache ignored

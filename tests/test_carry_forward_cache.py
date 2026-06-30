@@ -87,7 +87,9 @@ def test_valid_cache_is_served(tmp_path, monkeypatch):
         ("chat2", living2_text),
         ("chat1", living1_text),
     ]
-    fp = compute_base_fingerprint(predecessors)
+    # carry_forward_chain computes fingerprint with owner_model (from config, defaults to "")
+    # and prompt_version="v3" (constant). Test fixture has no config, so owner_model=""
+    fp = compute_base_fingerprint(predecessors, owner_model="", prompt_version="v3")
 
     # Write refined seed cache with matching fingerprint and sentinel
     sentinel_seed = "## Foco atual\n- REFINED_SENTINEL\n"

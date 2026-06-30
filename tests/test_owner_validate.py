@@ -153,3 +153,21 @@ def test_fuzzy_threshold_blocks_lowoverlap():
     assert "alpha beta gamma delta" in result
     # "alpha xyz" has tokens {alpha, xyz}, overlap = 1/2 = 0.5 < 0.6, not supported
     assert "alpha xyz" not in result
+
+
+def test_fuzzy_adversarial_nuance():
+    """Candidate drops detail word but maintains high token overlap — passes validation.
+
+    Adversarial case (known edge): floor has 'backup roda diariamente as 3h',
+    candidate has 'backup roda as 3h' (drops 'diariamente'). Token overlap is high
+    (backup, roda, 3h match), so fuzzy check PASSES. This documents the nuance risk:
+    a detail-losing tightening still passes because the core tokens align.
+    Serves as record for future threshold calibration, not a bug."""
+    floor = "## D\n- backup roda diariamente as 3h"
+    candidate = "## D\n- [state] backup roda as 3h"
+    result = validate_owner_output(floor, candidate)
+    # Candidate should be returned (high token overlap passes fuzzy check)
+    assert result.strip() != floor.strip()
+    assert "backup" in result
+    assert "roda" in result
+    assert "3h" in result
