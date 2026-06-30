@@ -629,6 +629,50 @@ def _dedup_valueless_flags(parts: list[str]) -> list[str]:
     return result
 
 
+def _strip_claude_only_flags(flags: list[str]) -> list[str]:
+    """Remove claude-only flags and their values from a flag list.
+
+    Flags with values (--setting-sources, --append-system-prompt, --output-format,
+    --permission-mode, --allowedTools) consume the next token as their value.
+    Valueless flags are removed without consuming additional tokens.
+
+    Returns filtered list with claude-only flags and their values removed.
+    """
+    _CLAUDE_ONLY_FLAGS = {
+        "--no-session-persistence",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--exclude-dynamic-system-prompt-sections",
+        "--setting-sources",
+        "--append-system-prompt",
+        "--output-format",
+        "--include-partial-messages",
+        "--verbose",
+        "--permission-mode",
+        "--allowedTools",
+    }
+    _FLAGS_WITH_VALUE = {
+        "--setting-sources",
+        "--append-system-prompt",
+        "--output-format",
+        "--permission-mode",
+        "--allowedTools",
+    }
+    result = []
+    i = 0
+    while i < len(flags):
+        tok = flags[i]
+        if tok in _CLAUDE_ONLY_FLAGS:
+            if tok in _FLAGS_WITH_VALUE and i + 1 < len(flags):
+                i += 2
+            else:
+                i += 1
+        else:
+            result.append(tok)
+            i += 1
+    return result
+
+
 def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str], str, str | None]:
     """Inject warm CLI args and return (parts, warm_prefix, iso_cwd) for a worker command.
 
@@ -707,7 +751,10 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
         iso_cwd = _ws.worker_cwd(burnless_root, model)
     except Exception:
         iso_cwd = None
-    return _dedup_valueless_flags(stripped + list(extra)), warm_prefix, iso_cwd
+    extra_list = list(extra)
+    if provider == "codex":
+        extra_list = _strip_claude_only_flags(extra_list)
+    return _dedup_valueless_flags(stripped + extra_list), warm_prefix, iso_cwd
 
 
 def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None) -> dict:
