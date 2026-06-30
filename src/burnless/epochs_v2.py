@@ -413,6 +413,14 @@ Sem pensamento/debate/markdown extra — apenas as 8 seções.
 - 'Última validação': último comando/teste/auditoria verificado e seu status (ex: 'pytest -q OK', 'd724 OK').
 - 'Recuperáveis': ids dNNN + dicas de comando para recuperar contexto (NÃO logs crus). Ex: 'd725 — pytest tests/test_epochs_v3.py'.
 
+### Eixos de consolidação
+- Provenance: toda entrada de 'Threads abertas', 'Decisões' e 'Riscos' termina com marcador de origem `[chat:CURTO·tN]` quando a troca trouxer essa info; se não houver, omita o marcador (não invente).
+- Supersede: se a nova troca CONTRADIZ uma decisão existente, NÃO apague — mova a antiga pra 'Recuperáveis' como pointer e registre a nova em 'Decisões'. Recência sozinha NÃO supersede; só contradição explícita.
+- Trust-boundary: prefixe entradas com a faixa `[doctrine]`, `[state]` ou `[inflight]`. `[doctrine]` nunca evapora por idade; `[state]` e `[inflight]` podem evaporar.
+- Deletion: o que sair por idade/irrelevância vira pointer em 'Recuperáveis' (dNNN + dica de comando), nunca é apagado cru — exceto Refs triviais.
+- Slot-routing: roteie cada fato pela SEMÂNTICA — tarefa ainda aberta → 'Threads abertas'; decisão fechada → 'Decisões'; comando/teste verificado → 'Última validação'. Não deixe tarefa aberta cair só em 'Decisões'.
+- Evidence-retrieval: 'Recuperáveis' guarda só dNNN + dica de comando + `chat:CURTO·tN`, nunca conteúdo cru.
+
 ## Documento anterior (vazio se primeira vez)
 ```
 {prev_md if prev_md else '<vazio>'}
