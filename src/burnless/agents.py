@@ -566,6 +566,7 @@ def resolve_command(agent_cfg: dict) -> list[str]:
         raise AgentError(f"agent missing 'command': {agent_cfg}")
     parts = shlex.split(cmd)
     parts = _apply_codex_overrides(parts, agent_cfg)
+    parts = _dedup_valueless_flags(parts)
     return parts
 
 
