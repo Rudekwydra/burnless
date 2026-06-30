@@ -47,6 +47,6 @@ mkdir -p "$ROOT/.burnless/epochs/_rolling"
   tmp="$ROOT/.burnless/epochs/_rolling/.seed.md.tmp.$$"
   echo "$extracted" | "$BB" epoch capture --chat-id "$SID" --root "$ROOT" --emit-chain > "$tmp" 2>/dev/null
   if [[ -s "$tmp" ]]; then mv -f "$tmp" "$ROOT/.burnless/epochs/_rolling/seed.md"; else rm -f "$tmp"; fi
-  "$BB" epoch refine-owner --chat-id "$SID" --root "$ROOT" >/dev/null 2>&1
+  BURNLESS_EPOCH_V2=1 "$BB" epoch refine-owner --chat-id "$SID" --root "$ROOT" >/dev/null 2>&1
 } &
 exit 0

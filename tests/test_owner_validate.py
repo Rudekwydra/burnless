@@ -171,3 +171,38 @@ def test_fuzzy_adversarial_nuance():
     assert "backup" in result
     assert "roda" in result
     assert "3h" in result
+
+
+def test_fuzzy_rejects_invented_tail():
+    """Candidate adds substantial invented tail → line is DROPPED.
+
+    Floor: 'backup roda diariamente as 3h'
+    Candidate: 'backup roda diariamente as 3h via cron job e remover logs temporarios e enviar email'
+
+    The candidate's new tokens (via, cron, job, remover, logs, temporarios, enviar, email) are ~53% of
+    its token set, exceeding the 40% max_new_ratio threshold. Should be DROPPED."""
+    floor = "## D\n- backup roda diariamente as 3h"
+    candidate = "## D\n- backup roda diariamente as 3h via cron job e remover logs temporarios e enviar email"
+    result = validate_owner_output(floor, candidate)
+    # The candidate line should be DROPPED; result should equal floor
+    assert result == floor
+
+
+def test_fuzzy_accepts_micro_edit():
+    """Candidate with faithful micro-edit (tags + synonyms) → line is KEPT.
+
+    Floor: 'Esperando notificacao apos despacho'
+    Candidate: '[state] Aguardando notificacao apos despacho'
+
+    New tokens: {state, aguardando}; floor tokens: {esperando, notificacao, apos, despacho}
+    Intersection (containment): {notificacao, apos, despacho} = 3/5 = 0.6 >= threshold ✓
+    New tokens: 2 out of 5 = 0.4 <= max_new_ratio (0.4) ✓
+    Should be KEPT."""
+    floor = "## D\n- Esperando notificacao apos despacho"
+    candidate = "## D\n- [state] Aguardando notificacao apos despacho"
+    result = validate_owner_output(floor, candidate)
+    # Candidate should be returned (containment passes AND new tokens within budget)
+    assert result.strip() != floor.strip()
+    assert "[state]" in result
+    assert "Aguardando" in result or "aguardando" in result.lower()
+    assert "notificacao" in result
