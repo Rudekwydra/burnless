@@ -27,6 +27,30 @@ def _normalize_core(line: str) -> str:
     return line.strip().lower()
 
 
+def _token_set(core: str) -> set[str]:
+    """Tokenize core into words (split on non-alphanumeric, discard len<2)."""
+    tokens = re.split(r'[^a-z0-9]+', core)
+    return {t for t in tokens if len(t) >= 2}
+
+
+def _is_supported_fuzzy(cand_core: str, floor_cores: list[str], threshold: float = 0.6) -> bool:
+    """Check if candidate's token containment in any floor line >= threshold."""
+    cand_tokens = _token_set(cand_core)
+    if not cand_tokens:
+        return True  # Cores with no tokens are supported
+
+    for floor_core in floor_cores:
+        floor_tokens = _token_set(floor_core)
+        if not floor_tokens:
+            continue  # Skip floor cores with no tokens
+        intersection = cand_tokens & floor_tokens
+        containment = len(intersection) / max(1, len(cand_tokens))
+        if containment >= threshold:
+            return True
+
+    return False
+
+
 def validate_owner_output(
     floor_md: str, candidate_md: str, min_core_len: int = 4
 ) -> str:
@@ -41,9 +65,9 @@ def validate_owner_output(
         if not isinstance(candidate_md, str) or not candidate_md.strip():
             return floor_md
 
-        # Constrói blob de suporte e conta linhas de conteúdo do floor
+        # Constrói lista de suporte e conta linhas de conteúdo do floor
         floor_lines = floor_md.split("\n")
-        support_blob = " ".join(_normalize_core(line) for line in floor_lines)
+        floor_cores = [c for c in (_normalize_core(line) for line in floor_lines) if c]
         floor_content_count = sum(
             1 for line in floor_lines
             if len(_normalize_core(line)) >= min_core_len
@@ -55,7 +79,7 @@ def validate_owner_output(
         for line in candidate_lines:
             core = _normalize_core(line)
             # Headers, vazias ou suportadas: mantém
-            if core == "" or core in support_blob:
+            if core == "" or _is_supported_fuzzy(core, floor_cores):
                 filtered.append(line)
             # Senão: dropa linha
 
