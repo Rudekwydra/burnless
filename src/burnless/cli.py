@@ -1311,6 +1311,7 @@ def cmd_epoch(args: argparse.Namespace) -> int:
                 generated_at=generated_at,
                 exchange="",
                 prompt_version="v3",
+                root=root_path,
             )
 
             return 0

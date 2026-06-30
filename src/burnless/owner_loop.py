@@ -31,6 +31,7 @@ def refine_seed(
     generated_at: str,
     exchange: str = "",
     prompt_version: str = "v3",
+    root=None,
 ) -> bool:
     """
     Activate owner-loop: rewrite floor → validate → cache refined seed.
@@ -47,16 +48,13 @@ def refine_seed(
         generated_at: ISO timestamp (injected by caller, not generated here).
         exchange: Optional context exchange for rewrite prompt.
         prompt_version: Prompt version tag for fingerprint (default "v3").
+        root: Project root for telemetry logging (optional; if None, logging is skipped).
 
     Returns:
         True if refined seed written to cache (safe != floor).
         False if: rewriter failed, returned empty/None, validation collapsed to floor,
                   or safe identical to floor (redundant cache).
     """
-    try:
-        root = Path(cache_path).parent.parent.parent
-    except Exception:
-        root = None
 
     try:
         # 1. Build rewrite prompt
