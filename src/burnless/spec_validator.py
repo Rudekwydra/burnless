@@ -53,6 +53,42 @@ def validate_spec_paths(text: str) -> SpecValidation:
     return SpecValidation(ok=not offending, offending=offending)
 
 
+def autofix_relative_paths(text: str, project_root: Path) -> tuple[str, list[str]]:
+    """Rewrite offending relative project-file paths to their absolute form.
+
+    Uses the same detection as validate_spec_paths, so a path only gets
+    rewritten if it would otherwise have been rejected (an existing absolute
+    echo elsewhere in the spec is left alone, same as before). Returns
+    (fixed_text, rewritten) where `rewritten` lists the relative paths that
+    were replaced, for a non-blocking notice to the caller.
+    """
+    v = validate_spec_paths(text)
+    if not v.offending:
+        return text, []
+    root = str(project_root).rstrip("/")
+    fixed = text
+    for rel in v.offending:
+        pattern = re.compile(r"(?<![\w/.~\-])" + re.escape(rel))
+        fixed = pattern.sub(root + "/" + rel, fixed)
+    return fixed, v.offending
+
+
+def format_autofix_notice(rewritten: list[str], project_root: Path, lang: str = "pt-BR") -> str:
+    root = str(project_root).rstrip("/")
+    bullets = "\n".join(f"    {p}  ->  {root}/{p}" for p in rewritten)
+    if lang.startswith("pt"):
+        return (
+            "\n[AUTOFIX] burnless: caminhos relativos a arquivos de projeto reescritos como absolutos:\n"
+            f"{bullets}\n"
+            "   Override: --allow-relative-paths  ou  validation.require_absolute_paths: false\n"
+        )
+    return (
+        "\n[AUTOFIX] burnless: relative project-file paths rewritten as absolute:\n"
+        f"{bullets}\n"
+        "   Override: --allow-relative-paths  or  validation.require_absolute_paths: false\n"
+    )
+
+
 def verify_block_is_silent_noop(text: str) -> bool:
     """True when a ## Verify section is present but yields no fenced commands,
     so the honest-exit-code gate will silently no-op (footgun)."""

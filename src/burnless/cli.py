@@ -177,8 +177,13 @@ def cmd_delegate(args: argparse.Namespace) -> int:
         sv = spec_validator.validate_spec_paths(text)
         if not sv.ok:
             lang = cfg.get("language", "pt-BR")
-            print(spec_validator.format_rejection(sv, root.parent, lang), file=sys.stderr)
-            return 6
+            fixed_text, rewritten = spec_validator.autofix_relative_paths(text, root.parent)
+            if rewritten and spec_validator.validate_spec_paths(fixed_text).ok:
+                text = fixed_text
+                print(spec_validator.format_autofix_notice(rewritten, root.parent, lang), file=sys.stderr)
+            else:
+                print(spec_validator.format_rejection(sv, root.parent, lang), file=sys.stderr)
+                return 6
 
     from . import spec_validator as _spec_validator
     if _spec_validator.uses_deprecated_validation_heading(text):
