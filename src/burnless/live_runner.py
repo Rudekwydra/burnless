@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .agents import AgentError, resolve_command
+from .agents import AgentError, resolve_command, _dedup_valueless_flags
 from . import liveness as liveness_mod
 
 _OVERFLOW_PATTERNS = (
@@ -394,6 +394,15 @@ def run_with_live_panel(
         if not inserted:
             new_cmd.extend(warm_codex_flags)
         command = new_cmd
+
+    # Dedup valueless flags (--skip-git-repo-check, --ignore-user-config,
+    # --ignore-rules, --full-auto) that can appear twice: once from the base
+    # agent command (config.py's codex template) and again from the codex
+    # warm/iso-cwd args injected above — a bare-list append with no dedup
+    # previously crashed codex CLI with "argument cannot be used multiple
+    # times" (found 2026-07-02 while reviewing an aeomachine architecture
+    # proposal via --gold codex:gpt-5.5).
+    command = _dedup_valueless_flags(command)
 
     with log_path.open("a" if append_log else "w", encoding="utf-8") as log:
         if append_log:
