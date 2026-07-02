@@ -365,16 +365,21 @@ def run_with_live_panel(
     # sections (cwd/env/git/memory) that drift between warm-init and fork and
     # cause cache_miss_reason: system_changed. Idempotent. Keeps prefix
     # byte-stable (CLI flags don't enter the cached system prompt).
-    for _flag in (
-        "--no-session-persistence",
-        "--strict-mcp-config",
-        "--disable-slash-commands",
-        "--exclude-dynamic-system-prompt-sections",
-    ):
-        if _flag not in command:
-            command = list(command) + [_flag]
-    if "--setting-sources" not in command:
-        command = list(command) + ["--setting-sources", "project,local"]
+    # claude-only (agents.py._strip_claude_only_flags lists the same set) —
+    # codex CLI rejects all of these outright, so gate on provider (found
+    # 2026-07-02 alongside the codex warm-flag dedup bug, same root cause:
+    # this block assumed every worker was a claude CLI invocation).
+    if command and command[0] in ("claude", "claude-cli"):
+        for _flag in (
+            "--no-session-persistence",
+            "--strict-mcp-config",
+            "--disable-slash-commands",
+            "--exclude-dynamic-system-prompt-sections",
+        ):
+            if _flag not in command:
+                command = list(command) + [_flag]
+        if "--setting-sources" not in command:
+            command = list(command) + ["--setting-sources", "project,local"]
 
     # Inject --permission-mode bypassPermissions for `claude` workers so
     # tool calls never trigger an interactive approval prompt (stdin is

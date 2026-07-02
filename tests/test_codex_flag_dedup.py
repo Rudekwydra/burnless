@@ -88,3 +88,23 @@ def test_live_runner_dedups_final_command():
     pins the wiring, not just the helper."""
     source = inspect.getsource(live_runner.run_with_live_panel)
     assert "_dedup_valueless_flags(command)" in source
+
+
+def test_live_runner_gates_claude_only_flags_on_provider():
+    """Regression (2026-07-02, found right after the dedup fix above): the
+    'bare-equivalent flags' block unconditionally appended claude-only flags
+    (--no-session-persistence, --strict-mcp-config, --disable-slash-commands,
+    --exclude-dynamic-system-prompt-sections, --setting-sources) to every
+    worker command, codex included. codex CLI rejects all of them
+    ("unexpected argument '--no-session-persistence' found"), so every codex
+    delegation errored even after the flag-dedup fix. These are exactly the
+    flags agents.py._strip_claude_only_flags treats as claude-only — the
+    injection block must gate on provider the same way the
+    --permission-mode injection right below it already does."""
+    source = inspect.getsource(live_runner.run_with_live_panel)
+    no_session_idx = source.index("--no-session-persistence")
+    guard_idx = source.index('command[0] in ("claude", "claude-cli")')
+    assert guard_idx < no_session_idx, (
+        "claude-only flag injection must be gated behind the "
+        "claude/claude-cli provider check, not run unconditionally"
+    )
