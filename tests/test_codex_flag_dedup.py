@@ -1,6 +1,8 @@
 """Tests for valueless flag deduplication in agents._dedup_valueless_flags."""
+import inspect
 import pytest
 from burnless.agents import _dedup_valueless_flags
+from burnless import live_runner
 
 
 def test_dedup_removes_second_skip_git():
@@ -74,3 +76,15 @@ def test_dedup_multiple_valueless_flags():
     assert result.count("--ignore-user-config") == 1
     assert result.count("--full-auto") == 1
     assert result.count("--ignore-rules") == 1
+
+
+def test_live_runner_dedups_final_command():
+    """Regression (2026-07-02): run_with_live_panel appended codex warm/iso-cwd
+    flags (--cd, --skip-git-repo-check, --ignore-user-config, --ignore-rules)
+    onto a base command that already had --skip-git-repo-check, with no dedup
+    call — codex CLI then rejected the duplicate flag and every codex delegation
+    errored. _dedup_valueless_flags existed and was unit-tested, but nothing
+    asserted it actually ran in run_with_live_panel's command pipeline. This
+    pins the wiring, not just the helper."""
+    source = inspect.getsource(live_runner.run_with_live_panel)
+    assert "_dedup_valueless_flags(command)" in source
