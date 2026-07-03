@@ -80,7 +80,7 @@ def _collect(*, home: Path, cwd: Path | None) -> list[Check]:
     checks: list[Check] = []
     _check_a(checks)
     _check_b(checks, cwd=cwd)
-    _check_c(checks, home=home)
+    _check_c(checks, home=home, cwd=cwd)
     _check_d(checks)
     return checks
 
@@ -268,10 +268,11 @@ def _check_b(checks: list[Check], cwd: Path | None = None) -> None:
 
 # ── Band C: Claude Code wiring (C1-C5 auto-fixable, C6 not) ────────────────────
 
-def _check_c(checks: list[Check], home: Path | None = None) -> None:
+def _check_c(checks: list[Check], home: Path | None = None, cwd: Path | None = None) -> None:
     if home is None:
         home = Path.home()
     from .init_claude_code import is_wired
+    from . import paths as paths_mod
 
     def _fix_wire() -> None:
         _wire_hooks(home)
@@ -343,14 +344,82 @@ def _check_c(checks: list[Check], home: Path | None = None) -> None:
                             "run `burnless init --claude-code`",
                             fixer=_fix_wire))
 
-    # C6: sys.executable resolves to python3 (not auto-fixable)
+    # C6: SessionEnd hook wired (clear handoff) → wire
+    if wired["sessionend"]:
+        checks.append(Check("C6", "C", "PASS", "SessionEnd hook wired"))
+    else:
+        checks.append(Check("C6", "C", "FAIL",
+                            "SessionEnd hook not wired",
+                            "run `burnless init --claude-code`",
+                            fixer=_fix_wire))
+
+    # C7: epoch SessionStart restore hook wired → wire
+    if wired["epoch_session"]:
+        checks.append(Check("C7", "C", "PASS", "epoch SessionStart hook wired"))
+    else:
+        checks.append(Check("C7", "C", "FAIL",
+                            "epoch SessionStart hook not wired",
+                            "run `burnless init --claude-code`",
+                            fixer=_fix_wire))
+
+    # C8: recovery watermark / last error visibility
+    project_root = paths_mod.find_root(start=cwd or Path.cwd())
+    if project_root is not None:
+        try:
+            from .pilot import summarize_session_log
+
+            summary = summarize_session_log(project_root)
+            gap = summary.get("watermark_gap")
+            last_error = summary.get("last_error")
+            if last_error:
+                checks.append(Check(
+                    "C8",
+                    "C",
+                    "WARN",
+                    f"recovery last_error: {last_error}",
+                ))
+            elif isinstance(gap, int) and gap > 0:
+                checks.append(Check(
+                    "C8",
+                    "C",
+                    "WARN",
+                    f"recovery watermark gap: {gap}",
+                ))
+            else:
+                checks.append(Check(
+                    "C8",
+                    "C",
+                    "PASS",
+                    f"recovery watermark gap: {gap if gap is not None else 0}",
+                ))
+        except Exception as e:
+            checks.append(Check("C8", "C", "WARN", f"recovery status unavailable: {e}"))
+    else:
+        checks.append(Check("C8", "C", "WARN", "recovery status unavailable: no project root"))
+
+    # C9: hook error log visibility
+    hook_error_log = Path.home() / ".burnless" / "state" / "hook_errors.log"
+    if hook_error_log.exists():
+        try:
+            text = hook_error_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+            last = text[-1] if text else ""
+            if last:
+                checks.append(Check("C9", "C", "WARN", f"hook errors recorded: {last[:180]}"))
+            else:
+                checks.append(Check("C9", "C", "PASS", "hook error log present but empty"))
+        except Exception as e:
+            checks.append(Check("C9", "C", "WARN", f"hook error log unreadable: {e}"))
+    else:
+        checks.append(Check("C9", "C", "PASS", "hook error log absent"))
+
+    # C10: sys.executable resolves to python3 (not auto-fixable)
     exe = sys.executable
     try:
         r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=5)
         ver = (r.stdout or r.stderr).strip()
-        checks.append(Check("C6", "C", "PASS", f"sys.executable: {exe} ({ver})"))
+        checks.append(Check("C10", "C", "PASS", f"sys.executable: {exe} ({ver})"))
     except Exception as e:
-        checks.append(Check("C6", "C", "WARN", f"sys.executable unverifiable: {e}"))
+        checks.append(Check("C10", "C", "WARN", f"sys.executable unverifiable: {e}"))
 
 
 # ── Band D: MCP (only D2 auto-fixable) ────────────────────────────────────────

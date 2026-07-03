@@ -1,105 +1,184 @@
 #!/usr/bin/env bash
 # Burnless Claude Code SessionStart hook.
-# Reads stdin JSON, checks pending_seed.md pointer, emits seed JSON if fresh.
-# FAIL-OPEN on all errors; emits nothing on failure.
+# Startup-only seed injection. Fail-open on all errors.
 set -uo pipefail
 
 INPUT="$(cat)" 2>/dev/null || exit 0
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 POINTER_FILE="$HOME/.burnless/state/pending_seed.md"
+BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 
-# Check pointer, staleness, and emit seed if valid.
-INPUT_JSON="$INPUT" POINTER_FILE="$POINTER_FILE" "$PYTHON_BIN" - <<'PY'
+INPUT_JSON="$INPUT" POINTER_FILE="$POINTER_FILE" BB="$BB" "$PYTHON_BIN" - <<'PY'
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
 
-try:
-    payload = json.loads(os.environ.get("INPUT_JSON", "{}"))
-except json.JSONDecodeError:
-    sys.exit(0)
 
-if str(payload.get("source") or "").strip().lower() == "clear":
-    sys.exit(0)
-
-pointer_file = os.environ.get("POINTER_FILE", "")
-if not pointer_file:
-    sys.exit(0)
-
-p = Path(pointer_file)
-
-# If pointer doesn't exist, emit nothing.
-if not p.exists():
-    sys.exit(0)
-
-# Check staleness: if mtime > 24h (86400s), remove and exit.
-try:
-    mtime = os.path.getmtime(str(p))
-    now = time.time()
-    age_secs = now - mtime
-    if age_secs > 86400:
-        try:
-            p.unlink()
-        except OSError:
-            pass
-        sys.exit(0)
-except (OSError, ValueError):
-    sys.exit(0)
-
-# If pointer exists and is fresh, read content.
-try:
-    raw = p.read_text(encoding="utf-8").strip()
-except OSError:
-    sys.exit(0)
-
-# If empty, emit nothing.
-if not raw:
-    sys.exit(0)
-
-# Parse scope marker from first line.
-lines = raw.split('\n')
-target = None
-MARKER_PREFIX = '<!-- burnless-seed-target: '
-MARKER_SUFFIX = ' -->'
-if lines and lines[0].startswith(MARKER_PREFIX) and lines[0].endswith(MARKER_SUFFIX):
-    target = lines[0][len(MARKER_PREFIX):-len(MARKER_SUFFIX)].strip()
-    content = '\n'.join(lines[1:]).strip()
-else:
-    content = raw
-
-# Scope check: if marker present and cwd doesn't match, leave for correct project.
-cwd = payload.get('cwd', '')
-if target is not None:
-    if cwd != target and not cwd.startswith(target):
-        sys.exit(0)
-
-# If content empty after stripping marker, emit nothing.
-if not content:
-    sys.exit(0)
-
-# Emit seed JSON with prefix, capped at ~4000 chars.
-try:
-    seed_msg = "[BURNLESS SEED] sessao iniciada leve a partir da capsule rolante.\n\n"
-    final_content = seed_msg + content
-
-    # Cap at ~4000 chars.
-    if len(final_content) > 4000:
-        final_content = final_content[:3950] + "\n…[truncated]"
-
-    output = json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": final_content,
-        }
-    }, ensure_ascii=False)
-    print(output)
-    # Consume-once: delete pointer so subsequent sessions don't re-inject.
+def _payload() -> dict:
     try:
-        p.unlink()
-    except OSError:
-        pass
-except Exception:
+        data = json.loads(os.environ.get("INPUT_JSON", "{}"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _burnless_cmd(*args: str) -> list[str]:
+    bb = os.environ.get("BB") or "burnless"
+    return [bb, *args]
+
+
+def _resolve_root(cwd: str, transcript: str | None = None) -> str | None:
+    proc = subprocess.run(
+        _burnless_cmd("epoch", "resolve-root", "--cwd", cwd, "--workspace", os.environ.get("BURNLESS_WORKSPACE_ROOT") or os.environ.get("BURNLESS_WORKSPACE") or f"{Path.home()}/antigravity/burnless", *(("--transcript", transcript) if transcript else ())),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    root = (proc.stdout or "").strip()
+    return root or None
+
+
+def _log_hook_error(root: str, sid: str | None, pid: str | None, source: str, transcript: str | None, label: str, message: str) -> None:
+    if not message.strip():
+        return
+    cmd = _burnless_cmd("epoch", "hook-error", "--root", root, "--hook", label, "--host", "claude")
+    if sid:
+        cmd += ["--host-session-id", sid]
+    if pid:
+        cmd += ["--process-instance-id", pid]
+    if source:
+        cmd += ["--source", source]
+    if transcript:
+        cmd += ["--transcript", transcript]
+    subprocess.run(cmd, input=message, text=True, capture_output=True, check=False)
+
+
+def _log_pilot_event(root: str, sid: str | None, pid: str | None, source: str, cwd: str | None, transcript: str | None) -> None:
+    run_id = os.environ.get("BURNLESS_PILOT_RUN_ID")
+    if not run_id:
+        return
+    payload = {
+        "session_id": sid,
+        "process_instance_id": pid,
+        "source": source,
+        "cwd": cwd,
+        "transcript_path": transcript,
+    }
+    cmd = _burnless_cmd(
+        "pilot-event",
+        "--root",
+        root,
+        "--run-id",
+        run_id,
+        "--event",
+        "session_start",
+        "--host",
+        "claude",
+        "--source",
+        source or "startup",
+    )
+    if sid:
+        cmd += ["--host-session-id", sid]
+    if pid:
+        cmd += ["--process-instance-id", pid]
+    if cwd:
+        cmd += ["--cwd", cwd]
+    if transcript:
+        cmd += ["--transcript", transcript]
+    subprocess.run(cmd, input=json.dumps(payload, ensure_ascii=False), text=True, capture_output=True, check=False)
+
+
+payload = _payload()
+source = str(payload.get("source") or "").strip().lower()
+if source == "clear":
     sys.exit(0)
+
+sid = str(payload.get("session_id") or "").strip() or None
+cwd = str(payload.get("cwd") or "").strip() or None
+pid = str(payload.get("process_instance_id") or "").strip() or None
+transcript = str(payload.get("transcript_path") or "").strip() or None
+
+if not cwd:
+    sys.exit(0)
+
+root = _resolve_root(cwd, transcript)
+if not root:
+    sys.exit(0)
+
+_log_pilot_event(root, sid, pid, source or "startup", cwd, transcript)
+
+pointer_file = Path(os.environ.get("POINTER_FILE", ""))
+if pointer_file.exists():
+    try:
+        mtime = pointer_file.stat().st_mtime
+        if time.time() - mtime > 86400:
+            try:
+                pointer_file.unlink()
+            except OSError:
+                pass
+        else:
+            raw = pointer_file.read_text(encoding="utf-8").strip()
+            if raw:
+                lines = raw.splitlines()
+                target = None
+                marker_prefix = "<!-- burnless-seed-target: "
+                marker_suffix = " -->"
+                if lines and lines[0].startswith(marker_prefix) and lines[0].endswith(marker_suffix):
+                    target = lines[0][len(marker_prefix):-len(marker_suffix)].strip()
+                    content = "\n".join(lines[1:]).strip()
+                else:
+                    content = raw
+                if target is not None:
+                    try:
+                        if not Path(cwd).resolve().is_relative_to(Path(target).resolve()):
+                            sys.exit(0)
+                    except Exception:
+                        if cwd != target:
+                            sys.exit(0)
+                if content:
+                    seed_msg = "[BURNLESS SEED] sessao iniciada leve a partir da capsule rolante.\n\n"
+                    final_content = seed_msg + content
+                    if len(final_content) > 4000:
+                        final_content = final_content[:3950] + "\n…[truncated]"
+                    print(json.dumps({
+                        "hookSpecificOutput": {
+                            "hookEventName": "SessionStart",
+                            "additionalContext": final_content,
+                        }
+                    }, ensure_ascii=False))
+                    try:
+                        pointer_file.unlink()
+                    except OSError:
+                        pass
+                    sys.exit(0)
+    except Exception:
+        pass
+
+if source not in {"", "startup", "direct"}:
+    sys.exit(0)
+
+cmd = _burnless_cmd(
+    "epoch",
+    "restore",
+    "--root",
+    root,
+    "--host",
+    "claude",
+    "--process-instance-id",
+    pid or sid or "",
+    "--new-session-id",
+    sid or "",
+    "--source",
+    "startup",
+    "--budget-tokens",
+    "1200",
+)
+proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+rest = (proc.stdout or "").strip()
+if not rest:
+    sys.exit(0)
+print(rest)
 PY

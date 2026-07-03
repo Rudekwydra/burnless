@@ -68,7 +68,7 @@ def summarize_run_events(root: Path, run_id: str) -> dict:
     last = rows[-1]
     last_event = str(last.get("event") or "")
     active_events = {"turn_start", "prompt_submitted", "input_pending", "assistant_stream", "assistant_delta"}
-    idle_events = {"turn", "turn_end", "session_reset", "stop", "clear", "session_start"}
+    idle_events = {"turn", "turn_end", "session_reset", "stop", "clear", "session_start", "session_end"}
     if last_event in active_events:
         idle = False
         state = "active"
@@ -132,6 +132,11 @@ def summarize_session_log(root: Path) -> dict:
         "checkpoint_chars": last.get("checkpoint_chars"),
         "pending_count": last.get("pending_count"),
         "turns": last.get("turns"),
+        "checkpoint_generation": last.get("checkpoint_generation"),
         "journal_head": last.get("journal_head"),
         "applied_through": last.get("applied_through"),
+        "watermark_gap": last.get("watermark_gap"),
+        "last_error": last.get("last_error"),
+        "claim_mode": last.get("claim_mode"),
+        "truncated": last.get("truncated"),
     }

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from burnless import config
 from burnless.epochs_v2 import apply_capture, _epochs_version
 
@@ -52,6 +54,6 @@ def test_config_defaults_epochs_block():
 
 
 def test_session_template_has_burnless_restore():
-    path = "/Users/roberto/antigravity/burnless/templates/scripts/burnless_epoch_session.sh"
+    path = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "burnless_epoch_session.sh"
     with open(path, encoding="utf-8") as f:
         assert "Burnless restore" in f.read()

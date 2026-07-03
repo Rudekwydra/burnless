@@ -20,6 +20,8 @@ CHECKPOINT_NAME = "checkpoint.json"
 LIVING_MIRROR_NAME = "living.md"
 STATE_MIRROR_NAME = "state.json"
 RING_DIR_NAME = "ring"
+HOOK_ERROR_LOG_NAME = "hook_errors.log"
+COMPACTION_LEASE_NAME = "compact.lease.json"
 
 _RESTORE_PREFIX = "[BURNLESS RESTORE]"
 _IGNORED_RESTORE_MARKERS = (
@@ -31,6 +33,7 @@ _IGNORED_RESTORE_MARKERS = (
 # RM-4C.4: when the host cannot provide a stable process_instance_id, an
 # unclaimed handoff for the same project may still be claimed if fresh enough.
 HANDOFF_CLAIM_TTL_SECONDS = 120
+JOURNAL_RETENTION_RECORDS = 256
 
 
 @contextlib.contextmanager
@@ -116,6 +119,99 @@ def _root_path(root) -> Path:
     if path.name != ".burnless" and (path / ".burnless").exists():
         return path / ".burnless"
     return path
+
+
+def _project_root(root: Path) -> Path:
+    return root.parent if root.name == ".burnless" else root
+
+
+def _state_dir(root: Path) -> Path:
+    return Path.home() / ".burnless" / "state"
+
+
+def _hook_error_log_path(root: Path | None = None) -> Path:
+    # Hook errors are global because hook wiring is global; the path is stable
+    # and does not depend on the project tree.
+    return Path.home() / ".burnless" / "state" / HOOK_ERROR_LOG_NAME
+
+
+def record_hook_error(
+    root,
+    *,
+    hook: str,
+    host: str,
+    host_session_id: str | None = None,
+    process_instance_id: str | None = None,
+    error: str,
+    source: str | None = None,
+    transcript_path: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "schema": 1,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "hook": hook,
+        "host": host,
+        "host_session_id": host_session_id,
+        "process_instance_id": process_instance_id,
+        "source": source,
+        "transcript_path": transcript_path,
+        "error": error,
+    }
+    path = _hook_error_log_path(_root_path(root))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    return payload
+
+
+def _journal_retention_records(root: Path, host: str, host_session_id: str) -> int:
+    try:
+        from . import config as config_mod
+
+        cfg = config_mod.load((_project_root(_root_path(root)) / ".burnless" / "config.yaml"))
+        epochs_cfg = cfg.get("epochs", {}) if isinstance(cfg, dict) else {}
+        raw = epochs_cfg.get("journal_max_records")
+        if raw is None:
+            raw = epochs_cfg.get("journal_retention_records")
+        if raw is None:
+            raw = JOURNAL_RETENTION_RECORDS
+        value = int(raw)
+        return max(1, value)
+    except Exception:
+        return JOURNAL_RETENTION_RECORDS
+
+
+def _prune_journal(root: Path, host: str, host_session_id: str, *, keep_last: int | None = None) -> None:
+    journal_dir = _journal_dir(root, host, host_session_id)
+    files = _iter_json_files(journal_dir)
+    if not files:
+        return
+    if keep_last is None:
+        keep_last = _journal_retention_records(root, host, host_session_id)
+    if keep_last <= 0 or len(files) <= keep_last:
+        return
+    for path in files[:-keep_last]:
+        try:
+            path.unlink()
+        except Exception:
+            pass
+
+
+def _compaction_lease_ttl_seconds(root: Path) -> int:
+    try:
+        from . import config as config_mod
+
+        cfg = config_mod.load((_project_root(root) / ".burnless" / "config.yaml"))
+        encoder_cfg = cfg.get("encoder", {}) if isinstance(cfg, dict) else {}
+        raw = encoder_cfg.get("timeout_s")
+        if raw is not None:
+            return max(60, int(float(raw)) + 30)
+    except Exception:
+        pass
+    return 180
 
 
 def _canonical_session_root(root: Path, host: str, host_session_id: str) -> Path:
@@ -389,6 +485,130 @@ def _find_journal_record(journal_dir: Path, exchange_id: str) -> dict[str, Any] 
     return None
 
 
+def _compaction_lease_path(root_path: Path, host: str, host_session_id: str) -> Path:
+    return _canonical_session_root(root_path, host, host_session_id) / COMPACTION_LEASE_NAME
+
+
+def _load_json_dict(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _lease_expired(payload: dict[str, Any], now: float) -> bool:
+    try:
+        expires_at = float(payload.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        expires_at = 0.0
+    return expires_at > 0 and now >= expires_at
+
+
+def _acquire_compaction_lease(
+    root_path: Path,
+    *,
+    host: str,
+    host_session_id: str,
+    owner: str,
+    ttl_seconds: int,
+) -> dict[str, Any] | None:
+    lease_path = _compaction_lease_path(root_path, host, host_session_id)
+    lease_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = lease_path.with_suffix(".lock")
+    now = time.time()
+    payload = {
+        "schema": 1,
+        "host": host,
+        "host_session_id": host_session_id,
+        "owner": owner,
+        "generation": 0,
+        "applied_through": 0,
+        "journal_head": 0,
+        "claimed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "expires_at": now + max(5, int(ttl_seconds)),
+    }
+    with _exclusive_lock(lock_path):
+        current = _load_json_dict(lease_path)
+        if current and current.get("owner") and not _lease_expired(current, now) and current.get("owner") != owner:
+            return None
+        if current and current.get("owner") == owner and not _lease_expired(current, now):
+            payload.update(current)
+            payload["expires_at"] = now + max(5, int(ttl_seconds))
+        _atomic_json_write(lease_path, payload)
+    return payload
+
+
+def _refresh_compaction_lease(
+    root_path: Path,
+    *,
+    host: str,
+    host_session_id: str,
+    owner: str,
+    ttl_seconds: int,
+) -> bool:
+    lease_path = _compaction_lease_path(root_path, host, host_session_id)
+    lock_path = lease_path.with_suffix(".lock")
+    now = time.time()
+    with _exclusive_lock(lock_path):
+        current = _load_json_dict(lease_path)
+        if not current or current.get("owner") != owner:
+            return False
+        if _lease_expired(current, now):
+            return False
+        current["expires_at"] = now + max(5, int(ttl_seconds))
+        _atomic_json_write(lease_path, current)
+        return True
+
+
+def _release_compaction_lease(
+    root_path: Path,
+    *,
+    host: str,
+    host_session_id: str,
+    owner: str,
+) -> None:
+    lease_path = _compaction_lease_path(root_path, host, host_session_id)
+    lock_path = lease_path.with_suffix(".lock")
+    with _exclusive_lock(lock_path):
+        current = _load_json_dict(lease_path)
+        if current and current.get("owner") == owner:
+            lease_path.unlink(missing_ok=True)
+
+
+def _latest_checkpoint_path(root_path: Path, host: str, host_session_id: str) -> Path | None:
+    for cp in _checkpoint_paths(root_path, host, host_session_id):
+        if cp.exists():
+            return cp
+    return None
+
+
+def _latest_project_checkpoint(root_path: Path, host: str) -> tuple[str, dict[str, Any]] | None:
+    sessions_root = root_path / "epochs" / SESSION_ROOT_NAME / _safe_part(host)
+    if not sessions_root.exists():
+        return None
+    latest: tuple[tuple[str, float], str, dict[str, Any]] | None = None
+    for session_root in sessions_root.iterdir():
+        if not session_root.is_dir():
+            continue
+        checkpoint = _load_json_dict(session_root / CHECKPOINT_NAME)
+        if not checkpoint:
+            continue
+        updated_at = checkpoint.get("updated_at")
+        try:
+            rank = (str(updated_at or ""), float(session_root.stat().st_mtime))
+        except Exception:
+            rank = ("", float(session_root.stat().st_mtime))
+        session_id = str(checkpoint.get("host_session_id") or session_root.name)
+        if latest is None or rank > latest[0]:
+            latest = (rank, session_id, checkpoint)
+    if latest is None:
+        return None
+    return latest[1], latest[2]
+
+
 def journal_append(root, envelope: dict[str, Any]) -> dict[str, Any]:
     root_path = _root_path(root)
     host = str(envelope.get("host") or "claude")
@@ -509,6 +729,7 @@ def write_checkpoint(
     if legacy_root is not None:
         legacy_root.mkdir(parents=True, exist_ok=True)
         _atomic_json_write(legacy_root / CHECKPOINT_NAME, payload)
+    _prune_journal(root_path, host, host_session_id)
     return payload
 
 
@@ -539,100 +760,223 @@ def compact_pending(
 ) -> dict[str, Any]:
     root_path = _root_path(root)
     journal_dir = _journal_dir(root_path, host, host_session_id)
-    checkpoint = read_checkpoint(root_path, host, host_session_id) or {
-        "generation": 0,
-        "living_md": "",
-        "harvested_state": {"contracts": [], "refs": [], "open_threads": []},
-        "applied_through": 0,
-        "journal_head": 0,
-    }
-    records = _read_journal(journal_dir)
-    journal_head = _journal_head(journal_dir)
-    pending = [r for r in records if int(r.get("seq") or 0) > int(checkpoint.get("applied_through") or 0)]
-
-    owner_loop.log_owner_event(
-        root_path,
-        {
-            "phase": "recovery",
-            "event": "compaction_started",
-            "host": host,
-            "host_session_id": host_session_id,
-            "process_instance_id": process_instance_id,
-            "journal_head": journal_head,
-            "applied_through": int(checkpoint.get("applied_through") or 0),
-            "pending": len(pending),
-        },
-    )
-
-    if not pending:
-        return {"status": "noop", "journal_head": journal_head, "applied_through": int(checkpoint.get("applied_through") or 0)}
-
-    prompt = _build_compact_prompt(checkpoint, pending)
-    try:
-        candidate = rewriter(prompt)
-    except Exception as exc:
-        owner_loop.log_owner_event(
-            root_path,
-            {
-                "phase": "recovery",
-                "event": "compaction_failed",
-                "host": host,
-                "host_session_id": host_session_id,
-                "process_instance_id": process_instance_id,
-                "error": str(exc),
-            },
-        )
-        return {"status": "failed", "error": str(exc), "journal_head": journal_head, "applied_through": int(checkpoint.get("applied_through") or 0)}
-
-    if not isinstance(candidate, str) or not candidate.strip():
-        owner_loop.log_owner_event(
-            root_path,
-            {
-                "phase": "recovery",
-                "event": "compaction_failed",
-                "host": host,
-                "host_session_id": host_session_id,
-                "process_instance_id": process_instance_id,
-                "error": "empty output",
-            },
-        )
-        return {"status": "failed", "error": "empty output", "journal_head": journal_head, "applied_through": int(checkpoint.get("applied_through") or 0)}
-
-    harvested_state = {
-        "contracts": [],
-        "refs": [],
-        "open_threads": [],
-    }
-    try:
-        from .epochs_v2 import harvest_state
-
-        harvested_state = harvest_state(candidate)
-    except Exception:
-        pass
-
-    committed = write_checkpoint(
+    lease_owner = f"{host_session_id}:{process_instance_id}:{os.getpid()}"
+    lease_ttl = _compaction_lease_ttl_seconds(root_path)
+    lease = _acquire_compaction_lease(
         root_path,
         host=host,
         host_session_id=host_session_id,
-        process_instance_id=process_instance_id,
-        living_md=candidate.strip(),
-        harvested_state=harvested_state,
-        applied_through=max(int(r.get("seq") or 0) for r in pending),
-        journal_head=journal_head,
+        owner=lease_owner,
+        ttl_seconds=lease_ttl,
     )
-    owner_loop.log_owner_event(
-        root_path,
-        {
-            "phase": "recovery",
-            "event": "checkpoint_committed",
-            "host": host,
-            "host_session_id": host_session_id,
-            "process_instance_id": process_instance_id,
+    if lease is None:
+        owner_loop.log_owner_event(
+            root_path,
+            {
+                "phase": "recovery",
+                "event": "compaction_deferred",
+                "host": host,
+                "host_session_id": host_session_id,
+                "process_instance_id": process_instance_id,
+                "reason": "lease_busy",
+            },
+        )
+        return {"status": "busy", "reason": "lease_busy"}
+
+    try:
+        checkpoint = read_checkpoint(root_path, host, host_session_id) or {
+            "generation": 0,
+            "living_md": "",
+            "harvested_state": {"contracts": [], "refs": [], "open_threads": []},
+            "applied_through": 0,
+            "journal_head": 0,
+        }
+        records = _read_journal(journal_dir)
+        journal_head = _journal_head(journal_dir)
+        pending = [r for r in records if int(r.get("seq") or 0) > int(checkpoint.get("applied_through") or 0)]
+        snapshot_generation = int(checkpoint.get("generation") or 0)
+        snapshot_applied = int(checkpoint.get("applied_through") or 0)
+        snapshot_head = int(journal_head)
+
+        owner_loop.log_owner_event(
+            root_path,
+            {
+                "phase": "recovery",
+                "event": "compaction_started",
+                "host": host,
+                "host_session_id": host_session_id,
+                "process_instance_id": process_instance_id,
+                "lease_owner": lease_owner,
+                "lease_ttl_s": lease_ttl,
+                "generation": snapshot_generation,
+                "applied_through": snapshot_applied,
+                "journal_head": snapshot_head,
+                "pending": len(pending),
+            },
+        )
+
+        if not pending:
+            return {
+                "status": "noop",
+                "journal_head": snapshot_head,
+                "applied_through": snapshot_applied,
+                "generation": snapshot_generation,
+            }
+
+        prompt = _build_compact_prompt(checkpoint, pending)
+        try:
+            candidate = rewriter(prompt)
+        except Exception as exc:
+            owner_loop.log_owner_event(
+                root_path,
+                {
+                    "phase": "recovery",
+                    "event": "compaction_failed",
+                    "host": host,
+                    "host_session_id": host_session_id,
+                    "process_instance_id": process_instance_id,
+                    "lease_owner": lease_owner,
+                    "error": str(exc),
+                },
+            )
+            return {
+                "status": "failed",
+                "error": str(exc),
+                "journal_head": snapshot_head,
+                "applied_through": snapshot_applied,
+                "generation": snapshot_generation,
+            }
+
+        if not isinstance(candidate, str) or not candidate.strip():
+            owner_loop.log_owner_event(
+                root_path,
+                {
+                    "phase": "recovery",
+                    "event": "compaction_failed",
+                    "host": host,
+                    "host_session_id": host_session_id,
+                    "process_instance_id": process_instance_id,
+                    "lease_owner": lease_owner,
+                    "error": "empty output",
+                },
+            )
+            return {
+                "status": "failed",
+                "error": "empty output",
+                "journal_head": snapshot_head,
+                "applied_through": snapshot_applied,
+                "generation": snapshot_generation,
+            }
+
+        if not _refresh_compaction_lease(
+            root_path,
+            host=host,
+            host_session_id=host_session_id,
+            owner=lease_owner,
+            ttl_seconds=lease_ttl,
+        ):
+            owner_loop.log_owner_event(
+                root_path,
+                {
+                    "phase": "recovery",
+                    "event": "compaction_failed",
+                    "host": host,
+                    "host_session_id": host_session_id,
+                    "process_instance_id": process_instance_id,
+                    "lease_owner": lease_owner,
+                    "error": "lease_lost",
+                },
+            )
+            return {
+                "status": "stale",
+                "error": "lease_lost",
+                "journal_head": snapshot_head,
+                "applied_through": snapshot_applied,
+                "generation": snapshot_generation,
+            }
+
+        current_checkpoint = read_checkpoint(root_path, host, host_session_id) or checkpoint
+        current_generation = int(current_checkpoint.get("generation") or 0)
+        current_applied = int(current_checkpoint.get("applied_through") or 0)
+        current_head = _journal_head(journal_dir)
+        if (
+            current_generation != snapshot_generation
+            or current_applied != snapshot_applied
+            or current_head != snapshot_head
+        ):
+            owner_loop.log_owner_event(
+                root_path,
+                {
+                    "phase": "recovery",
+                    "event": "compaction_failed",
+                    "host": host,
+                    "host_session_id": host_session_id,
+                    "process_instance_id": process_instance_id,
+                    "lease_owner": lease_owner,
+                    "error": "stale_snapshot",
+                    "generation": current_generation,
+                    "applied_through": current_applied,
+                    "journal_head": current_head,
+                },
+            )
+            return {
+                "status": "stale",
+                "error": "stale_snapshot",
+                "journal_head": current_head,
+                "applied_through": current_applied,
+                "generation": current_generation,
+            }
+
+        harvested_state = {
+            "contracts": [],
+            "refs": [],
+            "open_threads": [],
+        }
+        try:
+            from .epochs_v2 import harvest_state
+
+            harvested_state = harvest_state(candidate)
+        except Exception:
+            pass
+
+        committed = write_checkpoint(
+            root_path,
+            host=host,
+            host_session_id=host_session_id,
+            process_instance_id=process_instance_id,
+            living_md=candidate.strip(),
+            harvested_state=harvested_state,
+            applied_through=max(int(r.get("seq") or 0) for r in pending),
+            journal_head=snapshot_head,
+        )
+        owner_loop.log_owner_event(
+            root_path,
+            {
+                "phase": "recovery",
+                "event": "checkpoint_committed",
+                "host": host,
+                "host_session_id": host_session_id,
+                "process_instance_id": process_instance_id,
+                "lease_owner": lease_owner,
+                "generation": committed["generation"],
+                "applied_through": committed["applied_through"],
+                "journal_head": committed["journal_head"],
+            },
+        )
+        return {
+            "status": "committed",
+            "checkpoint": committed,
+            "journal_head": snapshot_head,
             "applied_through": committed["applied_through"],
-            "journal_head": committed["journal_head"],
-        },
-    )
-    return {"status": "committed", "checkpoint": committed, "journal_head": journal_head, "applied_through": committed["applied_through"]}
+            "generation": committed["generation"],
+        }
+    finally:
+        _release_compaction_lease(
+            root_path,
+            host=host,
+            host_session_id=host_session_id,
+            owner=lease_owner,
+        )
 
 
 def write_handoff(
@@ -773,30 +1117,37 @@ def render_restore(
     budget_tokens: int = 2000,
 ) -> dict[str, Any] | None:
     root_path = _root_path(root)
-    checkpoint = read_checkpoint(root_path, host, host_session_id) or {
+    checkpoint_session_id = host_session_id
+    checkpoint = read_checkpoint(root_path, host, checkpoint_session_id)
+    if checkpoint is None and source == "startup":
+        latest = _latest_project_checkpoint(root_path, host)
+        if latest is not None:
+            checkpoint_session_id, checkpoint = latest
+    checkpoint = checkpoint or {
         "generation": 0,
         "living_md": "",
         "harvested_state": {"contracts": [], "refs": [], "open_threads": []},
         "applied_through": 0,
         "journal_head": 0,
     }
-    journal_dir = _journal_dir(root_path, host, host_session_id)
+    journal_dir = _journal_dir(root_path, host, checkpoint_session_id)
     records = _read_journal(journal_dir)
     journal_head = _journal_head(journal_dir)
-    pending = [r for r in records if int(r.get("seq") or 0) > int(checkpoint.get("applied_through") or 0)]
+    applied_through = int(checkpoint.get("applied_through") or 0)
+    pending = [r for r in records if int(r.get("seq") or 0) > applied_through]
 
     living_md = checkpoint.get("living_md") or ""
-    if not living_md.strip() and not pending and int(checkpoint.get("applied_through") or 0) <= 0 and journal_head <= 0:
+    if not living_md.strip() and not pending and applied_through <= 0 and journal_head <= 0:
         return None
 
     body_parts = [
         _RESTORE_PREFIX,
         f"host={host}",
-        f"old_sid={host_session_id}",
+        f"old_sid={checkpoint_session_id}",
         f"new_sid={new_session_id}",
         f"process_instance_id={process_instance_id}",
         f"checkpoint_generation={checkpoint.get('generation', 0)}",
-        f"applied_through={checkpoint.get('applied_through', 0)}",
+        f"applied_through={applied_through}",
         f"journal_head={journal_head}",
         f"pending_count={len(pending)}",
     ]
@@ -825,7 +1176,30 @@ def render_restore(
     checkpoint_chars = len(living_md.strip())
     context = "\n".join(body_parts).strip()
     max_chars = max(800, int(budget_tokens) * 4)
-    context = _truncate_text(context, max_chars)
+    selected_checkpoint_path = _latest_checkpoint_path(root_path, host, checkpoint_session_id)
+    if selected_checkpoint_path is None:
+        for cp in _checkpoint_paths(root_path, host, checkpoint_session_id):
+            if cp.exists():
+                selected_checkpoint_path = cp
+                break
+    reference_block = ""
+    if selected_checkpoint_path is not None:
+        reference_block = (
+            "\n\n## Referencia local\n"
+            f"- checkpoint: {selected_checkpoint_path}\n"
+            f"- journal_dir: {journal_dir}\n"
+            f"- journal_head: {journal_head}\n"
+            f"- applied_through: {applied_through}\n"
+        )
+    truncated = False
+    body_budget = max_chars
+    if reference_block:
+        body_budget = max(200, max_chars - len(reference_block))
+    if len(context) > body_budget:
+        context = _truncate_text(context, body_budget)
+        truncated = True
+    if reference_block and truncated:
+        context = context + reference_block if context else reference_block.lstrip("\n")
 
     owner_loop.log_owner_event(
         root_path,
@@ -833,12 +1207,16 @@ def render_restore(
             "phase": "recovery",
             "event": "restore_served",
             "host": host,
-            "host_session_id": host_session_id,
+            "host_session_id": checkpoint_session_id,
             "process_instance_id": process_instance_id,
             "new_session_id": new_session_id,
+            "source": source,
+            "checkpoint_generation": int(checkpoint.get("generation") or 0),
             "journal_head": journal_head,
-            "applied_through": int(checkpoint.get("applied_through") or 0),
+            "applied_through": applied_through,
             "pending": len(pending),
+            "watermark_gap": max(0, journal_head - applied_through),
+            "truncated": truncated,
         },
     )
     return {
@@ -848,13 +1226,17 @@ def render_restore(
         },
         "recovery": {
             "host": host,
-            "old_session": host_session_id,
+            "old_session": checkpoint_session_id,
             "new_session": new_session_id,
             "process_instance_id": process_instance_id,
             "source": source,
+            "checkpoint_generation": int(checkpoint.get("generation") or 0),
             "checkpoint_chars": checkpoint_chars,
             "pending_count": len(pending),
             "journal_head": journal_head,
-            "applied_through": int(checkpoint.get("applied_through") or 0),
+            "applied_through": applied_through,
+            "watermark_gap": max(0, journal_head - applied_through),
+            "truncated": truncated,
+            "reference": str(selected_checkpoint_path) if selected_checkpoint_path else None,
         },
     }

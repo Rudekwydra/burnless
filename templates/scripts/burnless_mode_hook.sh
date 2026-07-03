@@ -12,6 +12,7 @@ set -uo pipefail
 INPUT="$(cat)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 STATE_DIR="$HOME/.burnless/state"
+BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 mkdir -p "$STATE_DIR"
 
 python_hook() {
@@ -53,6 +54,45 @@ def emit(context):
             "additionalContext": context,
         }
     }, ensure_ascii=False))
+
+
+def log_turn_start(session_id, process_instance_id, cwd):
+    run_id = os.environ.get("BURNLESS_PILOT_RUN_ID")
+    if not run_id:
+        return
+    try:
+        import subprocess
+        payload = {
+            "session_id": session_id,
+            "process_instance_id": process_instance_id,
+            "cwd": cwd,
+            "source": "prompt",
+        }
+        root = str(Path(str(cwd)).resolve())
+        subprocess.run(
+            [
+                os.environ.get("BB") or "burnless",
+                "pilot-event",
+                "--root",
+                root,
+                "--run-id",
+                run_id,
+                "--event",
+                "turn_start",
+                "--host",
+                "claude",
+                "--source",
+                "prompt",
+                "--cwd",
+                cwd,
+            ],
+            input=json.dumps(payload, ensure_ascii=False),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except Exception:
+        pass
 
 
 try:
@@ -145,6 +185,8 @@ try:
         )
         raise SystemExit(0)
 
+    log_turn_start(sid, sid, str(project_source))
+
     if os.environ.get("BURNLESS_OFF") == "1":
         raise SystemExit(0)
 
@@ -177,4 +219,4 @@ except Exception:
 PY
 }
 
-python_hook
+BB="$BB" python_hook

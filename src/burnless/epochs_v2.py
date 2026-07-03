@@ -502,7 +502,11 @@ def _epochs_version(root) -> int:
     # Read the project config file DIRECTLY (no DEFAULT_CONFIG merge): a project
     # whose config.yaml carries an epochs.version honors it; a root with no
     # .burnless config falls back to 2 (V2 / backward-compatible capture path).
+    # BURNLESS_EPOCH_V2 remains a temporary compatibility override for older
+    # fixtures and manual testing; it does not need to be present in hooks.
     try:
+        if os.environ.get("BURNLESS_EPOCH_V2"):
+            return 3
         from . import paths
         cfg_path = paths.paths_for(str(Path(root) / ".burnless"))["config"]
         if not Path(cfg_path).exists():

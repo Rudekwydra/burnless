@@ -46,8 +46,21 @@ def render_restore(
                 "context_confidence": "unknown",
                 "phase": "restore",
             },
-    )
+        )
     return payload
+
+
+def _pending_seed_path() -> Path:
+    return Path.home() / ".burnless" / "state" / "pending_seed.md"
+
+
+def _write_pending_seed(target_cwd: Path, restore_context: str) -> None:
+    path = _pending_seed_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    marker = f"<!-- burnless-seed-target: {target_cwd} -->\n"
+    body = restore_context.strip()
+    payload = marker + body + "\n"
+    path.write_text(payload, encoding="utf-8")
 
 
 def prepare_rollover(
@@ -79,6 +92,13 @@ def prepare_rollover(
         source="clear",
         budget_tokens=budget_tokens,
     )
+    if restore and host == "claude":
+        restore_text = restore.get("hookSpecificOutput", {}).get("additionalContext")
+        if isinstance(restore_text, str) and restore_text.strip():
+            try:
+                _write_pending_seed(root.parent if root.name == ".burnless" else root, restore_text)
+            except Exception:
+                pass
     return {
         "status": "ready" if restore else "not_ready",
         "run_state": run_state,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 from typing import Iterable, Optional, Protocol
 import os
@@ -35,6 +36,8 @@ class HostSession:
     host: str
     host_session_id: str | None = None
     process_instance_id: str | None = None
+    cwd: str | None = None
+    transcript_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,8 @@ def build_report(host: str | None = None, *, root: Path | None = None, env_host:
     installation = adapter.detect()
     capabilities = adapter.capabilities()
     session = adapter.locate_session(run_id or "pilot")
+    if root is not None and getattr(session, "cwd", None) is None:
+        session = replace(session, cwd=str(root))
     usage = adapter.context_usage(session)
     run_state = None
     if root is not None and run_id:

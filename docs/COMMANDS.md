@@ -53,9 +53,11 @@ The three layers: **Encoder/Decoder** (compaction) → **Maestro** (routing) →
 
 ## Compression
 - Capsule compression is fixed and faithful (~150 chars/field, ≤12 list items, full paths, dedupe only). No mode knob.
+- The compaction encoder is configured in `.burnless/config.yaml` under `encoder.endpoint`, `encoder.timeout_s`, and `encoder.local_api`; `BURNLESS_LOCAL_API` remains a compatibility override, not the primary switch.
 
 ## Versioning
 Single source of truth: `src/burnless/__init__.py` → `__version__`. `pyproject.toml` reads it dynamically (`[tool.hatch.version]`). Never hardcode a version elsewhere.
+- Rolling-memory format is selected by `.burnless/config.yaml` → `epochs.version` (new projects default to `3`). `BURNLESS_EPOCH_V2` is a compatibility override only.
 
 ## `burnless epoch` — rolling-memory toggle + epoch engine
 
