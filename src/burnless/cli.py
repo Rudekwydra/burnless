@@ -2400,10 +2400,14 @@ def _pilot_select_host_choice(root: Path, requested_host: str | None) -> str:
     if len(available) <= 1:
         return available[0] if available else "auto"
     if not sys.stdin.isatty():
-        raise SystemExit(
-            "burnless pilot: host is 'auto' and both claude/codex are available; "
-            "run with --host claude or --host codex, or rerun in an interactive terminal."
+        chosen = available[0]
+        print(
+            "burnless pilot: non-interactive launch detected; "
+            f"defaulting host -> {chosen}. "
+            "Use --host or set pilot.host to skip the prompt.",
+            file=sys.stderr,
         )
+        return chosen
     chosen = _pilot_prompt_host_choice(available)
     try:
         cfg = config_mod.load(root / "config.yaml")
