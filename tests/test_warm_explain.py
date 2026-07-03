@@ -121,14 +121,21 @@ class TestWarmSessionCodexExplain:
     """Tests for warm_session_codex.explain() function."""
 
     def test_explain_fresh(self, monkeypatch, tmp_path):
-        """Fresh codex cache: age_s=120 (2min) -> age_min=2 < 59 -> ttl_status='fresh'."""
+        """Fresh codex cache: age well under HEARTBEAT_INTERVAL_S -> ttl_status='fresh'.
+
+        Regression guard for the TTL/heartbeat contradiction bug: explain()
+        must derive its thresholds from the real TTL_S/HEARTBEAT_INTERVAL_S
+        constants, not a hardcoded 60-minute expectation that never matched
+        the 5-minute TTL actually enforced by is_alive()/needs_refresh()."""
+        age_s = 10.0
+        assert age_s < wsc.HEARTBEAT_INTERVAL_S, "test fixture must land in the 'fresh' window"
         monkeypatch.setattr(
             wsc, "status",
             lambda *a, **k: {
                 "exists": True,
                 "uuid": "zzzz9999",
                 "alive": True,
-                "age_s": 120.0,
+                "age_s": age_s,
                 "last_cache_ratio": 0.85,
             }
         )
@@ -137,18 +144,21 @@ class TestWarmSessionCodexExplain:
         assert result["provider"] == "codex"
         assert result["uuid_prefix"] == "zzzz9999"
         assert result["model"] == "m"
-        assert result["ttl_remaining_min"] == pytest.approx(58.0, abs=0.2)
+        expected_remaining = (wsc.TTL_S - age_s) / 60.0
+        assert result["ttl_remaining_min"] == pytest.approx(expected_remaining, abs=0.05)
         assert "hot" in result["compaction_caution"]
 
     def test_explain_aging(self, monkeypatch, tmp_path):
-        """Aging codex cache: age_s=3540 (59min) -> ttl_status='aging'."""
+        """Aging codex cache: HEARTBEAT_INTERVAL_S <= age < TTL_S -> ttl_status='aging'."""
+        age_s = (wsc.HEARTBEAT_INTERVAL_S + wsc.TTL_S) / 2.0
+        assert wsc.HEARTBEAT_INTERVAL_S <= age_s < wsc.TTL_S, "test fixture must land in the 'aging' window"
         monkeypatch.setattr(
             wsc, "status",
             lambda *a, **k: {
                 "exists": True,
                 "uuid": "aging_01",
                 "alive": True,
-                "age_s": 3540.0,
+                "age_s": age_s,
             }
         )
         result = wsc.explain(tmp_path, model="test")
@@ -156,14 +166,15 @@ class TestWarmSessionCodexExplain:
         assert "hot" in result["compaction_caution"]
 
     def test_explain_expired_by_age(self, monkeypatch, tmp_path):
-        """Expired codex cache: age_s=3600 (60min) >= ttl -> ttl_status='expired'."""
+        """Expired codex cache: age_s >= TTL_S -> ttl_status='expired'."""
+        age_s = wsc.TTL_S
         monkeypatch.setattr(
             wsc, "status",
             lambda *a, **k: {
                 "exists": True,
                 "uuid": "expired_x",
                 "alive": True,
-                "age_s": 3600.0,
+                "age_s": age_s,
             }
         )
         result = wsc.explain(tmp_path, model="expired")

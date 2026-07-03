@@ -47,6 +47,18 @@ def test_parse_v3_accepts_v2_doc():
     assert parsed["Recuperáveis"] == []
 
 
+def test_parse_v3_ignores_instruction_header_and_vazio():
+    md = (
+        "## Documento completo atualizado\n"
+        "- <vazio>\n"
+        "## Foco atual\n"
+        "- real focus\n"
+    )
+    parsed = e.parse_living_v3(md)
+    assert parsed["Foco atual"] == ["real focus"]
+    assert "Documento completo atualizado" not in parsed
+
+
 def test_rebuild_v3_roundtrip_and_header_order():
     parsed = e.parse_living_v3(_v3_doc())
     md = e._rebuild_md_v3(parsed)

@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import re
 import shlex
 import subprocess
@@ -36,9 +37,17 @@ from .report_kind import (
 )
 from . import init_claude_code as _init_claude_code_mod
 from . import epochs as epochs_mod
+from . import recovery as recovery_mod
 from . import audit_graph
 from . import retrieve as retrieve_mod
 from . import events as events_mod
+from .pilot import discover_hosts as pilot_discover_hosts
+from .pilot import build_report as pilot_build_report
+from .pilot import append_session_log as pilot_append_session_log
+from .pilot import summarize_session_log as pilot_summarize_session_log
+from .pilot import monitor_rollover_loop as pilot_monitor_rollover_loop
+from .pilot import resolve_host_adapter as pilot_resolve_host_adapter
+from .pilot import run_pilot as pilot_run
 from .prompt_context import (_with_runtime_context, _build_cacheable_runtime_prefix, _TELEGRAPHIC_OUTPUT_HINT, _QTP_F_FIXED_SUFFIX)
 
 from .delegation_parse import (
@@ -163,10 +172,14 @@ def _hardcore_blocked(
     return False, decision.natural_tier, "", decision.policy_source
 
 
-def cmd_delegate(args: argparse.Namespace) -> int:
+def cmd_delegate(args: argparse.Namespace, cfg_override: dict | None = None) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
-    cfg = config_mod.load(p["config"])
+    # cfg_override lets cmd_do render the delegation against the EFFECTIVE
+    # (already worker-overridden) config, so the "- **Agent:**" line matches
+    # what will actually run instead of the pre-override tier default
+    # (2026-07-02 audit finding #10).
+    cfg = cfg_override if cfg_override is not None else config_mod.load(p["config"])
     metrics = metrics_mod.load(p["metrics"])
     text = args.text
     tier_override = args.tier
@@ -309,6 +322,7 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
         mode=getattr(args, "mode", None),
         cold_cache=getattr(args, "cold_cache", False),
         verbose=getattr(args, "verbose", False),
+        worker_overrides=getattr(args, "worker_overrides", None),
     ))
 
 
@@ -527,6 +541,32 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         snap = metrics_mod.session_snapshot(p["metrics"], label=snapshot_label)
         print(f"snapshot saved: {snapshot_label} @ {snap['ts']}")
         print(f"  burnless_tokens={snap['burnless_tokens']:,}  encoder={snap['encoder_calls']}  decoder={snap['decoder_calls']}  brain={snap['brain_calls']}")
+        return 0
+
+    if getattr(args, "explain", False):
+        limit = int(getattr(args, "limit", 50) or 50)
+        audit_entries = metrics_mod.read_audit(p["audit"], limit=limit)
+        spend_entries = metrics_mod.read_spend(p["root"] / "spend.jsonl" if "root" in p else root / "spend.jsonl", limit=limit)
+        print("audit.jsonl")
+        print(dashboard.render_audit(audit_entries))
+        print()
+        print("spend.jsonl")
+        if not spend_entries:
+            print("(no spend entries yet)")
+        else:
+            for row in spend_entries:
+                usage = row.get("usage") or {}
+                bits = ", ".join(
+                    f"{k}={int(usage.get(k, 0) or 0)}"
+                    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+                )
+                print(
+                    f"{row.get('ts', '')[:19].replace('T', ' ')}  "
+                    f"{(row.get('tier') or '-'):<8}  "
+                    f"{(row.get('provider') or '-'):<12}  "
+                    f"{(row.get('model') or '-'):<18}  "
+                    f"{bits}"
+                )
         return 0
 
     if getattr(args, "diff", False):
@@ -751,6 +791,37 @@ def cmd_audit(args: argparse.Namespace) -> int:
         if args.session:
             from . import audit_stats
             print(audit_stats.render_summary(audit_stats.summarize(records)))
+            spend_rows = metrics_mod.read_spend(root / "spend.jsonl")
+            if spend_rows:
+                by_tier: dict[str, int] = {}
+                by_provider: dict[str, int] = {}
+                by_model: dict[str, int] = {}
+                for row in spend_rows:
+                    usage = row.get("usage") or {}
+                    total = int(
+                        (usage.get("input_tokens") or 0)
+                        + (usage.get("output_tokens") or 0)
+                        + (usage.get("cache_read_input_tokens") or 0)
+                        + (usage.get("cache_creation_input_tokens") or 0)
+                    )
+                    tier = str(row.get("tier") or "unknown")
+                    provider = str(row.get("provider") or "unknown")
+                    model = str(row.get("model") or "unknown")
+                    by_tier[tier] = by_tier.get(tier, 0) + total
+                    by_provider[provider] = by_provider.get(provider, 0) + total
+                    by_model[model] = by_model.get(model, 0) + total
+                print()
+                print("usage real:")
+                print(f"  entries: {len(spend_rows)}")
+                print("  by tier:")
+                for tier, total in sorted(by_tier.items(), key=lambda kv: -kv[1]):
+                    print(f"    {tier:<12} {total:>12,}")
+                print("  by provider:")
+                for provider, total in sorted(by_provider.items(), key=lambda kv: -kv[1]):
+                    print(f"    {provider:<12} {total:>12,}")
+                print("  by model:")
+                for model, total in sorted(by_model.items(), key=lambda kv: -kv[1]):
+                    print(f"    {model:<18} {total:>12,}")
         output = audit_graph.render(records)
         print(output if output else "no audit records")
     return 0
@@ -812,10 +883,28 @@ def cmd_warm_init(args: argparse.Namespace) -> int:
         print("burnless: no .burnless/ directory found. Run `burnless init` first.", file=sys.stderr)
         return 2
     provider = getattr(args, "provider", "both")
+    generic_model = getattr(args, "model", None)
+    claude_model_arg = getattr(args, "claude_model", None)
+    codex_model_arg = getattr(args, "codex_model", None)
+    # --model applies to a single CLI's model id; with --provider both it
+    # would silently feed the SAME id to claude and codex (e.g. --model
+    # gpt-5.5 tries to init claude with a codex model id, and vice versa
+    # with --model claude-sonnet-4-6). Require the per-provider flags
+    # instead when both pools are being initialized (2026-07-02 audit
+    # finding #11).
+    if provider == "both" and generic_model and not (claude_model_arg or codex_model_arg):
+        print(
+            "burnless: --model is ambiguous with --provider both (it would apply the same "
+            "model id to both claude and codex). Use --claude-model/--codex-model, or run "
+            "--provider claude / --provider codex separately.",
+            file=sys.stderr,
+        )
+        return 2
     results = {}
     if provider in ("claude", "both"):
         from . import warm_session as ws_claude
-        model = getattr(args, "model", None) or config_mod.DEFAULT_PROVIDER_MODELS["claude"]
+        model = claude_model_arg or (generic_model if provider == "claude" else None) \
+            or config_mod.DEFAULT_PROVIDER_MODELS["claude"]
         print(f"burnless warm init [claude]: seeding warm session for {bl_root.parent} (model={model})...")
         try:
             state = ws_claude.init(bl_root, model=model)
@@ -828,7 +917,8 @@ def cmd_warm_init(args: argparse.Namespace) -> int:
             print(f"  claude warm init FAILED: {e}", file=sys.stderr)
     if provider in ("codex", "both"):
         from . import warm_session_codex as ws_codex
-        codex_model = getattr(args, "model", None) or config_mod.DEFAULT_PROVIDER_MODELS["codex"]
+        codex_model = codex_model_arg or (generic_model if provider == "codex" else None) \
+            or config_mod.DEFAULT_PROVIDER_MODELS["codex"]
         print(f"burnless warm init [codex]: seeding warm session for {bl_root.parent} (model={codex_model})...")
         try:
             state = ws_codex.init(bl_root, model=codex_model)
@@ -840,6 +930,43 @@ def cmd_warm_init(args: argparse.Namespace) -> int:
     return 0 if results else 1
 
 
+def _print_warm_status_block(provider: str, status_result: dict) -> None:
+    """Print one provider's `burnless warm status` block.
+
+    status_result is either a single-model status dict (has an 'exists' key
+    directly) or the multi-model shape {model: status_dict} that
+    warm_session[.codex].status(model=None) returns for the per-(provider,
+    model) warm pools. The old code assumed only the single-model shape and
+    checked status_result.get('exists') directly, which is never present on
+    the multi-model dict — so it always printed NOT INITIALIZED even when
+    warm files existed (2026-07-02 audit finding #7). Mirrors
+    cmd_warm_explain(), which already handled both shapes correctly.
+    """
+    if "exists" in status_result:
+        models = {status_result.get("model", "?"): status_result}
+    else:
+        models = status_result
+    any_exists = False
+    for model, s in (models or {}).items():
+        if not isinstance(s, dict) or not s.get("exists"):
+            continue
+        any_exists = True
+        print(f"warm session [{provider}/{model}] for {s.get('project_root')}:")
+        print(f"  uuid:             {s.get('uuid')}")
+        print(f"  alive:            {s.get('alive')}")
+        print(f"  needs_refresh:    {s.get('needs_refresh')}")
+        if "age_minutes" in s:
+            print(f"  age_minutes:      {s.get('age_minutes')}")
+        if "age_s" in s:
+            print(f"  age_s:            {s.get('age_s')}")
+        if "last_cache_ratio" in s:
+            print(f"  last_cache_ratio: {s.get('last_cache_ratio')}")
+        print(f"  created_at:       {s.get('created_at')}")
+        print(f"  last_used:        {s.get('last_used')}")
+    if not any_exists:
+        print(f"warm session [{provider}]: NOT INITIALIZED. Run `burnless warm init --provider {provider}`.")
+
+
 def cmd_warm_status(args: argparse.Namespace) -> int:
     bl_root = _resolve_burnless_root()
     if bl_root is None:
@@ -848,29 +975,10 @@ def cmd_warm_status(args: argparse.Namespace) -> int:
     provider = getattr(args, "provider", "both")
     if provider in ("claude", "both"):
         from . import warm_session as ws
-        s = ws.status(bl_root)
-        if not s.get("exists"):
-            print("warm session [claude]: NOT INITIALIZED. Run `burnless warm init`.")
-        else:
-            print(f"warm session [claude] for {s.get('project_root')}:")
-            print(f"  uuid:           {s.get('uuid')}")
-            print(f"  alive:          {s.get('alive')}")
-            print(f"  needs_refresh:  {s.get('needs_refresh')}")
-            print(f"  age_minutes:    {s.get('age_minutes')}")
-            print(f"  created_at:     {s.get('created_at')}")
-            print(f"  last_used:      {s.get('last_used')}")
+        _print_warm_status_block("claude", ws.status(bl_root))
     if provider in ("codex", "both"):
         from . import warm_session_codex as ws_codex
-        sc = ws_codex.status(bl_root)
-        if not sc.get("exists"):
-            print("warm session [codex]: NOT INITIALIZED. Run `burnless warm init --provider codex`.")
-        else:
-            print(f"warm session [codex] for {sc.get('project_root')}:")
-            print(f"  uuid:             {sc.get('uuid')}")
-            print(f"  alive:            {sc.get('alive')}")
-            print(f"  needs_refresh:    {sc.get('needs_refresh')}")
-            print(f"  age_s:            {sc.get('age_s')}")
-            print(f"  last_cache_ratio: {sc.get('last_cache_ratio')}")
+        _print_warm_status_block("codex", ws_codex.status(bl_root))
     return 0
 
 
@@ -1098,6 +1206,17 @@ def cmd_do(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
 
+    # Per-call worker overrides (--diamond/--gold/--silver/--bronze PROVIDER:MODEL)
+    # are applied IN MEMORY only — never written to .burnless/config.yaml.
+    # (2026-07-02 audit finding #2: the old disk-patch-then-restore-in-finally
+    # approach left the override permanently in the file on crash/SIGKILL,
+    # and raced with any parallel `burnless do`/`run` reading the same file
+    # while the patch was live.)
+    _worker_overrides = _worker_overrides_from_args(args)
+    _effective_cfg = None
+    if _worker_overrides:
+        _effective_cfg = config_mod.apply_worker_overrides(config_mod.load(p["config"]), _worker_overrides)
+
     # Build delegate args (same defaults as `burnless delegate`)
     delegate_args = argparse.Namespace(
         text=args.text,
@@ -1109,7 +1228,9 @@ def cmd_do(args: argparse.Namespace) -> int:
         allow_relative_paths=getattr(args, "allow_relative_paths", False),
         allow_unfenced_verify=getattr(args, "allow_unfenced_verify", False),
     )
-    rc = cmd_delegate(delegate_args)
+    # cfg_override makes the rendered delegation reflect the EFFECTIVE agent
+    # (post-override), not the pre-override tier default (finding #10).
+    rc = cmd_delegate(delegate_args, cfg_override=_effective_cfg)
     if rc != 0:
         return rc
 
@@ -1119,20 +1240,6 @@ def cmd_do(args: argparse.Namespace) -> int:
     if not did:
         print("burnless: delegate did not produce a delegation ID", file=sys.stderr)
         return 1
-
-    _config_patched = False
-    _orig_config_text: str | None = None
-
-    # Per-call worker overrides (--diamond/--gold/--silver/--bronze PROVIDER:MODEL),
-    # temp-patched into the project config and restored in the finally below.
-    _worker_overrides = _worker_overrides_from_args(args)
-    if _worker_overrides:
-        if _orig_config_text is None:
-            _orig_config_text = p["config"].read_text(encoding="utf-8")
-        _cfg_w = config_mod.load(p["config"])
-        _cfg_w = config_mod.apply_worker_overrides(_cfg_w, _worker_overrides)
-        config_mod.save(p["config"], _cfg_w)
-        _config_patched = True
 
     run_args = argparse.Namespace(
         id=did,
@@ -1145,14 +1252,9 @@ def cmd_do(args: argparse.Namespace) -> int:
         no_maestro=False,
         no_cache_worker=False,
         cold_cache=getattr(args, "cold_cache", False),
+        worker_overrides=_worker_overrides or None,
     )
-    try:
-        rc = cmd_run(run_args)
-    finally:
-        if _config_patched and _orig_config_text is not None:
-            p["config"].write_text(_orig_config_text, encoding="utf-8")
-
-    return rc
+    return cmd_run(run_args)
 
 
 def cmd_route(args: argparse.Namespace) -> int:
@@ -1280,6 +1382,132 @@ def cmd_epoch(args: argparse.Namespace) -> int:
             return 0
         chain = epochs_mod.carry_forward_chain(root, getattr(args, "chat_id", None))
         print(chain)
+        return 0
+
+    elif epoch_cmd == "extract-exchange":
+        transcript = getattr(args, "transcript", None)
+        if not transcript:
+            print("")
+            return 0
+        envelope = recovery_mod.extract_exchange(
+            transcript,
+            host=getattr(args, "host", "claude"),
+            host_session_id=getattr(args, "host_session_id", "") or getattr(args, "session_id", ""),
+            process_instance_id=getattr(args, "process_instance_id", "") or getattr(args, "session_id", ""),
+            cwd=getattr(args, "cwd", None),
+            source=getattr(args, "source", None),
+        )
+        print(json.dumps(envelope, ensure_ascii=False))
+        return 0
+
+    elif epoch_cmd == "journal-append":
+        raw = _sys.stdin.read()
+        if not raw.strip():
+            print("")
+            return 0
+        envelope = json.loads(raw)
+        record = recovery_mod.journal_append(getattr(args, "root", None) or root_path, envelope)
+        print(json.dumps(record, ensure_ascii=False))
+        return 0
+
+    elif epoch_cmd == "compact-pending":
+        root = getattr(args, "root", None) or root_path
+        host = getattr(args, "host", "claude")
+        host_session_id = getattr(args, "host_session_id", "") or getattr(args, "session_id", "")
+        process_instance_id = getattr(args, "process_instance_id", "") or host_session_id
+        if not host_session_id:
+            print("")
+            return 0
+        try:
+            rewriter = None
+            if getattr(args, "use_default_rewriter", True):
+                from . import epochs_v2
+                rewriter = epochs_v2.living_rewriter(root)
+            result = recovery_mod.compact_pending(
+                root,
+                host=host,
+                host_session_id=host_session_id,
+                process_instance_id=process_instance_id,
+                rewriter=rewriter or (lambda _prompt: None),
+            )
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
+        except Exception as exc:
+            print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False))
+            return 1
+
+    elif epoch_cmd == "handoff-write":
+        root = getattr(args, "root", None) or root_path
+        host = getattr(args, "host", "claude")
+        host_session_id = getattr(args, "host_session_id", "") or getattr(args, "session_id", "")
+        process_instance_id = getattr(args, "process_instance_id", "") or host_session_id
+        if not host_session_id:
+            return 0
+        payload = recovery_mod.write_handoff(
+            root,
+            host=host,
+            host_session_id=host_session_id,
+            process_instance_id=process_instance_id,
+            claimed_by=getattr(args, "claimed_by", None),
+        )
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    elif epoch_cmd == "handoff-claim":
+        root = getattr(args, "root", None) or root_path
+        host = getattr(args, "host", "claude")
+        process_instance_id = getattr(args, "process_instance_id", "") or getattr(args, "session_id", "")
+        new_session_id = getattr(args, "new_session_id", "") or getattr(args, "session_id", "")
+        if not process_instance_id or not new_session_id:
+            print("")
+            return 0
+        payload = recovery_mod.claim_handoff(
+            root,
+            host=host,
+            process_instance_id=process_instance_id,
+            new_session_id=new_session_id,
+        )
+        if payload is None:
+            print("")
+            return 0
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    elif epoch_cmd == "restore":
+        root = getattr(args, "root", None) or root_path
+        host = getattr(args, "host", "claude")
+        host_session_id = getattr(args, "host_session_id", "") or getattr(args, "session_id", "")
+        process_instance_id = getattr(args, "process_instance_id", "") or host_session_id
+        new_session_id = getattr(args, "new_session_id", "") or getattr(args, "session_id", "")
+        source = getattr(args, "source", "clear")
+        if source == "clear" and (not host_session_id or host_session_id == new_session_id):
+            claimed = recovery_mod.claim_handoff(
+                root,
+                host=host,
+                process_instance_id=process_instance_id,
+                new_session_id=new_session_id,
+            )
+            if claimed is None:
+                print("")
+                return 0
+            host_session_id = str(claimed.get("host_session_id") or host_session_id)
+            process_instance_id = str(claimed.get("process_instance_id") or process_instance_id)
+        if not host_session_id:
+            print("")
+            return 0
+        payload = recovery_mod.render_restore(
+            root,
+            host=host,
+            host_session_id=host_session_id,
+            process_instance_id=process_instance_id,
+            new_session_id=new_session_id,
+            source=source,
+            budget_tokens=int(getattr(args, "budget_tokens", 2000) or 2000),
+        )
+        if payload is None:
+            print("")
+            return 0
+        print(json.dumps(payload, ensure_ascii=False))
         return 0
 
     elif epoch_cmd == "refine-owner":
@@ -1413,8 +1641,7 @@ def cmd_session(args: argparse.Namespace) -> int:
         print("burnless: not initialized in this directory tree. run `burnless init` first.", file=sys.stderr)
         return 1
 
-    epochs_on = (root / "epochs.on").exists()
-    mode = "rolling" if epochs_on else "default"
+    mode = "rolling" if epochs_mod.is_enabled(root) else "default"
 
     deleg = events_mod.read_events(root, event_type="delegation_completed", limit=1)
     last_status = None
@@ -1476,7 +1703,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
 
     active_mode = latest("mode_changed")
     if active_mode is None:
-        active_mode = "rolling" if (root / "epochs.on").exists() else "default"
+        active_mode = "rolling" if epochs_mod.is_enabled(root) else "default"
 
     sections = {
         "active_mode": active_mode,
@@ -1616,6 +1843,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="show delta between the two most recent snapshots",
     )
+    sp.add_argument(
+        "--explain",
+        action="store_true",
+        help="show line-by-line metrics provenance from audit.jsonl and spend.jsonl",
+    )
+    sp.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="max rows to show for --explain",
+    )
     sp.add_argument("--global", dest="global_view", action="store_true",
                     help="Aggregate metrics across all projects from ~/.burnless/global_metrics.jsonl")
     sp.add_argument("--since", default=None,
@@ -1747,7 +1985,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=lambda args, parser=sp: parser.print_help() or 0)
     warm_sub = sp.add_subparsers(dest="warm_cmd")
     wsp = warm_sub.add_parser("init", help="create a warm session for this project and seed W0")
-    wsp.add_argument("--model", default=None, help="model for warm session (default: claude-sonnet-4-6)")
+    wsp.add_argument("--model", default=None,
+                     help="model for warm session; only valid with --provider claude or --provider codex "
+                          "(default: claude-sonnet-4-6 / codex's own default). With --provider both, use "
+                          "--claude-model/--codex-model instead — a single --model would apply the SAME "
+                          "model id to both CLIs, which is almost never correct.")
+    wsp.add_argument("--claude-model", default=None, help="model for the claude warm pool (with --provider both)")
+    wsp.add_argument("--codex-model", default=None, help="model for the codex warm pool (with --provider both)")
     wsp.add_argument("--provider", choices=["claude", "codex", "both"], default="both",
                      help="Which warm pool to operate on (default: both)")
     wsp.set_defaults(func=cmd_warm_init)
@@ -1847,6 +2091,29 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_do)
 
     sp = sub.add_parser(
+        "pilot",
+        help="spawn the host CLI through a transparent PTY relay (claude/codex)",
+    )
+    sp.add_argument("--doctor", action="store_true", help="show host probe and exit")
+    sp.add_argument("--report", action="store_true", help="show resolved pilot config and host probe")
+    sp.add_argument("--auto-rollover", action="store_true", help="enable event-driven rollover monitor")
+    sp.add_argument("--host", choices=["auto", "claude", "codex"], default="auto", help="host CLI to launch")
+    sp.add_argument("--model", default=None, help="optional model override forwarded to the host")
+    sp.add_argument("--run-id", default=None, dest="run_id", help="optional lineage id")
+    sp.add_argument("extra_args", nargs=argparse.REMAINDER, help="extra args forwarded verbatim")
+    sp.set_defaults(func=cmd_pilot, pilot_cmd="run")
+
+    sp = sub.add_parser("pty", help="alias for pilot")
+    sp.add_argument("--doctor", action="store_true", help="show host probe and exit")
+    sp.add_argument("--report", action="store_true", help="show resolved pilot config and host probe")
+    sp.add_argument("--auto-rollover", action="store_true", help="enable event-driven rollover monitor")
+    sp.add_argument("--host", choices=["auto", "claude", "codex"], default="auto", help="host CLI to launch")
+    sp.add_argument("--model", default=None, help="optional model override forwarded to the host")
+    sp.add_argument("--run-id", default=None, dest="run_id", help="optional lineage id")
+    sp.add_argument("extra_args", nargs=argparse.REMAINDER, help="extra args forwarded verbatim")
+    sp.set_defaults(func=cmd_pilot, pilot_cmd="run")
+
+    sp = sub.add_parser(
         "cmd",
         help="Run shell command; capsule output via Haiku if > threshold (brain-side capsule layer)",
     )
@@ -1883,6 +2150,17 @@ def build_parser() -> argparse.ArgumentParser:
     epoch_common.add_argument("--cwd", default=None, help="working directory for root resolution")
     epoch_common.add_argument("--workspace", default=None, help="workspace root for project detection")
     epoch_common.add_argument("--transcript", default=None, help="transcript file path for project detection")
+    epoch_core = argparse.ArgumentParser(add_help=False)
+    epoch_core.add_argument("--root", default=None, help="burnless root (.burnless)")
+    epoch_core.add_argument("--transcript", default=None, help="transcript file path (extract-exchange)")
+    epoch_core.add_argument("--cwd", default=None, help="working directory recorded in the envelope")
+    epoch_core.add_argument("--host", default="claude", help="host name for recovery paths")
+    epoch_core.add_argument("--host-session-id", default=None, dest="host_session_id", help="host session id")
+    epoch_core.add_argument("--process-instance-id", default=None, dest="process_instance_id", help="stable process/window instance id")
+    epoch_core.add_argument("--session-id", default=None, dest="session_id", help="compat alias for host/session ids")
+    epoch_core.add_argument("--source", default=None, help="hook source (startup|clear|resume|...)")
+    epoch_core.add_argument("--new-session-id", default=None, dest="new_session_id", help="new session id for clear handoff restore")
+    epoch_core.add_argument("--budget-tokens", default=2000, dest="budget_tokens", type=int, help="restore budget in tokens")
     epoch_sub = sp.add_subparsers(dest="epoch_cmd", required=True)
     esp = epoch_sub.add_parser("capture", parents=[epoch_common], help="read STDIN, summarize, append, consolidate")
     esp.add_argument("--emit-chain", action="store_true", dest="emit_chain", default=False,
@@ -1902,6 +2180,20 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="resolve-root")
     esp = epoch_sub.add_parser("resume", parents=[epoch_common], help="emit carry-forward chain")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="resume")
+    esp = epoch_sub.add_parser("extract-exchange", parents=[epoch_core], help="extract the last exchange from a transcript")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="extract-exchange")
+    esp = epoch_sub.add_parser("journal-append", parents=[epoch_core], help="append a structured exchange record to the journal")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="journal-append")
+    esp = epoch_sub.add_parser("compact-pending", parents=[epoch_core], help="compact journal entries into a checkpoint")
+    esp.add_argument("--use-default-rewriter", action="store_true", dest="use_default_rewriter", default=True)
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="compact-pending")
+    esp = epoch_sub.add_parser("handoff-write", parents=[epoch_core], help="write a clear handoff record")
+    esp.add_argument("--claimed-by", default=None, dest="claimed_by", help="pre-claim by session id, when applicable")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-write")
+    esp = epoch_sub.add_parser("handoff-claim", parents=[epoch_core], help="claim the freshest clear handoff")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-claim")
+    esp = epoch_sub.add_parser("restore", parents=[epoch_core], help="render checkpoint + pending delta for SessionStart")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="restore")
     esp = epoch_sub.add_parser("refine-owner", parents=[epoch_common], help="async refine owner-loop seed from V2 predecessors")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="refine-owner")
 
@@ -1922,6 +2214,334 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print(doctor_mod.render_human(checks))
     return doctor_mod.exit_code(checks)
+
+
+def _pilot_next_session_id(run_id: str, rollover_index: int) -> str:
+    if rollover_index <= 1:
+        return f"{run_id}-fresh"
+    return f"{run_id}-fresh-{rollover_index}"
+
+
+def _pilot_yesno(value: object) -> str:
+    return "yes" if bool(value) else "no"
+
+
+def _pilot_available_hosts() -> list[str]:
+    return [inst.name for inst in pilot_discover_hosts() if inst.available]
+
+
+def _pilot_normalize_host_choice(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = str(value).strip()
+    return None if not value or value == "auto" else value
+
+
+def _pilot_prompt_host_choice(choices: list[str]) -> str:
+    labels = ", ".join(f"{idx + 1}) {name}" for idx, name in enumerate(choices))
+    while True:
+        raw = input(f"burnless pilot: choose host [{labels}]: ").strip()
+        if raw.isdigit():
+            idx = int(raw) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]
+        normalized = raw.lower()
+        for name in choices:
+            if normalized == name:
+                return name
+        print(f"burnless pilot: invalid choice {raw!r}; pick one of {labels}", file=sys.stderr)
+
+
+def _pilot_select_host_choice(root: Path, requested_host: str | None) -> str:
+    if requested_host and requested_host != "auto":
+        return requested_host
+    available = _pilot_available_hosts()
+    if len(available) <= 1:
+        return available[0] if available else "auto"
+    if not sys.stdin.isatty():
+        raise SystemExit(
+            "burnless pilot: host is 'auto' and both claude/codex are available; "
+            "run with --host claude or --host codex, or rerun in an interactive terminal."
+        )
+    chosen = _pilot_prompt_host_choice(available)
+    try:
+        cfg = config_mod.load(root / "config.yaml")
+        if isinstance(cfg, dict):
+            pilot_cfg = cfg.setdefault("pilot", {})
+            pilot_cfg["host"] = chosen
+            config_mod.save(root / "config.yaml", cfg)
+    except Exception:
+        pass
+    print(f"burnless pilot: host selected -> {chosen}")
+    return chosen
+
+
+def _run_pilot_cycle(
+    *,
+    project_root: Path,
+    adapter,
+    model: str | None,
+    extra_args: list[str],
+    run_id: str,
+    host_session_id: str,
+    pilot_cfg: dict,
+    enable_monitor: bool,
+    is_restart_cycle: bool,
+    fresh_session_id: str | None,
+    host_arg: str,
+) -> dict:
+    argv = adapter.build_fresh_argv(project_root, model=model, extra_args=extra_args) if is_restart_cycle else adapter.build_interactive_argv(project_root, model=model, extra_args=extra_args)
+    env = os.environ.copy()
+    env["BURNLESS_PILOT_RUN_ID"] = run_id
+
+    installation = adapter.detect() if hasattr(adapter, "detect") else type("I", (), {"version": None})()
+    caps = adapter.capabilities() if hasattr(adapter, "capabilities") else type("C", (), {"reset_strategy": "respawn"})()
+    session_probe = adapter.locate_session(host_session_id) if hasattr(adapter, "locate_session") else None
+    context = adapter.context_usage(session_probe) if session_probe is not None and hasattr(adapter, "context_usage") else type("U", (), {"confidence": "unknown"})()
+    context_before = {
+        "current": getattr(context, "current", None),
+        "limit": getattr(context, "limit", None),
+        "confidence": getattr(context, "confidence", "unknown"),
+    }
+
+    start = time.time()
+    stop_event = None
+    monitor_thread = None
+    rollover_state: dict = {}
+
+    def _start_monitor(proc) -> None:
+        nonlocal stop_event, monitor_thread
+        if not enable_monitor:
+            return
+        stop_event = threading.Event()
+
+        def _monitor() -> None:
+            try:
+                result = pilot_monitor_rollover_loop(
+                    project_root,
+                    host=getattr(adapter, "name", host_arg),
+                    host_session_id=host_session_id,
+                    process_instance_id=host_session_id,
+                    run_id=run_id,
+                    new_session_id=fresh_session_id or _pilot_next_session_id(run_id, 1),
+                    context_usage_fn=lambda: adapter.context_usage(adapter.locate_session(host_session_id)) if hasattr(adapter, "context_usage") and hasattr(adapter, "locate_session") else type("U", (), {"current": None, "limit": None, "confidence": "unknown"})(),
+                    rollover_at_tokens=int(pilot_cfg.get("rollover_at_tokens", 120000)),
+                    rollover_at_pct=float(pilot_cfg.get("rollover_at_pct", 0.65)),
+                    delta_budget_tokens=int(pilot_cfg.get("delta_budget_tokens", 2000)),
+                    poll_interval_s=float(pilot_cfg.get("poll_interval_s", 0.5)),
+                    stop_event=stop_event,
+                )
+                rollover_state["result"] = result
+                last = result.get("last") or {}
+                if last.get("status") in {"armed", "prepared"}:
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+            except Exception as exc:
+                rollover_state["error"] = str(exc)
+
+        monitor_thread = threading.Thread(target=_monitor, daemon=True)
+        monitor_thread.start()
+
+    pilot_append_session_log(
+        project_root,
+        {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "run_id": run_id,
+            "host": getattr(adapter, "name", host_arg),
+            "host_version": getattr(installation, "version", None),
+            "strategy": getattr(caps, "reset_strategy", "respawn"),
+            "context_confidence": getattr(context, "confidence", "unknown"),
+            "host_session_id": host_session_id,
+            "old_session": host_session_id,
+            "context_before": context_before,
+            "checkpoint_chars": 0,
+            "pending_count": 0,
+            "turns": 0,
+            "duration_ms": 0,
+            "phase": "restart_start" if is_restart_cycle else "start",
+        },
+    )
+
+    try:
+        rc = pilot_run(
+            argv,
+            cwd=str(project_root),
+            env=env,
+            on_spawn=_start_monitor if enable_monitor else None,
+        )
+    finally:
+        if stop_event is not None:
+            stop_event.set()
+        if monitor_thread is not None:
+            monitor_thread.join(timeout=1.0)
+
+    rollover_result = rollover_state.get("result") or {}
+    prepared = rollover_result.get("prepared") or {}
+    restore_meta = (prepared.get("restore") or {}).get("recovery") or {}
+    turns = int((prepared.get("run_state") or {}).get("count") or 0)
+    pilot_append_session_log(
+        project_root,
+        {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "run_id": run_id,
+            "host": getattr(adapter, "name", host_arg),
+            "host_version": getattr(installation, "version", None),
+            "strategy": getattr(caps, "reset_strategy", "respawn"),
+            "context_confidence": getattr(context, "confidence", "unknown"),
+            "host_session_id": host_session_id,
+            "old_session": host_session_id,
+            "context_before": context_before,
+            "checkpoint_chars": int(restore_meta.get("checkpoint_chars") or 0),
+            "pending_count": int(restore_meta.get("pending_count") or 0),
+            "turns": turns,
+            "journal_head": restore_meta.get("journal_head"),
+            "applied_through": restore_meta.get("applied_through"),
+            "duration_ms": int((time.time() - start) * 1000),
+            "phase": "restart_end" if is_restart_cycle else "end",
+            "returncode": int(rc if isinstance(rc, int) else rc[0]),
+            "new_session": (
+                rollover_result.get("new_session_id")
+                if (rollover_result.get("last") or {}).get("status") == "prepared"
+                else None
+            ),
+            "rollover": rollover_result,
+        },
+    )
+    return {
+        "rc": int(rc if isinstance(rc, int) else rc[0]),
+        "rollover": rollover_result,
+        "error": rollover_state.get("error"),
+        "run_id": run_id,
+        "host_session_id": host_session_id,
+        "session_id": host_session_id,
+        "argv": argv,
+    }
+
+
+def cmd_pilot(args: argparse.Namespace) -> int:
+    root = paths_mod.require_root()
+    project_root = root.parent if root.name == ".burnless" else root
+    cfg = config_mod.load(root / "config.yaml")
+    pilot_cfg = cfg.get("pilot", {}) if isinstance(cfg, dict) else {}
+
+    def _get(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    if getattr(args, "doctor", False) or getattr(args, "report", False):
+        hosts = pilot_discover_hosts()
+        print("Burnless pilot host probe")
+        print(f"  project_root: {project_root}")
+        print(f"  configured host: {pilot_cfg.get('host', 'auto')}")
+        print(f"  configured model: {pilot_cfg.get('model', '(default)')}")
+        print(f"  rollover mode: {pilot_cfg.get('rollover_mode', 'respawn')}")
+        print(f"  auto_rollover: {pilot_cfg.get('auto_rollover', False)}")
+        print(f"  rollover_at_tokens: {pilot_cfg.get('rollover_at_tokens', 120000)}")
+        print(f"  rollover_at_pct: {pilot_cfg.get('rollover_at_pct', 0.65)}")
+        print(f"  delta_budget_tokens: {pilot_cfg.get('delta_budget_tokens', 2000)}")
+        print(f"  hud: {pilot_cfg.get('hud', 'title')}")
+        for inst in hosts:
+            status = "available" if inst.available else "missing"
+            version = inst.version or "(unknown)"
+            path = inst.path or "(not found)"
+            print(f"  {inst.name:<6} {status:<10} {version}  {path}")
+            adapter = pilot_resolve_host_adapter(inst.name, root=project_root, env_host=os.environ.get("BURNLESS_PILOT_HOST"))
+            caps = adapter.capabilities() if hasattr(adapter, "capabilities") else type("C", (), {})()
+            print(
+                "    caps:"
+                f" hooks={_pilot_yesno(getattr(caps, 'supports_hooks', False))}"
+                f" usage={_pilot_yesno(getattr(caps, 'supports_usage', False))}"
+                f" trust={getattr(caps, 'trust', 'unknown')}"
+                f" transcript={_pilot_yesno(getattr(caps, 'transcript_access', False))}"
+                f" rollout={_pilot_yesno(getattr(caps, 'rollout_access', False))}"
+                f" reset={getattr(caps, 'reset_strategy', 'respawn')}"
+            )
+        report = pilot_build_report(
+            getattr(args, "host", None),
+            root=project_root,
+            env_host=os.environ.get("BURNLESS_PILOT_HOST"),
+            run_id=getattr(args, "run_id", None),
+        )
+        caps = _get(report, "capabilities", None)
+        usage = _get(report, "usage", None)
+        print(f"  strategy: {_get(caps, 'reset_strategy', 'respawn')}")
+        print(f"  context: {_get(usage, 'confidence', 'unknown')} {_get(usage, 'current', '-') or '-'} / {_get(usage, 'limit', '-') or '-'}")
+        run_state = _get(report, "run_state", None)
+        if run_state:
+            print(f"  run_state: {_get(run_state, 'state', 'unknown')} (last={_get(run_state, 'last_event', '-')})")
+        summary = pilot_summarize_session_log(project_root)
+        if summary["count"]:
+            print(f"  sessions logged: {summary['count']}")
+            print(f"  last session: {summary['host']} {summary['host_session_id']} -> {summary['new_session_id']}")
+            if summary.get("host_version"):
+                print(f"  last host version: {summary['host_version']}")
+            context_before = summary.get("context_before")
+            if isinstance(context_before, dict):
+                print(
+                    "  context before: "
+                    f"{context_before.get('confidence', 'unknown')} "
+                    f"{context_before.get('current', '-') or '-'} / {context_before.get('limit', '-') or '-'}"
+                )
+            if summary.get("checkpoint_chars") is not None:
+                print(
+                    f"  checkpoint_chars: {summary.get('checkpoint_chars')}  "
+                    f"pending_count: {summary.get('pending_count')}  "
+                    f"turns: {summary.get('turns')}"
+                )
+        return 0
+
+    requested_host = (
+        _pilot_normalize_host_choice(getattr(args, "host", None))
+        or _pilot_normalize_host_choice(os.environ.get("BURNLESS_PILOT_HOST"))
+        or _pilot_normalize_host_choice(pilot_cfg.get("host"))
+    )
+    selected_host = _pilot_select_host_choice(root, requested_host)
+    adapter = pilot_resolve_host_adapter(
+        selected_host,
+        root=project_root,
+        env_host=os.environ.get("BURNLESS_PILOT_HOST"),
+    )
+    model = getattr(args, "model", None)
+    if model is None:
+        model = pilot_cfg.get("model")
+    extra_args = getattr(args, "extra_args", []) or list(pilot_cfg.get("extra_args") or [])
+    run_id = getattr(args, "run_id", None) or f"pilot-{int(time.time())}"
+    auto_rollover = bool(getattr(args, "auto_rollover", False) or pilot_cfg.get("auto_rollover", False))
+    current_session_id = run_id
+    rollover_index = 1
+    rc = 0
+
+    while True:
+        next_session_id = _pilot_next_session_id(run_id, rollover_index)
+        cycle = _run_pilot_cycle(
+            project_root=project_root,
+            adapter=adapter,
+            model=model,
+            extra_args=extra_args,
+            run_id=run_id,
+            host_session_id=current_session_id,
+            pilot_cfg=pilot_cfg,
+            enable_monitor=auto_rollover,
+            is_restart_cycle=current_session_id != run_id,
+            fresh_session_id=next_session_id if auto_rollover else None,
+            host_arg=getattr(args, "host", "auto"),
+        )
+        rc = cycle["rc"]
+        if not auto_rollover:
+            break
+
+        rollover = cycle.get("rollover") or {}
+        last = rollover.get("last") or {}
+        if last.get("status") != "prepared":
+            break
+
+        current_session_id = rollover.get("new_session_id") or next_session_id
+        rollover_index += 1
+
+    return int(rc)
 
 
 def cmd_cmd(args: argparse.Namespace) -> int:

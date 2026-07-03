@@ -15,7 +15,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 from . import paths, state as state_mod
-from . import delegations, routing, live_runner, config as config_mod
+from . import delegations, routing, live_runner, config as config_mod, metrics as metrics_mod
 from . import audit_graph, retrieve as retrieve_mod, events as events_mod
 from .agents import resolve_command
 
@@ -217,8 +217,7 @@ async def _run_background(id: str, burnless_root: Path) -> dict:
             pass
 
     try:
-        cfg = _get_config(burnless_root)
-        cmd = resolve_command(burnless_root, "run", id)
+        cmd = [sys.executable, "-m", "burnless", "run", id]
         proc = subprocess.Popen(
             cmd,
             stdout=open(log_file, "a", encoding="utf-8"),
@@ -260,6 +259,12 @@ async def _run_sync(id: str, burnless_root: Path) -> dict:
                 envelope = _json.loads(summary_path.read_text(encoding="utf-8"))
             except Exception:
                 envelope = None
+        envelope_path = paths["runs"] / f"{id}.envelope.json"
+        if envelope is not None:
+            try:
+                envelope_path.write_text(_json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
         status = (envelope or {}).get("status") or ("OK" if rc == 0 else "ERR")
         return {
             "id": id,
@@ -328,7 +333,7 @@ async def handle_read(id: str, project_root: Optional[str] = None, max_log_lines
     return {"error": "delegation_not_found", "hint": f"no data found for delegation {id}"}
 
 
-async def handle_status(id: Optional[str] = None, project_root: Optional[str] = None) -> dict:
+async def handle_status(id: Optional[str] = None, project_root: Optional[str] = None, include_config: bool = False) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
         return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
@@ -336,7 +341,7 @@ async def handle_status(id: Optional[str] = None, project_root: Optional[str] = 
     if id:
         return _status_per_delegation(id, burnless_root)
     else:
-        return _status_project_wide(burnless_root)
+        return _status_project_wide(burnless_root, include_config=include_config)
 
 
 def _status_per_delegation(id: str, burnless_root: Path) -> dict:
@@ -384,14 +389,12 @@ def _status_per_delegation(id: str, burnless_root: Path) -> dict:
     return state_dict
 
 
-def _status_project_wide(burnless_root: Path) -> dict:
+def _status_project_wide(burnless_root: Path, *, include_config: bool = False) -> dict:
     capsules_dir = burnless_root / "capsules"
     delegations_dir = burnless_root / "delegations"
     runs_dir = burnless_root / "runs"
 
     capsules_count = len(list(capsules_dir.glob("*.json"))) if capsules_dir.exists() else 0
-    cfg = _get_config(burnless_root)
-
     pending = []
     if delegations_dir.exists():
         for deleg_file in delegations_dir.glob("*.md"):
@@ -425,13 +428,48 @@ def _status_project_wide(burnless_root: Path) -> dict:
             except Exception:
                 pass
 
-    return {
+    payload = {
         "project_root": str(burnless_root.parent),
         "capsules_count": capsules_count,
         "pending_delegations": pending,
         "running_now": running_now,
         "last_capsule": last_capsule,
-        "config": cfg,
+    }
+    if include_config:
+        payload["config"] = _get_config(burnless_root)
+    return payload
+
+
+async def handle_do(text: str, tier: Optional[str] = None, project_root: Optional[str] = None) -> dict:
+    created = await handle_delegate(text=text, tier=tier, project_root=project_root)
+    if created.get("error"):
+        return created
+    run_result = await handle_run(id=created["id"], background=False, project_root=project_root)
+    read_result = await handle_read(id=created["id"], project_root=project_root)
+    done_report = run_result.get("envelope") or read_result.get("content") or {}
+    return {
+        "id": created["id"],
+        "tier": created.get("tier"),
+        "status": run_result.get("status") or created.get("status") or "OK",
+        "done_report": done_report,
+        "read": read_result,
+        "run": run_result,
+    }
+
+
+async def handle_metrics(project_root: Optional[str] = None, limit: int = 50) -> dict:
+    burnless_root = _resolve_root(project_root)
+    if burnless_root is None:
+        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+
+    p = paths.paths_for(burnless_root)
+    metrics = metrics_mod.load(p["metrics"])
+    audit_rows = metrics_mod.read_audit(p["audit"], limit=limit)
+    spend_rows = metrics_mod.read_spend(burnless_root / "spend.jsonl", limit=limit)
+    return {
+        "metrics": metrics,
+        "audit": audit_rows,
+        "spend": spend_rows,
     }
 
 
@@ -534,6 +572,19 @@ async def handle_explain_capsule(id: str, project_root: Optional[str] = None) ->
 async def list_tools() -> list[Tool]:
     return [
         Tool(
+            name="do",
+            description="Delegate and run in one step; returns id, status, read and done_report",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Task description"},
+                    "tier": {"type": ["string", "null"], "description": "Tier: bronze, silver, gold, diamond. None = auto-route"},
+                    "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
             name="delegate",
             description="Create a delegation and auto-route to tier",
             inputSchema={
@@ -598,12 +649,24 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="status",
-            description="Project health or per-delegation status",
+            description="Project health or per-delegation status (config omitted by default)",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "id": {"type": ["string", "null"], "description": "Delegation ID. None = project-wide"},
                     "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                    "include_config": {"type": "boolean", "description": "Include full config in project-wide status"},
+                },
+            },
+        ),
+        Tool(
+            name="metrics",
+            description="Return metrics, audit and spend snapshots",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                    "limit": {"type": "integer", "description": "Max rows per log (default 50)"},
                 },
             },
         ),
@@ -665,12 +728,14 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handlers = {
+        "do": handle_do,
         "delegate": handle_delegate,
         "route": handle_route,
         "run": handle_run,
         "capsule": handle_capsule,
         "read": handle_read,
         "status": handle_status,
+        "metrics": handle_metrics,
         "audit": handle_audit,
         "retrieve": handle_retrieve,
         "search_capsules": handle_search_capsules,

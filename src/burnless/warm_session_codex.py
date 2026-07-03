@@ -30,7 +30,7 @@ from . import config
 WARM_SUBDIR = "warm"
 PROVIDER = "codex"
 TTL_S = 300                      # conservative: base >=600s, we use 300s
-HEARTBEAT_INTERVAL_S = 300       # ~5min — base layer survives >=600s; trade off the ~1k-token secondary layer for 6x fewer pings
+HEARTBEAT_INTERVAL_S = 84        # per empirics above: partial layer starts drifting ~126s idle, 84s gives headroom and stays well under TTL_S
 ISO_CWD_ROOT_NAME = "iso-cwd-codex"  # ~/.burnless/iso-cwd-codex/<uuid>/
 DEFAULT_MODEL = config.DEFAULT_PROVIDER_MODELS["codex"]
 
@@ -453,8 +453,8 @@ def explain(burnless_root: Path, model: str | None = None) -> dict:
     out["uuid_prefix"] = uuid[:8]
     age_min = (s.get("age_s") / 60.0) if isinstance(s.get("age_s"), (int, float)) else None
     alive = s.get("alive")
-    ttl_min = 60.0
-    aging_threshold = 59.0
+    ttl_min = TTL_S / 60.0
+    aging_threshold = HEARTBEAT_INTERVAL_S / 60.0
     if age_min is None or not alive or age_min >= ttl_min:
         out["ttl_status"] = "expired"
     elif age_min >= aging_threshold:

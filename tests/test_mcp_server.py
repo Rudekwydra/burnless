@@ -13,6 +13,8 @@ from burnless.mcp_server import (
     handle_capsule,
     handle_read,
     handle_status,
+    handle_do,
+    handle_metrics,
 )
 from burnless import paths, state as state_mod
 
@@ -135,6 +137,29 @@ async def test_run_sync(mock_burnless_project: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_background_returns_pid(monkeypatch, mock_burnless_project: Path) -> None:
+    created = mock_burnless_project / "delegations" / "d001.md"
+    created.write_text("delegation", encoding="utf-8")
+
+    class DummyProc:
+        pid = 4321
+
+    popen_calls = {}
+
+    def fake_popen(cmd, stdout=None, stderr=None, start_new_session=None):
+        popen_calls["cmd"] = cmd
+        popen_calls["start_new_session"] = start_new_session
+        return DummyProc()
+
+    monkeypatch.setattr("burnless.mcp_server.subprocess.Popen", fake_popen)
+    result = await handle_run(id="d001", background=True, project_root=str(mock_burnless_project.parent))
+    assert result["status"] == "running"
+    assert result["pid"] == 4321
+    assert popen_calls["cmd"][:3] == [__import__("sys").executable, "-m", "burnless"]
+    assert popen_calls["start_new_session"] is True
+
+
+@pytest.mark.asyncio
 async def test_capsule_not_ready(mock_burnless_project: Path) -> None:
     deleg_result = await handle_delegate(text="implementa test", project_root=str(mock_burnless_project.parent))
     assert "id" in deleg_result
@@ -214,6 +239,20 @@ async def test_status_project_wide(mock_burnless_project: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_project_wide_omits_config_by_default(mock_burnless_project: Path) -> None:
+    result = await handle_status(project_root=str(mock_burnless_project.parent))
+    assert result.get("error") is None
+    assert "config" not in result
+
+
+@pytest.mark.asyncio
+async def test_status_project_wide_can_include_config(mock_burnless_project: Path) -> None:
+    result = await handle_status(project_root=str(mock_burnless_project.parent), include_config=True)
+    assert result.get("error") is None
+    assert "config" in result
+
+
+@pytest.mark.asyncio
 async def test_status_per_delegation_missing(mock_burnless_project: Path) -> None:
     result = await handle_status(id="d999", project_root=str(mock_burnless_project.parent))
     assert result.get("error") is None
@@ -229,3 +268,54 @@ async def test_status_per_delegation_not_started(mock_burnless_project: Path) ->
     result = await handle_status(id=deleg_id, project_root=str(mock_burnless_project.parent))
     assert result.get("error") is None
     assert result["state"] == "not_started"
+
+
+@pytest.mark.asyncio
+async def test_read_prefers_envelope(mock_burnless_project: Path) -> None:
+    deleg_result = await handle_delegate(text="implement envelope", project_root=str(mock_burnless_project.parent))
+    did = deleg_result["id"]
+
+    envelope_path = mock_burnless_project / "runs" / f"{did}.envelope.json"
+    envelope_path.write_text(json.dumps({"status": "OK", "summary": "from envelope"}), encoding="utf-8")
+
+    result = await handle_read(id=did, project_root=str(mock_burnless_project.parent))
+    assert result.get("error") is None
+    assert result["source"] == "envelope"
+    assert result["content"]["summary"] == "from envelope"
+
+
+@pytest.mark.asyncio
+async def test_do_returns_done_report(monkeypatch, mock_burnless_project: Path) -> None:
+    async def fake_delegate(**kwargs):
+        return {"id": "d777", "tier": "bronze", "status": "created"}
+
+    async def fake_run(**kwargs):
+        return {"id": "d777", "status": "OK", "envelope": {"status": "OK", "answer_hint": "done"}}
+
+    async def fake_read(**kwargs):
+        return {"id": "d777", "source": "envelope", "content": {"status": "OK", "answer_hint": "done"}}
+
+    monkeypatch.setattr("burnless.mcp_server.handle_delegate", fake_delegate)
+    monkeypatch.setattr("burnless.mcp_server.handle_run", fake_run)
+    monkeypatch.setattr("burnless.mcp_server.handle_read", fake_read)
+
+    result = await handle_do(text="ship it", project_root=str(mock_burnless_project.parent))
+    assert result["id"] == "d777"
+    assert result["done_report"]["answer_hint"] == "done"
+    assert result["read"]["source"] == "envelope"
+
+
+@pytest.mark.asyncio
+async def test_metrics_tool_returns_snapshots(mock_burnless_project: Path) -> None:
+    burnless_root = mock_burnless_project
+    metrics_path = burnless_root / "metrics.json"
+    audit_path = burnless_root / "audit.jsonl"
+    spend_path = burnless_root / "spend.jsonl"
+    metrics_path.write_text(json.dumps({"burnless_tokens": 1, "by_source": {}}, indent=2), encoding="utf-8")
+    audit_path.write_text(json.dumps({"basis": "estimated", "amount": 1}) + "\n", encoding="utf-8")
+    spend_path.write_text(json.dumps({"usage": {"input_tokens": 1}}) + "\n", encoding="utf-8")
+
+    result = await handle_metrics(project_root=str(mock_burnless_project.parent), limit=5)
+    assert result["metrics"]["burnless_tokens"] == 1
+    assert len(result["audit"]) == 1
+    assert len(result["spend"]) == 1

@@ -21,6 +21,9 @@ try:
 except json.JSONDecodeError:
     sys.exit(0)
 
+if str(payload.get("source") or "").strip().lower() == "clear":
+    sys.exit(0)
+
 pointer_file = os.environ.get("POINTER_FILE", "")
 if not pointer_file:
     sys.exit(0)

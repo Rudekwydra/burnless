@@ -131,8 +131,9 @@ def render_audit(entries: list[dict]) -> str:
         amt = fmt_int(int(e.get("amount", 0)))
         src = e.get("source", "?")
         did = e.get("delegation_id") or "-"
+        basis = e.get("basis") or "?"
         reason = e.get("reason", "")
-        out.append(f"{ts}  +{amt:>10}  {src:<24}  {did:<6}  {reason}")
+        out.append(f"{ts}  +{amt:>10}  {src:<24}  {basis:<10}  {did:<6}  {reason}")
     return "\n".join(out)
 
 

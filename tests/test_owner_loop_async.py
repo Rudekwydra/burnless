@@ -161,15 +161,40 @@ def test_build_refine_owner_candidates_with_predecessors():
 
         os.environ["BURNLESS_EPOCH_V2"] = "1"
         try:
-            # Create .burnless/epochs.on marker
-            (root / ".burnless" / "epochs.on").write_text("")
-
             result = epochs.build_refine_owner_candidates(root)
             assert result is not None
             predecessors, floor_md = result
             assert len(predecessors) == 2
             assert predecessors[0][0] in ["chat_a", "chat_b"]
             assert "Foco atual" in floor_md
+        finally:
+            os.environ.pop("BURNLESS_EPOCH_V2", None)
+
+
+def test_build_refine_owner_candidates_includes_current_chat_for_cache_alignment():
+    """The refine-owner fingerprint must include the just-closed chat so the next /clear
+    can hit the refined cache with the same predecessor set."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        epochs_dir = root / ".burnless" / "epochs"
+        epochs_dir.mkdir(parents=True, exist_ok=True)
+
+        chat_a_dir = epochs_dir / "chat_a"
+        chat_a_dir.mkdir(exist_ok=True)
+        (chat_a_dir / "living.md").write_text("## Foco atual\n- task1\n", encoding="utf-8")
+
+        current_dir = epochs_dir / "chat_current"
+        current_dir.mkdir(exist_ok=True)
+        (current_dir / "living.md").write_text("## Foco atual\n- task_current\n", encoding="utf-8")
+
+        os.environ["BURNLESS_EPOCH_V2"] = "1"
+        try:
+            result = epochs.build_refine_owner_candidates(root, current_chat_id="chat_current")
+            assert result is not None
+            predecessors, _ = result
+            chat_ids = [chat_id for chat_id, _ in predecessors]
+            assert "chat_current" in chat_ids
+            assert "chat_a" in chat_ids
         finally:
             os.environ.pop("BURNLESS_EPOCH_V2", None)
 

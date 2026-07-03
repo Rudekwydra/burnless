@@ -178,6 +178,18 @@ DEFAULT_CONFIG: dict = {
         "max_size": 256,
         "max_artifacts": 5,
     },
+    "pilot": {
+        "host": "auto",
+        "model": None,
+        "extra_args": [],
+        "rollover_mode": "respawn",
+        "auto_rollover": False,
+        "rollover_at_tokens": 120000,
+        "rollover_at_pct": 0.65,
+        "delta_budget_tokens": 2000,
+        "poll_interval_s": 0.5,
+        "hud": "title",
+    },
 }
 
 
@@ -302,9 +314,12 @@ def build_worker_agent(provider: str, model: str) -> dict:
             "provider": "anthropic",
         }
     elif provider == "codex":
+        command = "codex exec --skip-git-repo-check --sandbox danger-full-access"
+        if model:
+            command += f" -m {model}"
         return {
             "name": model,
-            "command": "codex exec --skip-git-repo-check --sandbox danger-full-access",
+            "command": command,
             "provider": "codex",
         }
     elif provider == "ollama":
@@ -326,15 +341,26 @@ def build_worker_agent(provider: str, model: str) -> dict:
 
 
 def apply_worker_overrides(cfg: dict, overrides: dict) -> dict:
-    """Return a deep copy of cfg with cfg['agents'][tier] replaced for each
-    tier->spec in overrides. Input cfg is NOT mutated. spec is a 'provider:model'
-    string parsed via parse_worker_spec."""
+    """Return a deep copy of cfg with cfg['agents'][tier] merged with an
+    override for each tier->spec in overrides. Input cfg is NOT mutated. spec
+    is a 'provider:model' string parsed via parse_worker_spec.
+
+    Only provider/model-derived fields (name, command, provider, tools/model
+    for ollama) are replaced; other tier metadata (role, use_for, sandbox,
+    workspace_root, allow_net, shell_timeout_s, ...) is preserved from the
+    existing tier config. The 'providers' fallback list is dropped on
+    override, since it belongs to the old primary provider and would let a
+    failed run silently re-rank away from the requested override."""
     import copy
     out = copy.deepcopy(cfg)
     agents = out.setdefault("agents", {})
     for tier, spec in (overrides or {}).items():
         provider, model = parse_worker_spec(spec)
-        agents[tier] = build_worker_agent(provider, model)
+        built = build_worker_agent(provider, model)
+        merged = dict(agents.get(tier) or {})
+        merged.pop("providers", None)
+        merged.update(built)
+        agents[tier] = merged
     return out
 
 

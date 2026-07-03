@@ -64,6 +64,6 @@ Single source of truth: `src/burnless/__init__.py` → `__version__`. `pyproject
 | `burnless epoch capture --chat-id ID` | Read STDIN, summarize, append to epoch chain, consolidate if at 10. |
 | `burnless epoch read --chat-id ID` | Print active chain to stdout. |
 | `burnless epoch cleanup --chat-id ID` | Remove originais directory. |
-| `burnless epoch on` | Enable rolling memory (create `.burnless/epochs.on` marker). |
-| `burnless epoch off` | Disable rolling memory (remove marker). |
+| `burnless epoch on` | Enable rolling memory (remove `.burnless/epochs.off`, opt-out marker). |
+| `burnless epoch off` | Disable rolling memory (create `.burnless/epochs.off`). |
 | `burnless epoch status` | Show ON/OFF state + count of chats and summary files. |
