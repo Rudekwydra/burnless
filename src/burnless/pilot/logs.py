@@ -23,7 +23,72 @@ def _estimated_claude_limit(_cwd: Path | None) -> int:
     return 200_000
 
 
-def claude_context_usage(cwd: str | Path | None) -> ContextUsage:
+def _claude_context_usage_from_transcript(root: Path, run_id: str) -> "ContextUsage | None":
+    from .events import events_path
+
+    path = events_path(Path(root), run_id)
+    if not path.exists():
+        return None
+    transcript_ref = None
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ref = obj.get("transcript_ref")
+                if ref:
+                    transcript_ref = ref
+    except OSError:
+        return None
+    if not transcript_ref:
+        return None
+    transcript_path = Path(transcript_ref)
+    if not transcript_path.exists():
+        return None
+    last_usage = None
+    try:
+        with transcript_path.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("type") != "assistant":
+                    continue
+                message = rec.get("message") or {}
+                usage = message.get("usage")
+                if isinstance(usage, dict):
+                    last_usage = usage
+    except OSError:
+        return None
+    if last_usage is None:
+        return None
+    current = (
+        int(last_usage.get("input_tokens") or 0)
+        + int(last_usage.get("cache_read_input_tokens") or 0)
+        + int(last_usage.get("cache_creation_input_tokens") or 0)
+    )
+    return ContextUsage(current=current, limit=_estimated_claude_limit(root), confidence="exact")
+
+
+def claude_context_usage(
+    cwd: str | Path | None,
+    *,
+    root: str | Path | None = None,
+    run_id: str | None = None,
+) -> ContextUsage:
+    if root is not None and run_id:
+        exact = _claude_context_usage_from_transcript(Path(root), run_id)
+        if exact is not None:
+            return exact
     project = _normalize_path(cwd)
     delta = claude_usage_delta(cwd=project)
     if delta.calls <= 0:

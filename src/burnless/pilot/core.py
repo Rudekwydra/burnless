@@ -75,16 +75,35 @@ class HostAdapter(Protocol):
     def is_turn_idle(self, session: HostSession) -> bool: ...
 
 
+# `<cli> --version` can take seconds (node startup/update checks) and has
+# hung indefinitely in the wild (2026-07-03: pilot froze on the hot path and
+# needed Ctrl-C). Never run it without timeout/DEVNULL, and never twice.
+_VERSION_CACHE: dict[str, str | None] = {}
+_VERSION_TIMEOUT_S = 5
+
+
 def _version_for(command: str) -> str | None:
     path = shutil.which(command)
     if not path:
         return None
+    if path in _VERSION_CACHE:
+        return _VERSION_CACHE[path]
+    version: str | None = None
     try:
-        proc = subprocess.run([path, "--version"], capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_VERSION_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+        )
         out = (proc.stdout or proc.stderr or "").strip().splitlines()
-        return out[0] if out else None
+        version = out[0] if out else None
     except Exception:
-        return None
+        version = None
+    _VERSION_CACHE[path] = version
+    return version
 
 
 def discover_hosts() -> list[HostInstallation]:

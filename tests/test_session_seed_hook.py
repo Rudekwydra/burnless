@@ -14,6 +14,9 @@ def _run_seed_hook(home: Path, payload: dict) -> str:
     """Run the SessionStart seed hook and return stdout."""
     env = os.environ.copy()
     env["HOME"] = str(home)
+    # The autouse conftest fixture points BURNLESS_STATE_DIR at a hermetic tmp;
+    # these tests build their own state dir under the fake HOME.
+    env["BURNLESS_STATE_DIR"] = str(home / ".burnless" / "state")
     proc = subprocess.run(
         ["bash", str(HOOK)],
         input=json.dumps(payload),

@@ -11,6 +11,9 @@ SEED_SCRIPT = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "b
 def _run_seed(home: Path, cwd: str) -> str:
     env = os.environ.copy()
     env["HOME"] = str(home)
+    # The autouse conftest fixture points BURNLESS_STATE_DIR at a hermetic tmp;
+    # these tests build their own state dir under the fake HOME.
+    env["BURNLESS_STATE_DIR"] = str(home / ".burnless" / "state")
     proc = subprocess.run(
         ["bash", str(SEED_SCRIPT)],
         input=json.dumps({"cwd": cwd, "hook_event_name": "SessionStart"}),

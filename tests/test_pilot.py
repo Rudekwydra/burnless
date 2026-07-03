@@ -243,7 +243,7 @@ pilot:
             return [sys.executable, "-c", "print('ok')"]
 
         def capabilities(self):
-            return type("C", (), {"reset_strategy": "respawn"})()
+            return type("C", (), {"reset_strategy": "respawn", "supports_hooks": True, "supports_usage": True})()
 
         def context_usage(self, session):
             return type("U", (), {"current": 1, "limit": 1, "confidence": "unknown"})()
@@ -308,7 +308,7 @@ pilot:
             return [sys.executable, "-c", "print('fresh')"]
 
         def capabilities(self):
-            return type("C", (), {"reset_strategy": "respawn"})()
+            return type("C", (), {"reset_strategy": "respawn", "supports_hooks": True, "supports_usage": True})()
 
         def context_usage(self, session):
             return type("U", (), {"current": 1, "limit": 1, "confidence": "unknown"})()
@@ -687,3 +687,67 @@ def test_evaluate_rollover_triggers_above_threshold(tmp_path):
     assert result["should_rollover"] is True
     assert result["reason"] == "threshold_reached"
     assert result["prepared"]["status"] == "ready"
+
+
+def test_session_log_serializes_dataclass_usage_without_crashing(tmp_path):
+    """Regression (2026-07-03): a rollover decision carrying ContextUsage
+    inside the session-log row raised TypeError in json.dumps and killed the
+    pilot right after the monitor stopped the child — suicide by telemetry."""
+    from burnless.pilot import append_session_log
+    from burnless.pilot.core import ContextUsage
+    from burnless.pilot.events import read_session_log
+
+    row = {
+        "ts": "2026-07-03T00:00:00Z",
+        "run_id": "pilot-x",
+        "rollover": {
+            "last": {
+                "status": "prepared",
+                "decision": {
+                    "should_rollover": True,
+                    "usage": ContextUsage(current=140000, limit=200000, confidence="estimated"),
+                },
+            },
+        },
+    }
+    append_session_log(tmp_path, row)
+
+    rows = read_session_log(tmp_path)
+    assert len(rows) == 1
+    usage = rows[0]["rollover"]["last"]["decision"]["usage"]
+    assert usage["current"] == 140000
+    assert usage["confidence"] == "estimated"
+
+
+def test_version_for_times_out_and_caches(monkeypatch, tmp_path):
+    """Regression (2026-07-03): `claude --version` hung with no timeout and
+    froze the pilot on the hot path. Must bound the call, cache the result,
+    and fail to None instead of hanging."""
+    import subprocess as sp
+    from burnless.pilot import core
+
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\nsleep 60\n")
+    fake.chmod(0o755)
+
+    core._VERSION_CACHE.clear()
+    monkeypatch.setattr(core.shutil, "which", lambda _cmd: str(fake))
+    monkeypatch.setattr(core, "_VERSION_TIMEOUT_S", 1)
+
+    import time as _time
+
+    start = _time.time()
+    assert core._version_for("claude") is None
+    assert _time.time() - start < 10
+
+    calls = {"n": 0}
+    real_run = sp.run
+
+    def counting_run(*args, **kwargs):
+        calls["n"] += 1
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(core.subprocess, "run", counting_run)
+    assert core._version_for("claude") is None  # cached: no second subprocess
+    assert calls["n"] == 0
+    core._VERSION_CACHE.clear()
