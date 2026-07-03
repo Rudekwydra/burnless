@@ -169,7 +169,7 @@ def _parse_codex_usage(stdout_text: str) -> dict:
 
 
 def _codex_binary() -> str | None:
-    path = shutil.which("codex") or "/Users/roberto/.local/bin/codex"
+    path = shutil.which("codex") or str(Path.home() / ".local" / "bin" / "codex")
     return path if path and Path(path).exists() else None
 
 

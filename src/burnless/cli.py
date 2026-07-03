@@ -11,7 +11,7 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import __version__, TAGLINE
 from . import config as config_mod
@@ -1315,9 +1315,9 @@ def cmd_epoch(args: argparse.Namespace) -> int:
 
     elif epoch_cmd == "capture":
         text = _sys.stdin.read()
-        if os.environ.get("BURNLESS_EPOCH_V2"):
-            try:
-                from . import epochs_v2
+        try:
+            from . import epochs_v2
+            if epochs_v2._epochs_version(root_path) >= 3:
                 lp = epochs_v2.apply_capture(root_path, chat_id, text)
                 if getattr(args, "emit_chain", False):
                     print("> ordem: documento vivo (living-doc v2)\n")
@@ -1325,7 +1325,8 @@ def cmd_epoch(args: argparse.Namespace) -> int:
                 else:
                     print(lp.name)
                 return 0
-            except Exception as e:
+        except Exception as e:
+            if os.environ.get("BURNLESS_EPOCH_V2"):
                 print(f"warning: epochs_v2 failed ({e}); falling back to v1", file=_sys.stderr)
         summarizer = epochs_mod.epoch_summarizer(root_path)
         s = summarizer(text)
@@ -1510,6 +1511,25 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
+    elif epoch_cmd == "hook-error":
+        root = getattr(args, "root", None) or root_path
+        message = getattr(args, "message", None)
+        if not message:
+            message = _sys.stdin.read().strip()
+        if not message:
+            return 0
+        recovery_mod.record_hook_error(
+            root,
+            hook=str(getattr(args, "hook", "unknown") or "unknown"),
+            host=str(getattr(args, "host", "claude") or "claude"),
+            host_session_id=getattr(args, "host_session_id", None) or getattr(args, "session_id", None),
+            process_instance_id=getattr(args, "process_instance_id", None) or getattr(args, "session_id", None),
+            source=getattr(args, "source", None),
+            transcript_path=getattr(args, "transcript", None),
+            error=message,
+        )
+        return 0
+
     elif epoch_cmd == "refine-owner":
         try:
             from datetime import datetime, timezone
@@ -1636,10 +1656,12 @@ def cmd_session(args: argparse.Namespace) -> int:
     from . import events as events_mod
     from . import scope as scope_mod
     from . import session_hud
+    from .pilot import summarize_session_log as pilot_summarize_session_log
     root = paths_mod.find_root()
     if root is None:
         print("burnless: not initialized in this directory tree. run `burnless init` first.", file=sys.stderr)
         return 1
+    project_root = root.parent if root.name == ".burnless" else root
 
     mode = "rolling" if epochs_mod.is_enabled(root) else "default"
 
@@ -1670,6 +1692,8 @@ def cmd_session(args: argparse.Namespace) -> int:
     except Exception:
         scope_hash = None
 
+    recovery_summary = pilot_summarize_session_log(project_root)
+
     state = {
         "project": str(root.parent),
         "mode": mode,
@@ -1677,6 +1701,13 @@ def cmd_session(args: argparse.Namespace) -> int:
         "savings": savings,
         "scope_hash": scope_hash,
         "turns": turns,
+        "checkpoint_generation": recovery_summary.get("checkpoint_generation"),
+        "applied_through": recovery_summary.get("applied_through"),
+        "journal_head": recovery_summary.get("journal_head"),
+        "watermark_gap": recovery_summary.get("watermark_gap"),
+        "pending_count": recovery_summary.get("pending_count"),
+        "last_error": recovery_summary.get("last_error"),
+        "claim_mode": recovery_summary.get("claim_mode"),
     }
 
     if getattr(args, "json", False):
@@ -2113,6 +2144,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("extra_args", nargs=argparse.REMAINDER, help="extra args forwarded verbatim")
     sp.set_defaults(func=cmd_pilot, pilot_cmd="run")
 
+    sp = sub.add_parser("pilot-event", help=argparse.SUPPRESS)
+    sp.add_argument("--root", default=None, help="project root (default: find_root())")
+    sp.add_argument("--run-id", default=None, dest="run_id", help="pilot run id")
+    sp.add_argument("--event", default=None, help="event name override")
+    sp.add_argument("--host", default=None, help="host name")
+    sp.add_argument("--host-session-id", default=None, dest="host_session_id", help="host session id")
+    sp.add_argument("--process-instance-id", default=None, dest="process_instance_id", help="process instance id")
+    sp.add_argument("--source", default=None, help="hook source")
+    sp.add_argument("--cwd", default=None, help="working directory")
+    sp.add_argument("--transcript", default=None, help="transcript path")
+    sp.set_defaults(func=cmd_pilot_event)
+
     sp = sub.add_parser(
         "cmd",
         help="Run shell command; capsule output via Haiku if > threshold (brain-side capsule layer)",
@@ -2194,6 +2237,10 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-claim")
     esp = epoch_sub.add_parser("restore", parents=[epoch_core], help="render checkpoint + pending delta for SessionStart")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="restore")
+    esp = epoch_sub.add_parser("hook-error", parents=[epoch_core], help="append a hook error to the global ledger")
+    esp.add_argument("--hook", default="unknown", help="hook name (Stop/SessionStart/SessionEnd)")
+    esp.add_argument("--message", default=None, help="error message (defaults to stdin)")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="hook-error")
     esp = epoch_sub.add_parser("refine-owner", parents=[epoch_common], help="async refine owner-loop seed from V2 predecessors")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="refine-owner")
 
@@ -2214,6 +2261,57 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print(doctor_mod.render_human(checks))
     return doctor_mod.exit_code(checks)
+
+
+def cmd_pilot_event(args: argparse.Namespace) -> int:
+    from .pilot import append_event
+    from .pilot.core import PilotEvent
+
+    raw = sys.stdin.read()
+    payload: dict[str, object] = {}
+    if raw.strip():
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                payload = obj
+        except Exception:
+            payload = {}
+
+    root = getattr(args, "root", None)
+    if root is None:
+        root = paths_mod.find_root()
+        if root is None:
+            return 0
+    root = Path(root)
+    if root.name == ".burnless":
+        root = root.parent
+    run_id = getattr(args, "run_id", None) or os.environ.get("BURNLESS_PILOT_RUN_ID")
+    if not run_id:
+        return 0
+
+    event_name = str(getattr(args, "event", None) or payload.get("event") or payload.get("hookEventName") or "unknown")
+    host = str(getattr(args, "host", None) or payload.get("host") or "unknown")
+    host_session_id = getattr(args, "host_session_id", None) or payload.get("session_id") or payload.get("host_session_id")
+    process_instance_id = getattr(args, "process_instance_id", None) or payload.get("process_instance_id")
+    source = str(getattr(args, "source", None) or payload.get("source") or payload.get("reason") or "")
+    cwd = str(getattr(args, "cwd", None) or payload.get("cwd") or "")
+    transcript_ref = str(getattr(args, "transcript", None) or payload.get("transcript_path") or payload.get("transcript_ref") or "")
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+    event = PilotEvent(
+        host=host,
+        host_session_id=str(host_session_id) if host_session_id else None,
+        process_instance_id=str(process_instance_id) if process_instance_id else None,
+        event=event_name,
+        source=source or None,
+        cwd=cwd or None,
+        transcript_ref=transcript_ref or None,
+        user_text=payload.get("user_text") if isinstance(payload.get("user_text"), str) else None,
+        assistant_text=payload.get("assistant_text") if isinstance(payload.get("assistant_text"), str) else None,
+        usage=usage,
+        ts=str(payload.get("ts") or payload.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+    )
+    append_event(root, str(run_id), event)
+    return 0
 
 
 def _pilot_next_session_id(run_id: str, rollover_index: int) -> str:
@@ -2289,6 +2387,7 @@ def _run_pilot_cycle(
     is_restart_cycle: bool,
     fresh_session_id: str | None,
     host_arg: str,
+    initial_input_bytes: bytes | None = None,
 ) -> dict:
     argv = adapter.build_fresh_argv(project_root, model=model, extra_args=extra_args) if is_restart_cycle else adapter.build_interactive_argv(project_root, model=model, extra_args=extra_args)
     env = os.environ.copy()
@@ -2297,7 +2396,31 @@ def _run_pilot_cycle(
     installation = adapter.detect() if hasattr(adapter, "detect") else type("I", (), {"version": None})()
     caps = adapter.capabilities() if hasattr(adapter, "capabilities") else type("C", (), {"reset_strategy": "respawn"})()
     session_probe = adapter.locate_session(host_session_id) if hasattr(adapter, "locate_session") else None
-    context = adapter.context_usage(session_probe) if session_probe is not None and hasattr(adapter, "context_usage") else type("U", (), {"confidence": "unknown"})()
+    if session_probe is not None and getattr(session_probe, "cwd", None) is None:
+        try:
+            session_probe = replace(session_probe, cwd=str(project_root))
+        except Exception:
+            pass
+    def _usage_for_host_session() -> object:
+        if not (hasattr(adapter, "locate_session") and hasattr(adapter, "context_usage")):
+            return type("U", (), {"current": None, "limit": None, "confidence": "unknown"})()
+        try:
+            session = adapter.locate_session(host_session_id)
+        except Exception:
+            return type("U", (), {"current": None, "limit": None, "confidence": "unknown"})()
+        if session is None:
+            return type("U", (), {"current": None, "limit": None, "confidence": "unknown"})()
+        if getattr(session, "cwd", None) is None:
+            try:
+                session = replace(session, cwd=str(project_root))
+            except Exception:
+                pass
+        try:
+            return adapter.context_usage(session)
+        except Exception:
+            return type("U", (), {"current": None, "limit": None, "confidence": "unknown"})()
+
+    context = _usage_for_host_session()
     context_before = {
         "current": getattr(context, "current", None),
         "limit": getattr(context, "limit", None),
@@ -2324,7 +2447,7 @@ def _run_pilot_cycle(
                     process_instance_id=host_session_id,
                     run_id=run_id,
                     new_session_id=fresh_session_id or _pilot_next_session_id(run_id, 1),
-                    context_usage_fn=lambda: adapter.context_usage(adapter.locate_session(host_session_id)) if hasattr(adapter, "context_usage") and hasattr(adapter, "locate_session") else type("U", (), {"current": None, "limit": None, "confidence": "unknown"})(),
+                    context_usage_fn=_usage_for_host_session,
                     rollover_at_tokens=int(pilot_cfg.get("rollover_at_tokens", 120000)),
                     rollover_at_pct=float(pilot_cfg.get("rollover_at_pct", 0.65)),
                     delta_budget_tokens=int(pilot_cfg.get("delta_budget_tokens", 2000)),
@@ -2359,18 +2482,22 @@ def _run_pilot_cycle(
             "checkpoint_chars": 0,
             "pending_count": 0,
             "turns": 0,
+            "checkpoint_generation": 0,
+            "watermark_gap": 0,
             "duration_ms": 0,
             "phase": "restart_start" if is_restart_cycle else "start",
         },
     )
 
     try:
-        rc = pilot_run(
-            argv,
-            cwd=str(project_root),
-            env=env,
-            on_spawn=_start_monitor if enable_monitor else None,
-        )
+        pilot_kwargs = {
+            "cwd": str(project_root),
+            "env": env,
+            "on_spawn": _start_monitor if enable_monitor else None,
+        }
+        if initial_input_bytes is not None:
+            pilot_kwargs["input_bytes"] = initial_input_bytes
+        rc = pilot_run(argv, **pilot_kwargs)
     finally:
         if stop_event is not None:
             stop_event.set()
@@ -2396,8 +2523,13 @@ def _run_pilot_cycle(
             "checkpoint_chars": int(restore_meta.get("checkpoint_chars") or 0),
             "pending_count": int(restore_meta.get("pending_count") or 0),
             "turns": turns,
+            "checkpoint_generation": restore_meta.get("checkpoint_generation"),
             "journal_head": restore_meta.get("journal_head"),
             "applied_through": restore_meta.get("applied_through"),
+            "watermark_gap": restore_meta.get("watermark_gap"),
+            "claim_mode": restore_meta.get("claim_mode"),
+            "last_error": rollover_state.get("error"),
+            "truncated": restore_meta.get("truncated"),
             "duration_ms": int((time.time() - start) * 1000),
             "phase": "restart_end" if is_restart_cycle else "end",
             "returncode": int(rc if isinstance(rc, int) else rc[0]),
@@ -2491,6 +2623,17 @@ def cmd_pilot(args: argparse.Namespace) -> int:
                     f"pending_count: {summary.get('pending_count')}  "
                     f"turns: {summary.get('turns')}"
                 )
+            if summary.get("checkpoint_generation") is not None or summary.get("journal_head") is not None:
+                print(
+                    f"  recovery: gen={summary.get('checkpoint_generation', '-')}"
+                    f" applied={summary.get('applied_through', '-')}"
+                    f" head={summary.get('journal_head', '-')}"
+                    f" gap={summary.get('watermark_gap', '-')}"
+                )
+            if summary.get("claim_mode"):
+                print(f"  claim_mode: {summary.get('claim_mode')}")
+            if summary.get("last_error"):
+                print(f"  last_error: {summary.get('last_error')}")
         return 0
 
     requested_host = (
@@ -2513,6 +2656,7 @@ def cmd_pilot(args: argparse.Namespace) -> int:
     current_session_id = run_id
     rollover_index = 1
     rc = 0
+    pending_initial_input: bytes | None = None
 
     while True:
         next_session_id = _pilot_next_session_id(run_id, rollover_index)
@@ -2528,7 +2672,9 @@ def cmd_pilot(args: argparse.Namespace) -> int:
             is_restart_cycle=current_session_id != run_id,
             fresh_session_id=next_session_id if auto_rollover else None,
             host_arg=getattr(args, "host", "auto"),
+            initial_input_bytes=pending_initial_input,
         )
+        pending_initial_input = None
         rc = cycle["rc"]
         if not auto_rollover:
             break
@@ -2537,6 +2683,11 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         last = rollover.get("last") or {}
         if last.get("status") != "prepared":
             break
+
+        prepared_restore = (rollover.get("prepared") or {}).get("restore") or {}
+        restore_text = (prepared_restore.get("hookSpecificOutput") or {}).get("additionalContext")
+        if selected_host == "codex" and isinstance(restore_text, str) and restore_text.strip():
+            pending_initial_input = (restore_text.strip() + "\n").encode("utf-8")
 
         current_session_id = rollover.get("new_session_id") or next_session_id
         rollover_index += 1

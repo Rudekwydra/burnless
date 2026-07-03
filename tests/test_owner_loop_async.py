@@ -199,13 +199,14 @@ def test_build_refine_owner_candidates_includes_current_chat_for_cache_alignment
             os.environ.pop("BURNLESS_EPOCH_V2", None)
 
 
-def test_epoch_stop_script_has_refine_owner_call():
-    """Test Stop hook script invokes refine-owner after seed write."""
-    script_path = Path("/Users/roberto/antigravity/burnless/templates/scripts/burnless_epoch_stop.sh")
+def test_epoch_stop_script_does_not_call_refine_owner():
+    """Stop hook should not keep the retired refine-owner ghost path."""
+    script_path = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "burnless_epoch_stop.sh"
     assert script_path.exists(), "Stop hook script must exist"
 
     with open(script_path) as f:
         content = f.read()
 
-    assert 'epoch refine-owner' in content, "Stop hook must call 'epoch refine-owner'"
-    assert 'ROOT/.burnless/epochs/_rolling/seed.md' in content, "Stop hook must handle seed.md path"
+    assert 'epoch refine-owner' not in content, "Stop hook must not call retired refine-owner path"
+    assert 'epoch hook-error' in content, "Stop hook should log hook errors"
+    assert 'epoch compact-pending' in content, "Stop hook should still trigger compaction"

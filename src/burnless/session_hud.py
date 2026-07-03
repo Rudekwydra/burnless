@@ -30,6 +30,13 @@ def render_hud(state: dict, *, style: str = "compact") -> str:
     saved_tokens = None
     if isinstance(savings, dict):
         saved_tokens = savings.get("saved_tokens")
+    checkpoint_generation = state.get("checkpoint_generation")
+    journal_head = state.get("journal_head")
+    applied_through = state.get("applied_through")
+    watermark_gap = state.get("watermark_gap")
+    pending_count = state.get("pending_count")
+    last_error = state.get("last_error")
+    claim_mode = state.get("claim_mode")
 
     if style == "verbose":
         scope_hash = state.get("scope_hash") or "-"
@@ -44,6 +51,19 @@ def render_hud(state: dict, *, style: str = "compact") -> str:
             f"scope_hash: {scope_hash}",
             f"turns: {turns}",
         ]
+        if checkpoint_generation is not None or journal_head is not None or applied_through is not None:
+            lines.append(
+                "recovery: "
+                f"gen={checkpoint_generation if checkpoint_generation is not None else '-'} "
+                f"applied={applied_through if applied_through is not None else '-'} "
+                f"head={journal_head if journal_head is not None else '-'} "
+                f"gap={watermark_gap if watermark_gap is not None else '-'} "
+                f"pending={pending_count if pending_count is not None else '-'}"
+            )
+        if claim_mode:
+            lines.append(f"claim_mode: {claim_mode}")
+        if last_error:
+            lines.append(f"last_error: {last_error}")
         return "\n".join(lines)
 
     # compact (default)
@@ -54,6 +74,21 @@ def render_hud(state: dict, *, style: str = "compact") -> str:
     ]
     if saved_tokens is not None:
         parts.append(f"saved={saved_tokens}")
+    if applied_through is not None or journal_head is not None:
+        parts.append(
+            f"watermark={applied_through if applied_through is not None else '-'}"
+            f"/{journal_head if journal_head is not None else '-'}"
+        )
+    if checkpoint_generation is not None:
+        parts.append(f"gen={checkpoint_generation}")
+    if watermark_gap is not None:
+        parts.append(f"gap={watermark_gap}")
+    if pending_count is not None:
+        parts.append(f"pending={pending_count}")
+    if claim_mode:
+        parts.append(f"claim={claim_mode}")
+    if last_error:
+        parts.append("err=1")
     return "burnless | " + " | ".join(parts)
 
 

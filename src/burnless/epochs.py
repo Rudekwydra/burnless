@@ -263,6 +263,15 @@ def is_enabled(project_root, cfg=None) -> bool:
         return True
 
 
+def _effective_epochs_version(root) -> int:
+    try:
+        from . import epochs_v2
+
+        return int(epochs_v2._epochs_version(root))
+    except Exception:
+        return 2
+
+
 def set_enabled(project_root, on: bool) -> bool:
     "Opt-out marker. on=True removes the .off marker; on=False creates it. Fail-open."
     m = _disabled_marker(project_root)
@@ -466,7 +475,7 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         # V2 living-doc: serve predecessor chats' living.md (newest-first) before
         # the V1 NNN.md chain. Without this, capture writes V2 but resume serves
         # V1 — the dense living-doc is written and never read (commit 5492569).
-        if os.environ.get("BURNLESS_EPOCH_V2"):
+        if _effective_epochs_version(root) >= 3:
             from . import epochs_v2, owner_cache, owner_loop
             v2_cand = []
             for chat_dir in epochs_dir.iterdir():
@@ -685,9 +694,9 @@ def build_refine_owner_candidates(root, current_chat_id=None) -> tuple[list[tupl
         (predecessors, floor_md) tuple where:
         - predecessors: list of (chat_id, living_doc_text) tuples, newest-first
         - floor_md: consolidated living-doc markdown (deterministic floor)
-        None if BURNLESS_EPOCH_V2 not set or no V2 predecessors exist.
+    None if the project is not on epochs version 3 or no V3 predecessors exist.
     """
-    if not os.environ.get("BURNLESS_EPOCH_V2"):
+    if _effective_epochs_version(root) < 3:
         return None
 
     try:

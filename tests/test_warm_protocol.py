@@ -19,7 +19,7 @@ def test_codex_warm_returns_flags_and_brief_prefix(tmp_path, monkeypatch):
     monkeypatch.setattr(_ws_codex, "warm_flags", lambda br, m: ["-c", "x"])
     monkeypatch.setattr(_ws_codex, "warm_brief", lambda br, m: "BRIEF")
     parts, prefix, iso = _inject_warm_fork_args(
-        ["/Users/roberto/.local/bin/codex", "exec"], cwd=tmp_path
+        ["codex", "exec"], cwd=tmp_path
     )
     assert "-c" in parts
     assert "x" in parts

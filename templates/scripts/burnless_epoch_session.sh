@@ -17,9 +17,20 @@ elif field == "cwd":
     print(payload.get("cwd") or "")
 elif field == "process_instance_id":
     print(payload.get("process_instance_id") or "")
+elif field == "transcript_path":
+    print(payload.get("transcript_path") or "")
 elif field == "source":
     print(payload.get("source") or "")
 PY
+}
+log_hook_error() {
+  local label="$1" message="$2"
+  [[ -z "$message" ]] && return 0
+  printf '%s' "$message" | "$BB" epoch hook-error --root "$ROOT" --hook "$label" --host claude --host-session-id "$SID" --process-instance-id "$PID" --source clear --transcript "$TP" >/dev/null 2>&1 || true
+}
+log_pilot_event() {
+  [[ -z "$BURNLESS_PILOT_RUN_ID" ]] && return 0
+  printf '%s' "$stdin_data" | "$BB" pilot-event --root "$ROOT" --run-id "$BURNLESS_PILOT_RUN_ID" --event session_start --host claude --host-session-id "$SID" --process-instance-id "$PID" --source clear --cwd "$CWD" >/dev/null 2>&1 || true
 }
 # Stable lineage id: nearest claude/node ancestor pid. Survives /clear (same
 # host process, new session id) and distinguishes concurrent windows.
@@ -37,6 +48,7 @@ host_pid() {
 }
 SID=$(json_field session_id)
 CWD=$(json_field cwd)
+TP=$(json_field transcript_path)
 PID=$(json_field process_instance_id)
 [[ -z "$PID" ]] && PID=$(host_pid)
 [[ -z "$PID" ]] && PID="$SID"
@@ -45,10 +57,23 @@ SOURCE=$(json_field source)
 [[ -z "$SID" || -z "$CWD" ]] && exit 0
 export PATH="$HOME/.local/bin:$PATH"
 BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
-ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" 2>/dev/null)
-[[ -z "$ROOT" ]] && exit 0
+ROOT_ERR=$(mktemp)
+ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" 2>"$ROOT_ERR")
+if [[ -z "$ROOT" ]]; then
+  log_hook_error "resolve-root" "$(cat "$ROOT_ERR" 2>/dev/null)"
+  rm -f "$ROOT_ERR"
+  exit 0
+fi
+rm -f "$ROOT_ERR"
 [[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
-RESTORE=$("$BB" epoch restore --root "$ROOT" --host claude --process-instance-id "$PID" --new-session-id "$SID" --source clear --budget-tokens 2000 2>/dev/null)
-[[ -z "$RESTORE" ]] && exit 0
+log_pilot_event
+RESTORE_ERR=$(mktemp)
+RESTORE=$("$BB" epoch restore --root "$ROOT" --host claude --process-instance-id "$PID" --new-session-id "$SID" --source clear --budget-tokens 2000 2>"$RESTORE_ERR")
+if [[ -z "$RESTORE" ]]; then
+  log_hook_error "restore" "$(cat "$RESTORE_ERR" 2>/dev/null)"
+  rm -f "$RESTORE_ERR"
+  exit 0
+fi
+rm -f "$RESTORE_ERR"
 printf '%s\n' "$RESTORE"
 exit 0

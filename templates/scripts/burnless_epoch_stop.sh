@@ -1,6 +1,5 @@
 #!/bin/bash
 [[ -n "$BURNLESS_NO_EPOCH" ]] && exit 0
-# legacy compatibility: epoch refine-owner / ROOT/.burnless/epochs/_rolling/seed.md
 export PATH="$HOME/.local/bin:$PATH"
 BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 stdin_data=$(cat)
@@ -24,6 +23,15 @@ elif field == "process_instance_id":
     print(payload.get("process_instance_id") or "")
 PY
 }
+log_hook_error() {
+  local label="$1" message="$2"
+  [[ -z "$message" ]] && return 0
+  printf '%s' "$message" | "$BB" epoch hook-error --root "$ROOT" --hook "$label" --host claude --host-session-id "$SID" --process-instance-id "$PID" --source stop --transcript "$TP" >/dev/null 2>&1 || true
+}
+log_pilot_event() {
+  [[ -z "$BURNLESS_PILOT_RUN_ID" ]] && return 0
+  printf '%s' "$stdin_data" | "$BB" pilot-event --root "$ROOT" --run-id "$BURNLESS_PILOT_RUN_ID" --event stop --host claude --host-session-id "$SID" --process-instance-id "$PID" --source stop --cwd "$CWD" --transcript "$TP" >/dev/null 2>&1 || true
+}
 # Stable lineage id: nearest claude/node ancestor pid. Survives /clear (same
 # host process, new session id) and distinguishes concurrent windows.
 host_pid() {
@@ -45,14 +53,33 @@ PID=$(json_field process_instance_id)
 [[ -z "$PID" ]] && PID=$(host_pid)
 [[ -z "$PID" ]] && PID="$SID"
 [[ -z "$SID" || -z "$CWD" || -z "$TP" ]] && exit 0
-ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --transcript "$TP" 2>/dev/null)
-[[ -z "$ROOT" ]] && exit 0
+ROOT_ERR=$(mktemp)
+ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --transcript "$TP" 2>"$ROOT_ERR")
+if [[ -z "$ROOT" ]]; then
+  log_hook_error "resolve-root" "$(cat "$ROOT_ERR" 2>/dev/null)"
+  rm -f "$ROOT_ERR"
+  exit 0
+fi
+rm -f "$ROOT_ERR"
 [[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
-EXTRACTED=$("$BB" epoch extract-exchange --transcript "$TP" --host claude --host-session-id "$SID" --process-instance-id "$PID" --cwd "$CWD" --source stop 2>/dev/null)
-[[ -z "$EXTRACTED" ]] && exit 0
+EXTRACT_ERR=$(mktemp)
+EXTRACTED=$("$BB" epoch extract-exchange --transcript "$TP" --host claude --host-session-id "$SID" --process-instance-id "$PID" --cwd "$CWD" --source stop 2>"$EXTRACT_ERR")
+if [[ -z "$EXTRACTED" ]]; then
+  log_hook_error "extract-exchange" "$(cat "$EXTRACT_ERR" 2>/dev/null)"
+  rm -f "$EXTRACT_ERR"
+  exit 0
+fi
+rm -f "$EXTRACT_ERR"
 mkdir -p "$ROOT/.burnless/epochs/_rolling"
-RECORD=$(printf '%s' "$EXTRACTED" | "$BB" epoch journal-append --root "$ROOT" 2>/dev/null)
-[[ -z "$RECORD" ]] && exit 0
+JOURNAL_ERR=$(mktemp)
+RECORD=$(printf '%s' "$EXTRACTED" | "$BB" epoch journal-append --root "$ROOT" 2>"$JOURNAL_ERR")
+if [[ -z "$RECORD" ]]; then
+  log_hook_error "journal-append" "$(cat "$JOURNAL_ERR" 2>/dev/null)"
+  rm -f "$JOURNAL_ERR"
+  exit 0
+fi
+rm -f "$JOURNAL_ERR"
+log_pilot_event
 {
   printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host claude --host-session-id "$SID" --process-instance-id "$PID" >/dev/null 2>&1
 } &

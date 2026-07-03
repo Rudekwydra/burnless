@@ -48,6 +48,15 @@ def _wire_home(home: Path) -> None:
                 "hooks": [{"type": "command",
                            "command": "bash ~/.claude/scripts/burnless_session_seed.sh",
                            "timeout": 10}],
+            }, {
+                "hooks": [{"type": "command",
+                           "command": "bash ~/.claude/scripts/burnless_epoch_session.sh",
+                           "timeout": 10}],
+            }],
+            "SessionEnd": [{
+                "hooks": [{"type": "command",
+                           "command": "bash ~/.claude/scripts/burnless_epoch_end.sh",
+                           "timeout": 10}],
             }],
         }
     }
