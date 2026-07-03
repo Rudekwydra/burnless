@@ -540,3 +540,190 @@ def test_epoch_end_hook_accepts_reason_clear(tmp_path):
     assert list(handoff_dir.glob("*.json")), "SessionEnd(reason=clear) must write a handoff"
     journal_dir = root / "epochs" / "sessions" / "claude" / "old-sid" / "journal"
     assert list(journal_dir.glob("*.json")), "SessionEnd(reason=clear) must journal the last exchange"
+
+
+def test_inherit_checkpoint_bootstraps_new_session(tmp_path):
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    _seed_session_state(root)
+
+    committed = recovery.inherit_checkpoint(
+        root, host="claude", new_session_id="new-sid", process_instance_id="proc-x", old_session_id="old-sid"
+    )
+    assert committed is not None
+    fresh = recovery.read_checkpoint(root, "claude", "new-sid")
+    assert fresh is not None
+    assert "objetivo vivo" in fresh["living_md"]
+    assert int(fresh["applied_through"]) == 0
+    assert int(fresh["journal_head"]) == 0
+
+
+def test_inherit_checkpoint_is_idempotent(tmp_path):
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    _seed_session_state(root)
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="new-sid",
+        process_instance_id="proc-x",
+        living_md="## Foco atual\n- doc proprio da sessao nova\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=3,
+        journal_head=3,
+    )
+
+    assert recovery.inherit_checkpoint(
+        root, host="claude", new_session_id="new-sid", process_instance_id="proc-x", old_session_id="old-sid"
+    ) is None
+    kept = recovery.read_checkpoint(root, "claude", "new-sid")
+    assert "doc proprio" in kept["living_md"]
+    assert int(kept["applied_through"]) == 3
+
+
+def test_inherit_checkpoint_falls_back_to_latest_project_checkpoint(tmp_path):
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    _seed_session_state(root)
+
+    committed = recovery.inherit_checkpoint(
+        root, host="claude", new_session_id="new-sid", process_instance_id="proc-x", old_session_id=None
+    )
+    assert committed is not None
+    assert "objetivo vivo" in recovery.read_checkpoint(root, "claude", "new-sid")["living_md"]
+
+
+def test_clear_restore_inherits_checkpoint_for_new_session(tmp_path):
+    """The full /clear hook path must leave the NEW session with an inherited
+    checkpoint so its compaction evolves the living doc (memoria eterna)."""
+    script = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "burnless_epoch_session.sh"
+    home = tmp_path / "home"
+    project = home / "antigravity" / "demo"
+    project.mkdir(parents=True)
+    root = project / ".burnless"
+    root.mkdir(parents=True)
+    (root / "config.yaml").write_text("epochs:\n  enabled: true\n", encoding="utf-8")
+    _seed_session_state(root)
+
+    from burnless import recovery
+
+    recovery.write_handoff(root, host="claude", host_session_id="old-sid", process_instance_id="old-sid")
+
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env["BURNLESS_WORKSPACE_ROOT"] = str(home / "antigravity")
+    proc = subprocess.run(
+        ["bash", str(script)],
+        input=json.dumps({"session_id": "new-sid", "cwd": str(project), "source": "clear"}),
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip(), proc.stderr
+
+    inherited = recovery.read_checkpoint(root, "claude", "new-sid")
+    assert inherited is not None, "new session must inherit the predecessor checkpoint"
+    assert "objetivo vivo" in inherited["living_md"]
+    assert int(inherited["applied_through"]) == 0
+
+
+def test_inherited_doc_evolves_on_compaction(tmp_path):
+    """After inheritance, compaction must fold new exchanges INTO the
+    inherited doc (prompt carries it) instead of starting from scratch."""
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    _seed_session_state(root)
+    recovery.inherit_checkpoint(
+        root, host="claude", new_session_id="new-sid", process_instance_id="proc-x", old_session_id="old-sid"
+    )
+
+    recovery.journal_append(
+        root,
+        {
+            "schema": 1,
+            "host": "claude",
+            "host_session_id": "new-sid",
+            "process_instance_id": "proc-x",
+            "exchange_id": "sha256:nova-troca",
+            "user_text": "nova pergunta",
+            "assistant_text": "nova resposta",
+            "files": [],
+            "transcript_path": "/tmp/t.jsonl",
+        },
+    )
+
+    prompts: list[str] = []
+
+    def rewriter(prompt: str) -> str:
+        prompts.append(prompt)
+        return prompt.split("## Trocas pendentes")[0].strip() + "\n- evoluido com nova troca\n"
+
+    result = recovery.compact_pending(
+        root, host="claude", host_session_id="new-sid", process_instance_id="proc-x", rewriter=rewriter
+    )
+    assert result["status"] == "committed", result
+    assert "objetivo vivo" in prompts[0], "compaction prompt must carry the inherited doc"
+    final = recovery.read_checkpoint(root, "claude", "new-sid")
+    assert "objetivo vivo" in final["living_md"]
+    assert "evoluido com nova troca" in final["living_md"]
+    assert int(final["applied_through"]) == 1
+
+
+def test_pending_seed_writes_respect_state_dir_override(tmp_path, monkeypatch):
+    """Pilot rollover must never write the operator's real ~/.burnless/state:
+    running the test suite was contaminating live sessions (audit 2026-07-03)."""
+    from burnless.pilot.rollover import _pending_seed_path, _write_pending_seed
+
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("BURNLESS_STATE_DIR", str(state_dir))
+
+    _write_pending_seed(tmp_path / "proj", "conteudo do restore")
+    written = _pending_seed_path()
+    assert written == state_dir / "pending_seed.md"
+    assert written.exists()
+    assert "conteudo do restore" in written.read_text(encoding="utf-8")
+
+
+def test_foreign_pending_seed_does_not_silence_startup_restore(tmp_path):
+    """A pending_seed targeted at ANOTHER project must not suppress this
+    project's startup restore (it used to sys.exit(0) on target mismatch)."""
+    script = Path(__file__).resolve().parents[1] / "templates" / "scripts" / "burnless_session_seed.sh"
+    home = tmp_path / "home"
+    project = home / "antigravity" / "demo"
+    project.mkdir(parents=True)
+    root = project / ".burnless"
+    root.mkdir(parents=True)
+    (root / "config.yaml").write_text("epochs:\n  enabled: true\n", encoding="utf-8")
+    _seed_session_state(root)
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    foreign = state_dir / "pending_seed.md"
+    foreign.write_text(
+        "<!-- burnless-seed-target: /outro/projeto/qualquer -->\nseed de outro projeto\n",
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env["BURNLESS_WORKSPACE_ROOT"] = str(home / "antigravity")
+    env["BURNLESS_STATE_DIR"] = str(state_dir)
+    proc = subprocess.run(
+        ["bash", str(script)],
+        input=json.dumps({"session_id": "startup-sid", "cwd": str(project), "source": "startup"}),
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip(), "startup restore must still be served despite a foreign pending_seed"
+    assert "objetivo vivo" in proc.stdout
+    assert "seed de outro projeto" not in proc.stdout
+    assert foreign.exists(), "foreign seed must be left intact for its owner project"

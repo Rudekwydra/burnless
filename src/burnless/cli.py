@@ -1494,8 +1494,13 @@ def cmd_epoch(args: argparse.Namespace) -> int:
             host_session_id = str(claimed.get("host_session_id") or host_session_id)
             process_instance_id = str(claimed.get("process_instance_id") or process_instance_id)
         if not host_session_id:
-            print("")
-            return 0
+            if source == "startup" and new_session_id:
+                # Startup restore: no predecessor sid is known — render_restore
+                # falls back to the latest project checkpoint for this host.
+                host_session_id = new_session_id
+            else:
+                print("")
+                return 0
         payload = recovery_mod.render_restore(
             root,
             host=host,
@@ -1508,7 +1513,41 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         if payload is None:
             print("")
             return 0
+        try:
+            # Memoria eterna: bootstrap the new session's checkpoint from the
+            # one just served, so compaction evolves the living doc across
+            # rollovers instead of restarting it. Idempotent; never blocks
+            # the restore output.
+            served_old = str((payload.get("recovery") or {}).get("old_session") or host_session_id)
+            recovery_mod.inherit_checkpoint(
+                root,
+                host=host,
+                new_session_id=new_session_id,
+                process_instance_id=process_instance_id,
+                old_session_id=served_old,
+            )
+        except Exception:
+            pass
         print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    elif epoch_cmd == "inherit":
+        root = getattr(args, "root", None) or root_path
+        host = getattr(args, "host", "claude")
+        new_session_id = getattr(args, "new_session_id", "") or getattr(args, "session_id", "")
+        process_instance_id = getattr(args, "process_instance_id", "") or new_session_id
+        old_session_id = getattr(args, "host_session_id", None)
+        if not new_session_id:
+            print("")
+            return 0
+        committed = recovery_mod.inherit_checkpoint(
+            root,
+            host=host,
+            new_session_id=new_session_id,
+            process_instance_id=process_instance_id,
+            old_session_id=old_session_id,
+        )
+        print(json.dumps({"status": "inherited" if committed else "noop"}, ensure_ascii=False))
         return 0
 
     elif epoch_cmd == "hook-error":
@@ -2128,6 +2167,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--doctor", action="store_true", help="show host probe and exit")
     sp.add_argument("--report", action="store_true", help="show resolved pilot config and host probe")
     sp.add_argument("--auto-rollover", action="store_true", help="enable event-driven rollover monitor")
+    sp.add_argument("--no-auto", action="store_true", dest="no_auto", help="disable auto-rollover even when the host supports it (auto-rollover is ON by default)")
     sp.add_argument("--host", choices=["auto", "claude", "codex"], default="auto", help="host CLI to launch")
     sp.add_argument("--model", default=None, help="optional model override forwarded to the host")
     sp.add_argument("--run-id", default=None, dest="run_id", help="optional lineage id")
@@ -2138,6 +2178,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--doctor", action="store_true", help="show host probe and exit")
     sp.add_argument("--report", action="store_true", help="show resolved pilot config and host probe")
     sp.add_argument("--auto-rollover", action="store_true", help="enable event-driven rollover monitor")
+    sp.add_argument("--no-auto", action="store_true", dest="no_auto", help="disable auto-rollover even when the host supports it (auto-rollover is ON by default)")
     sp.add_argument("--host", choices=["auto", "claude", "codex"], default="auto", help="host CLI to launch")
     sp.add_argument("--model", default=None, help="optional model override forwarded to the host")
     sp.add_argument("--run-id", default=None, dest="run_id", help="optional lineage id")
@@ -2237,6 +2278,8 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-claim")
     esp = epoch_sub.add_parser("restore", parents=[epoch_core], help="render checkpoint + pending delta for SessionStart")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="restore")
+    esp = epoch_sub.add_parser("inherit", parents=[epoch_core], help="bootstrap the new session checkpoint from its predecessor (memoria eterna)")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="inherit")
     esp = epoch_sub.add_parser("hook-error", parents=[epoch_core], help="append a hook error to the global ledger")
     esp.add_argument("--hook", default="unknown", help="hook name (Stop/SessionStart/SessionEnd)")
     esp.add_argument("--message", default=None, help="error message (defaults to stdin)")
@@ -2552,6 +2595,42 @@ def _run_pilot_cycle(
     }
 
 
+def _pilot_resolve_auto_rollover(
+    *,
+    cli_auto_rollover: bool,
+    cli_no_auto: bool,
+    config_auto_rollover: object,
+    adapter: object,
+    host_name: str,
+) -> tuple[bool, str | None]:
+    """Resolve the effective auto-rollover flag.
+
+    Auto-rollover is ON by default (product default) unless explicitly disabled via
+    --no-auto or `pilot.auto_rollover: false` in config. It can only turn on when the
+    host declares full capability (supports_hooks AND supports_usage); otherwise it
+    stays off and a non-empty diagnostic string is returned explaining why.
+    """
+    requested = bool(cli_auto_rollover) or (
+        True if config_auto_rollover is None else bool(config_auto_rollover)
+    )
+    if cli_no_auto or not requested:
+        return False, None
+    if not hasattr(adapter, "capabilities"):
+        return True, None
+    capabilities = adapter.capabilities()
+    capable = bool(getattr(capabilities, "supports_hooks", False)) and bool(
+        getattr(capabilities, "supports_usage", False)
+    )
+    if not capable:
+        diagnostic = (
+            f"[pilot] auto-rollover desarmado: host '{host_name}' sem capabilities completas "
+            f"(supports_hooks={bool(getattr(capabilities, 'supports_hooks', False))}, "
+            f"supports_usage={bool(getattr(capabilities, 'supports_usage', False))})"
+        )
+        return False, diagnostic
+    return True, None
+
+
 def cmd_pilot(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     project_root = root.parent if root.name == ".burnless" else root
@@ -2570,7 +2649,7 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         print(f"  configured host: {pilot_cfg.get('host', 'auto')}")
         print(f"  configured model: {pilot_cfg.get('model', '(default)')}")
         print(f"  rollover mode: {pilot_cfg.get('rollover_mode', 'respawn')}")
-        print(f"  auto_rollover: {pilot_cfg.get('auto_rollover', False)}")
+        print(f"  auto_rollover: {pilot_cfg.get('auto_rollover', 'default-on (use --no-auto to disable)')}")
         print(f"  rollover_at_tokens: {pilot_cfg.get('rollover_at_tokens', 120000)}")
         print(f"  rollover_at_pct: {pilot_cfg.get('rollover_at_pct', 0.65)}")
         print(f"  delta_budget_tokens: {pilot_cfg.get('delta_budget_tokens', 2000)}")
@@ -2652,45 +2731,59 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         model = pilot_cfg.get("model")
     extra_args = getattr(args, "extra_args", []) or list(pilot_cfg.get("extra_args") or [])
     run_id = getattr(args, "run_id", None) or f"pilot-{int(time.time())}"
-    auto_rollover = bool(getattr(args, "auto_rollover", False) or pilot_cfg.get("auto_rollover", False))
+    auto_rollover, _auto_rollover_diagnostic = _pilot_resolve_auto_rollover(
+        cli_auto_rollover=bool(getattr(args, "auto_rollover", False)),
+        cli_no_auto=bool(getattr(args, "no_auto", False)),
+        config_auto_rollover=pilot_cfg.get("auto_rollover"),
+        adapter=adapter,
+        host_name=selected_host,
+    )
+    if _auto_rollover_diagnostic:
+        print(_auto_rollover_diagnostic, file=sys.stderr)
     current_session_id = run_id
     rollover_index = 1
     rc = 0
     pending_initial_input: bytes | None = None
 
-    while True:
-        next_session_id = _pilot_next_session_id(run_id, rollover_index)
-        cycle = _run_pilot_cycle(
-            project_root=project_root,
-            adapter=adapter,
-            model=model,
-            extra_args=extra_args,
-            run_id=run_id,
-            host_session_id=current_session_id,
-            pilot_cfg=pilot_cfg,
-            enable_monitor=auto_rollover,
-            is_restart_cycle=current_session_id != run_id,
-            fresh_session_id=next_session_id if auto_rollover else None,
-            host_arg=getattr(args, "host", "auto"),
-            initial_input_bytes=pending_initial_input,
-        )
-        pending_initial_input = None
-        rc = cycle["rc"]
-        if not auto_rollover:
-            break
+    try:
+        while True:
+            next_session_id = _pilot_next_session_id(run_id, rollover_index)
+            cycle = _run_pilot_cycle(
+                project_root=project_root,
+                adapter=adapter,
+                model=model,
+                extra_args=extra_args,
+                run_id=run_id,
+                host_session_id=current_session_id,
+                pilot_cfg=pilot_cfg,
+                enable_monitor=auto_rollover,
+                is_restart_cycle=current_session_id != run_id,
+                fresh_session_id=next_session_id if auto_rollover else None,
+                host_arg=getattr(args, "host", "auto"),
+                initial_input_bytes=pending_initial_input,
+            )
+            pending_initial_input = None
+            rc = cycle["rc"]
+            if not auto_rollover:
+                break
 
-        rollover = cycle.get("rollover") or {}
-        last = rollover.get("last") or {}
-        if last.get("status") != "prepared":
-            break
+            rollover = cycle.get("rollover") or {}
+            last = rollover.get("last") or {}
+            if last.get("status") != "prepared":
+                break
 
-        prepared_restore = (rollover.get("prepared") or {}).get("restore") or {}
-        restore_text = (prepared_restore.get("hookSpecificOutput") or {}).get("additionalContext")
-        if selected_host == "codex" and isinstance(restore_text, str) and restore_text.strip():
-            pending_initial_input = (restore_text.strip() + "\n").encode("utf-8")
+            prepared_restore = (rollover.get("prepared") or {}).get("restore") or {}
+            restore_text = (prepared_restore.get("hookSpecificOutput") or {}).get("additionalContext")
+            if selected_host == "codex" and isinstance(restore_text, str) and restore_text.strip():
+                pending_initial_input = (restore_text.strip() + "\n").encode("utf-8")
 
-        current_session_id = rollover.get("new_session_id") or next_session_id
-        rollover_index += 1
+            current_session_id = rollover.get("new_session_id") or next_session_id
+            rollover_index += 1
+    except KeyboardInterrupt:
+        # Ctrl-C between cycles (during relay it goes to the child). Journal,
+        # checkpoint and handoff are already durable — exit clean, no traceback.
+        print("burnless pilot: interrupted", file=sys.stderr)
+        return 130
 
     return int(rc)
 

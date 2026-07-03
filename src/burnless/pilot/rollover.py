@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -51,7 +52,11 @@ def render_restore(
 
 
 def _pending_seed_path() -> Path:
-    return Path.home() / ".burnless" / "state" / "pending_seed.md"
+    # BURNLESS_STATE_DIR keeps tests hermetic (never touch the operator's real
+    # ~/.burnless/state) and allows relocating global state.
+    override = os.environ.get("BURNLESS_STATE_DIR", "").strip()
+    base = Path(override) if override else Path.home() / ".burnless" / "state"
+    return base / "pending_seed.md"
 
 
 def _write_pending_seed(target_cwd: Path, restore_context: str) -> None:

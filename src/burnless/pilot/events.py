@@ -28,12 +28,23 @@ def session_log_path(root: Path) -> Path:
     return root / ".burnless" / "pilot" / "session_log.jsonl"
 
 
+def _json_default(obj):
+    # Telemetry rows may carry dataclasses (e.g. ContextUsage inside a
+    # rollover decision) or Paths; logging must serialize them, never crash
+    # the pilot (a TypeError here killed the respawn cycle on 2026-07-03).
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    if isinstance(obj, Path):
+        return str(obj)
+    return str(obj)
+
+
 def append_event(root: Path, run_id: str, event: PilotEvent | dict) -> None:
     payload = asdict(event) if is_dataclass(event) else dict(event)
     path = events_path(root, run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        f.write(json.dumps(payload, ensure_ascii=False, default=_json_default) + "\n")
 
 
 def normalize_and_append_event(root: Path, run_id: str, adapter: HostAdapter, payload: dict) -> PilotEvent:
@@ -88,10 +99,15 @@ def summarize_run_events(root: Path, run_id: str) -> dict:
 
 
 def append_session_log(root: Path, row: dict) -> None:
-    path = session_log_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    # Fail-open: telemetry must never take the pilot (and its respawn cycle)
+    # down with it.
+    try:
+        path = session_log_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False, default=_json_default) + "\n")
+    except Exception:
+        pass
 
 
 def read_session_log(root: Path, limit: int | None = None) -> list[dict]:

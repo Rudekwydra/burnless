@@ -5,7 +5,7 @@ set -uo pipefail
 
 INPUT="$(cat)" 2>/dev/null || exit 0
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-POINTER_FILE="$HOME/.burnless/state/pending_seed.md"
+POINTER_FILE="${BURNLESS_STATE_DIR:-$HOME/.burnless/state}/pending_seed.md"
 BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 
 INPUT_JSON="$INPUT" POINTER_FILE="$POINTER_FILE" BB="$BB" "$PYTHON_BIN" - <<'PY'
@@ -132,12 +132,16 @@ if pointer_file.exists():
                 else:
                     content = raw
                 if target is not None:
+                    matched = False
                     try:
-                        if not Path(cwd).resolve().is_relative_to(Path(target).resolve()):
-                            sys.exit(0)
+                        matched = Path(cwd).resolve().is_relative_to(Path(target).resolve())
                     except Exception:
-                        if cwd != target:
-                            sys.exit(0)
+                        matched = (cwd == target)
+                    if not matched:
+                        # Seed belongs to another project: leave the pointer
+                        # for its owner and FALL THROUGH to the startup
+                        # restore below — never silence this session's memory.
+                        content = ""
                 if content:
                     seed_msg = "[BURNLESS SEED] sessao iniciada leve a partir da capsule rolante.\n\n"
                     final_content = seed_msg + content
@@ -153,6 +157,25 @@ if pointer_file.exists():
                         pointer_file.unlink()
                     except OSError:
                         pass
+                    # Memoria eterna (pilot respawn): bootstrap this session's
+                    # checkpoint from the latest project checkpoint so the
+                    # living doc evolves across rollovers.
+                    if sid:
+                        try:
+                            subprocess.run(
+                                _burnless_cmd(
+                                    "epoch", "inherit",
+                                    "--root", root,
+                                    "--host", "claude",
+                                    "--new-session-id", sid,
+                                    "--process-instance-id", pid or sid,
+                                ),
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            )
+                        except Exception:
+                            pass
                     sys.exit(0)
     except Exception:
         pass

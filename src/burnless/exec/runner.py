@@ -1023,7 +1023,10 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                 break
 
             with log_path.open("a", encoding="utf-8") as _lf:
-                _lf.write(f"\n\n--- RETRY_{_retry_count + 1} ---\n" + _retry_res.get("stdout", "") + "\n")
+                _retry_stdout = _retry_res.get("stdout", "")
+                if isinstance(_retry_stdout, bytes):
+                    _retry_stdout = _retry_stdout.decode("utf-8", errors="replace")
+                _lf.write(f"\n\n--- RETRY_{_retry_count + 1} ---\n" + _retry_stdout + "\n")
 
             _rj = deleg_mod.extract_result_json(_retry_res.get("stdout", ""))
             _r_stale = bool(_retry_res.get("stale"))

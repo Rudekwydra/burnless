@@ -1096,6 +1096,72 @@ def claim_handoff(
         return payload
 
 
+def inherit_checkpoint(
+    root,
+    *,
+    host: str,
+    new_session_id: str,
+    process_instance_id: str,
+    old_session_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Bootstrap the NEW session's checkpoint from its predecessor's living_md.
+
+    Without this, every rollover restarts the living doc from scratch: the old
+    checkpoint is only injected as context (and correctly filtered from
+    recapture as restore noise), so carried knowledge decays after ~1 rollover.
+    Inheriting makes compaction EVOLVE one long-lived document across sessions
+    ("memoria eterna"): applied_through starts at 0, so every new journal
+    entry is still pending and gets folded into the inherited doc.
+
+    Idempotent: never overwrites an existing checkpoint for the new session.
+    """
+    if not new_session_id:
+        return None
+    root_path = _root_path(root)
+    if read_checkpoint(root_path, host, new_session_id) is not None:
+        return None
+    source_sid = old_session_id
+    source_checkpoint: dict[str, Any] | None = None
+    if source_sid and source_sid != new_session_id:
+        source_checkpoint = read_checkpoint(root_path, host, source_sid)
+    if source_checkpoint is None:
+        latest = _latest_project_checkpoint(root_path, host)
+        if latest is not None and latest[0] != new_session_id:
+            source_sid, source_checkpoint = latest
+    if not source_checkpoint:
+        return None
+    living_md = (source_checkpoint.get("living_md") or "").strip()
+    if not living_md:
+        return None
+    harvested = source_checkpoint.get("harvested_state")
+    if not isinstance(harvested, dict):
+        harvested = {"contracts": [], "refs": [], "open_threads": []}
+    committed = write_checkpoint(
+        root_path,
+        host=host,
+        host_session_id=new_session_id,
+        process_instance_id=process_instance_id,
+        living_md=living_md,
+        harvested_state=harvested,
+        applied_through=0,
+        journal_head=0,
+    )
+    owner_loop.log_owner_event(
+        root_path,
+        {
+            "phase": "recovery",
+            "event": "checkpoint_inherited",
+            "host": host,
+            "host_session_id": new_session_id,
+            "process_instance_id": process_instance_id,
+            "inherited_from": source_sid,
+            "inherited_generation": int(source_checkpoint.get("generation") or 0),
+            "living_chars": len(living_md),
+        },
+    )
+    return committed
+
+
 def _truncate_text(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text

@@ -53,7 +53,9 @@ class ClaudeAdapter:
         return HostSession(host=self.name, host_session_id=run_id, process_instance_id=run_id, cwd=str(Path.cwd()))
 
     def context_usage(self, session: HostSession) -> ContextUsage:
-        return claude_context_usage(session.cwd)
+        root = Path(session.cwd) if session.cwd else Path.cwd()
+        run_id = session.host_session_id or session.process_instance_id or ""
+        return claude_context_usage(session.cwd, root=root, run_id=run_id)
 
     def is_turn_idle(self, session: HostSession) -> bool:
         try:
