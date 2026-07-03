@@ -412,6 +412,62 @@ pilot:
     assert updated["pilot"]["host"] == "codex"
 
 
+def test_pilot_auto_falls_back_noninteractive_without_exiting(tmp_path, monkeypatch, capsys):
+    from burnless import cli
+    from burnless.pilot.core import HostInstallation
+
+    burnless_root = tmp_path / ".burnless"
+    burnless_root.mkdir(parents=True, exist_ok=True)
+    (burnless_root / "config.yaml").write_text(
+        """
+pilot:
+  host: auto
+  auto_rollover: false
+""",
+        encoding="utf-8",
+    )
+
+    chosen = {}
+
+    class DummyAdapter:
+        name = "claude"
+
+        def build_interactive_argv(self, root, model=None, extra_args=()):
+            return [sys.executable, "-c", "print('ok')"]
+
+        def capabilities(self):
+            return type("C", (), {"reset_strategy": "respawn"})()
+
+        def context_usage(self, session):
+            return type("U", (), {"current": None, "limit": None, "confidence": "unknown"})()
+
+        def locate_session(self, run_id):
+            return type("S", (), {"host": "claude", "host_session_id": run_id, "process_instance_id": run_id})()
+
+    monkeypatch.setattr(
+        "burnless.cli.pilot_discover_hosts",
+        lambda: [
+            HostInstallation(name="claude", command="claude", path="/usr/bin/claude", version="claude 1.0", available=True),
+            HostInstallation(name="codex", command="codex", path="/usr/bin/codex", version="codex 1.0", available=True),
+        ],
+    )
+    monkeypatch.setattr("burnless.cli.paths_mod.require_root", lambda: burnless_root)
+    monkeypatch.setattr("burnless.cli.sys.stdin", type("S", (), {"isatty": lambda self: False})())
+
+    def fake_resolve(host, **kw):
+        chosen["host"] = host
+        return DummyAdapter()
+
+    monkeypatch.setattr("burnless.cli.pilot_resolve_host_adapter", fake_resolve)
+    monkeypatch.setattr("burnless.cli.pilot_run", lambda *a, **kw: 0)
+
+    rc = cli.cmd_pilot(type("A", (), {"doctor": False, "report": False, "host": "auto", "model": None, "run_id": None, "extra_args": []})())
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "non-interactive launch detected" in out.err
+    assert chosen["host"] == "claude"
+
+
 def test_monitor_rollover_loop_prepares_when_idle_and_above_threshold(tmp_path):
     from burnless import recovery
     from burnless.pilot import append_event, monitor_rollover_loop
