@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from . import config, pricing
+from . import metrics as metrics_mod
 
 
 class AgentError(RuntimeError):
@@ -851,12 +852,38 @@ def _run_once(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | N
     }
 
 
+def _append_spend_for_result(*, cwd: Path | None, tier: str, result: dict) -> None:
+    try:
+        if cwd is None:
+            return
+        usage = result.get("usage") or {}
+        if not isinstance(usage, dict) or not usage:
+            return
+        burnless_root = Path(cwd) / ".burnless"
+        metrics_mod.append_spend(
+            burnless_root / "spend.jsonl",
+            ts=result.get("ended_at") or datetime.now(timezone.utc).isoformat(),
+            delegation_id=result.get("delegation_id"),
+            tier=tier,
+            provider=result.get("selected_provider") or result.get("provider"),
+            model=result.get("model") or None,
+            usage=usage,
+            duration_s=float(result.get("duration_s") or 0.0),
+            backend=str(result.get("selected_provider") or result.get("provider") or ""),
+            retry_count=int(len(result.get("provider_attempts") or [])),
+        )
+    except Exception:
+        pass
+
+
 def run(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = None, tier: str | None = None) -> dict:
     """Execute the agent CLI with provider autobalance + retryable fallback."""
     tier_name = str(tier or agent_cfg.get("provider_tier") or "default")
     ranked = rank_providers(agent_cfg, tier=tier_name)
     if not ranked:
-        return _run_once(agent_cfg, prompt, timeout=timeout, cwd=cwd)
+        result = _run_once(agent_cfg, prompt, timeout=timeout, cwd=cwd)
+        _append_spend_for_result(cwd=cwd, tier=tier_name, result=result)
+        return result
     attempts: list[dict] = []
     for idx, item in enumerate(ranked):
         provider_cfg = item["cfg"]
@@ -878,6 +905,7 @@ def run(agent_cfg: dict, prompt: str, *, timeout: int = 600, cwd: Path | None = 
             }
         )
         result["provider_attempts"] = attempts
+        _append_spend_for_result(cwd=cwd, tier=tier_name, result=result)
         if success:
             return result
         if idx < len(ranked) - 1 and not _retryable_provider_failure(result):

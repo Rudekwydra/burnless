@@ -65,6 +65,46 @@ def test_build_worker_agent_unknown_provider():
     assert "unknown provider: nope" in str(exc_info.value)
 
 
+def test_build_worker_agent_codex_injects_model_flag():
+    """Regression: codex worker command must pin the requested model via -m,
+    otherwise the override silently falls back to codex's own default model."""
+    agent = build_worker_agent("codex", "gpt-5.5")
+    assert "-m gpt-5.5" in agent["command"]
+
+
+def test_apply_worker_overrides_preserves_tier_metadata():
+    """Overriding a tier's provider/model must not drop unrelated tier
+    metadata like role/sandbox/workspace_root that the override didn't ask
+    to change."""
+    cfg = {
+        "agents": {
+            "silver": {
+                "name": "sonnet",
+                "command": "old-command",
+                "role": "everyday_execution_filesystem",
+                "sandbox": "workspace-write",
+                "workspace_root": "/some/root",
+                "allow_net": True,
+                "shell_timeout_s": 120,
+                "providers": [{"name": "sonnet", "provider": "anthropic"}],
+            }
+        }
+    }
+    result = apply_worker_overrides(cfg, {"silver": "codex:gpt-5.5"})
+
+    agent = result["agents"]["silver"]
+    assert agent["provider"] == "codex"
+    assert "-m gpt-5.5" in agent["command"]
+    # Metadata unrelated to provider/model selection survives the override.
+    assert agent["role"] == "everyday_execution_filesystem"
+    assert agent["sandbox"] == "workspace-write"
+    assert agent["workspace_root"] == "/some/root"
+    assert agent["allow_net"] is True
+    assert agent["shell_timeout_s"] == 120
+    # Stale fallback list from the old provider must not survive the override.
+    assert "providers" not in agent
+
+
 def test_apply_worker_overrides_mutation_safety():
     """Test that input cfg is NOT mutated (deep copy semantics)."""
     original_cfg = {

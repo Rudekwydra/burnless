@@ -51,6 +51,7 @@ DEFAULT_METRICS: dict = {
 
 _CACHE_READ_USD_PER_TOKEN = 0.30 / 1_000_000  # Sonnet $0.30/MTok
 _GLOBAL_EVENTS_PATH = Path.home() / ".burnless" / "global_metrics.jsonl"
+_DEFAULT_SPEND_PATH = Path.home() / ".burnless" / "spend.jsonl"
 
 VALID_SOURCES = set(DEFAULT_METRICS["by_source"].keys())
 
@@ -119,6 +120,7 @@ def record(
     delegation_id: str | None = None,
     extra: dict | None = None,
     usd_per_million: float = 15.0,
+    basis: str = "estimated",
 ) -> dict:
     if source not in VALID_SOURCES:
         raise ValueError(f"unknown source: {source}")
@@ -152,6 +154,7 @@ def record(
         "amount": amount,
         "reason": reason,
         "delegation_id": delegation_id,
+        "basis": basis,
     }
     if extra:
         entry["extra"] = extra
@@ -212,6 +215,7 @@ def record_encoder_call(
             "ts": datetime.now(timezone.utc).isoformat(),
             "source": "capsule_compression",
             "amount": saved,
+            "basis": f"chars{chars_per_token:g}",
             "reason": "encoder: raw user message → capsule",
             "extra": {
                 "raw_chars": raw_input_chars,
@@ -269,6 +273,7 @@ def record_decoder_call(
             "ts": datetime.now(timezone.utc).isoformat(),
             "source": "output_decompression_avoided",
             "amount": avoided,
+            "basis": "api_usage",
             "reason": "decoder: Maestro capsule → expanded prose (Maestro-equivalent floor)",
             "extra": {
                 "capsule_input_tokens": capsule_input_tokens,
@@ -330,6 +335,7 @@ def record_brain_call(
             "ts": datetime.now(timezone.utc).isoformat(),
             "source": "repeated_context_avoided",
             "amount": saved,
+            "basis": "api_usage",
             "reason": f"brain ({model}): cache hit, prefix served from cache",
             "extra": {
                 "model": model,
@@ -472,3 +478,55 @@ def read_audit(audit_path: Path, limit: int | None = None) -> list[dict]:
     if limit is not None:
         return out[-limit:]
     return out
+
+
+def append_spend(
+    spend_path: Path,
+    *,
+    ts: str,
+    delegation_id: str | None,
+    tier: str | None,
+    provider: str | None,
+    model: str | None,
+    usage: dict | None,
+    duration_s: float | None,
+    backend: str | None = None,
+    retry_count: int | None = None,
+) -> None:
+    """Append one actual-usage record to spend.jsonl. Fail-open."""
+    try:
+        entry = {
+            "ts": ts,
+            "delegation_id": delegation_id,
+            "tier": tier,
+            "provider": provider,
+            "model": model,
+            "usage": usage or {},
+            "duration_s": duration_s,
+            "backend": backend,
+            "retry_count": retry_count,
+        }
+        spend_path.parent.mkdir(parents=True, exist_ok=True)
+        with spend_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def read_spend(spend_path: Path | None = None, limit: int | None = None) -> list[dict]:
+    spend_path = spend_path or _DEFAULT_SPEND_PATH
+    if not spend_path.exists():
+        return []
+    rows: list[dict] = []
+    with spend_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if limit is not None:
+        return rows[-limit:]
+    return rows

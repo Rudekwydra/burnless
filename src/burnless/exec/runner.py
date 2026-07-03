@@ -74,6 +74,12 @@ class RunOpts:
     mode: str | None = None
     cold_cache: bool = False
     verbose: bool = False
+    # Per-call tier->'provider:model' overrides (e.g. from --gold/--silver/...).
+    # Applied in-memory to the loaded config for THIS run only — never
+    # written to .burnless/config.yaml (2026-07-02 audit finding #2: the old
+    # disk-patch-then-restore approach could leak the override permanently
+    # on crash/SIGKILL, or race with a parallel run reading the same file).
+    worker_overrides: dict | None = None
 
 
 def _load_anthropic_key() -> str | None:
@@ -103,6 +109,35 @@ def _select_provider_cfg(agent_cfg: dict, *, tier: str) -> tuple[dict, list[dict
     if not ranked:
         return agent_cfg, []
     return ranked[0]["cfg"], ranked
+
+
+_DETERMINISTIC_FAILURE_RE = re.compile(
+    r"unexpected argument|cannot be used multiple times|unrecognized arguments|"
+    r"command not found|no such file or directory|^usage:|SyntaxError|ModuleNotFoundError",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _is_retryable_run_failure(summary: dict, result: dict | None) -> bool:
+    """True if a PART/ERR is worth an automatic retry, False if it looks like
+    a deterministic failure (bad CLI invocation, missing binary, syntax
+    error) that will fail identically on retry.
+
+    Reuses agents._retryable_provider_failure() as the positive (transient)
+    signal — timeout/stale/5xx — and adds a blocklist of known-deterministic
+    stdout/stderr signatures that short-circuit retry instead of burning an
+    attempt (2026-07-02 audit finding #4). Falls back to permissive (True)
+    when neither signal fires, preserving prior behavior for PART/ERR that
+    the worker itself judged incomplete rather than a hard CLI failure.
+    """
+    if result is None:
+        return True
+    if agents_mod._retryable_provider_failure(result):
+        return True
+    blob = "\n".join(str(result.get(f) or "") for f in ("stderr", "stdout", "error"))
+    if _DETERMINISTIC_FAILURE_RE.search(blob):
+        return False
+    return True
 
 
 def _record_provider_attempt(tier: str, provider_cfg: dict, result: dict) -> None:
@@ -247,6 +282,79 @@ def _should_use_cached_worker(args: argparse.Namespace, cfg: dict, tier: str, ap
     if cw_cfg.get("enabled") is not True:
         return False
     return True
+
+def _apply_syntax_gate(
+    summary: dict,
+    *,
+    cwd,
+    did: str,
+    log_path,
+    timeout: int,
+) -> dict:
+    """Auto syntax-check every file the worker touched, regardless of tier.
+
+    Generates a syntax command per file extension (.py -> py_compile,
+    .sh/.bash -> bash -n, .json -> json.load) and runs it. Catches worker
+    file corruption even when the spec's ## Verify does not cover it.
+    No-op unless status is OK. May only demote OK->PART; never promotes.
+    """
+    if summary.get("status") != "OK":
+        return summary
+    files = summary.get("files_touched") or []
+    if not files:
+        return summary
+    syntax_log = "\n--- SYNTAX GATE ---\n"
+    checked = 0
+    for f in files:
+        p = f if os.path.isabs(f) else os.path.join(str(cwd), f)
+        if not os.path.exists(p):
+            continue
+        ext = os.path.splitext(p)[1].lower()
+        if ext == ".py":
+            cmd = f'python3 -m py_compile "{p}"'
+        elif ext in (".sh", ".bash"):
+            cmd = f'bash -n "{p}"'
+        elif ext == ".json":
+            cmd = f'python3 -c "import json,sys; json.load(open(sys.argv[1]))" "{p}"'
+        else:
+            continue
+        try:
+            r = subprocess.run(
+                cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout
+            )
+            syntax_log += f"$ {cmd}\n{r.stdout}{r.stderr}\n"
+            if r.returncode != 0:
+                out_tail = ((r.stdout or "") + (r.stderr or "")).strip()[-500:]
+                with open(log_path, "a", encoding="utf-8") as _lf:
+                    _lf.write(syntax_log)
+                summary = dict(summary)
+                summary["status"] = "PART"
+                issues = list(summary.get("issues") or [])
+                issues.append(f"syntax_failed: {cmd} (rc={r.returncode}): {out_tail}")
+                summary["issues"] = issues
+                summary["next"] = cmd
+                return summary
+            checked += 1
+        except subprocess.TimeoutExpired:
+            syntax_log += f"$ {cmd}\n(timeout after {timeout}s)\n"
+            with open(log_path, "a", encoding="utf-8") as _lf:
+                _lf.write(syntax_log)
+            summary = dict(summary)
+            summary["status"] = "PART"
+            issues = list(summary.get("issues") or [])
+            issues.append(f"syntax_failed: {cmd} (rc=timeout): timed out after {timeout}s")
+            summary["issues"] = issues
+            summary["next"] = cmd
+            return summary
+    syntax_log += f"({checked} file(s) ok)\n"
+    with open(log_path, "a", encoding="utf-8") as _lf:
+        _lf.write(syntax_log)
+    summary = dict(summary)
+    validated = list(summary.get("validated") or [])
+    validated.append(f"syntax: {checked}/{checked} files ok")
+    summary["validated"] = validated
+    return summary
+
 
 def _apply_verify_gate(
     summary: dict,
@@ -421,6 +529,8 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     root = root or paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
+    if opts.worker_overrides:
+        cfg = config_mod.apply_worker_overrides(cfg, opts.worker_overrides)
     state = state_mod.load(p["state"])
     metrics = metrics_mod.load(p["metrics"])
     metrics_mod.bump_legacy_counter(p["metrics"], "legacy_run_calls")
@@ -452,6 +562,13 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         chain=chain,
         cache_prefix=cache_prefix,
     )
+    if opts.cold_cache:
+        # Bust any prefix cache on the subprocess path too — previously
+        # --cold-cache only worked for the cached_worker backend, so
+        # cold-start benchmarks against claude/codex/gemini subprocess
+        # workers were silently still warm (2026-07-02 audit finding #6).
+        _cc_nonce = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        prompt = prompt + f"\n\n<!-- cache-bust:{_cc_nonce} -->"
 
     # which tier did we pick at delegate time?
     # cheap parse: look at "agent:" line in the markdown
@@ -465,6 +582,11 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     selected_agent_cfg, ranked_providers = _select_provider_cfg(agent_cfg, tier=tier)
     selected_provider = selected_agent_cfg.get("provider") or selected_agent_cfg.get("name")
     provider_name = selected_agent_cfg.get("provider") or ""
+    # Tracks whichever provider cfg actually ran most recently (updated below
+    # if the intra-run provider-fallback block kicks in), so the later
+    # PART/ERR retry loop repeats the SAME backend instead of silently
+    # re-ranking from the original tier config (2026-07-02 audit finding #5).
+    _active_agent_cfg = selected_agent_cfg
 
     # Codex warm brief injection is re-wired in phase 3; for now leave empty.
     warm_codex_brief = ""
@@ -592,6 +714,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                 liveness_mode=str((cfg.get("display") or {}).get("liveness_mode", "time")),
                 warm_codex_brief=warm_codex_brief,
                 warm_codex_flags=warm_codex_flags,
+                cold_cache=opts.cold_cache,
             )
             result = result_obj.to_dict()
         except Exception as e:
@@ -654,6 +777,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
             },
         ]
         result = fallback_result
+        _active_agent_cfg = fallback_cfg
 
     # Always isolate raw log out of the main context.
     raw_size = estimate_tokens(result.get("stdout", "")) + estimate_tokens(result.get("stderr", ""))
@@ -836,6 +960,13 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
             except Exception as _resc_e:
                 print(f"[bronze-rescue] {did}: rescue failed ({_resc_e}), falling back to retry", file=sys.stderr)
 
+    # ── Auto syntax gate (catches worker file corruption regardless of tier) ──
+    if cfg.get("validation", {}).get("auto_syntax_check", True):
+        summary = _apply_syntax_gate(
+            summary, cwd=root.parent, did=did, log_path=log_path,
+            timeout=cfg.get("validation", {}).get("verify_timeout_s", 120),
+        )
+
     # ── Honest exit code gate (call site A) ─────────────────────────────────
     summary = _apply_verify_gate(
         summary, _verify_cmds,
@@ -863,7 +994,14 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         _is_stale = stale and "stale_worker" in (summary.get("issues") or [])
         _attempts_left = 1 if _is_stale else _max_attempts
         if _do_retry is None:
-            _do_retry = (_is_stale and _stale_retry_enabled) or (not _is_stale and _attempts_left > 0)
+            # Deterministic CLI/parse failures (bad flags, missing binary,
+            # syntax errors) fail identically on retry — don't burn an
+            # attempt on them. Stale-worker retries are exempt: staleness
+            # isn't a deterministic-failure signal (2026-07-02 audit #4).
+            if not _is_stale and not _is_retryable_run_failure(summary, result):
+                _do_retry = False
+            else:
+                _do_retry = (_is_stale and _stale_retry_enabled) or (not _is_stale and _attempts_left > 0)
 
         while _do_retry and _attempts_left > 0:
             _attempts_left -= 1
@@ -878,7 +1016,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
             print(f"[retry] {did}: prev={_cur_status}, attempt {_retry_count + 1}", file=sys.stderr)
             try:
                 _retry_res = agents_mod.run(
-                    agent_cfg, _retry_prompt_text, timeout=_retry_timeout, cwd=root.parent
+                    _active_agent_cfg, _retry_prompt_text, timeout=_retry_timeout, cwd=root.parent, tier=tier
                 )
             except Exception as _re:
                 print(f"[retry] agent run failed: {_re}", file=sys.stderr)
@@ -922,6 +1060,12 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
             _new_status = str(_r_sum.get("status") or "").upper()
 
             if _new_status == "OK":
+                # Auto syntax gate (call site B)
+                if cfg.get("validation", {}).get("auto_syntax_check", True):
+                    _r_sum = _apply_syntax_gate(
+                        _r_sum, cwd=root.parent, did=did, log_path=log_path,
+                        timeout=cfg.get("validation", {}).get("verify_timeout_s", 120),
+                    )
                 # Honest exit code gate (call site B) — re-verify before accepting
                 _r_sum = _apply_verify_gate(
                     _r_sum, _verify_cmds,

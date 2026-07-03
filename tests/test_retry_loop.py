@@ -337,3 +337,231 @@ def test_no_retry_fields_zero_when_ok_immediately(tmp_path: Path, monkeypatch):
 
     assert summary["retry_count"] == 0
     assert summary["retry_status"] == []
+
+
+# ── 6. Regression tests for 2026-07-02 audit findings #4/#5/#6 ──────────────
+# #4: retry loop retried deterministic CLI failures (bad flags, missing
+#     binary) identically instead of recognizing they can't self-heal.
+# #5: retry called agents_mod.run(agent_cfg, ...) with the ORIGINAL tier
+#     config (no tier= kwarg), instead of the provider actually selected
+#     for the first attempt — silently re-ranking/switching provider.
+# #6: --cold-cache only busted the cached_worker backend; subprocess/codex/
+#     claude runs stayed warm regardless of the flag.
+
+from burnless.exec import runner as runner_mod
+
+
+class TestIsRetryableRunFailure:
+    """Unit tests for the new runner_mod._is_retryable_run_failure classifier."""
+
+    def test_none_result_defaults_retryable(self):
+        assert runner_mod._is_retryable_run_failure({"status": "PART"}, None) is True
+
+    def test_timeout_is_retryable(self):
+        result = {"stdout": "", "stderr": "", "timed_out": True}
+        assert runner_mod._is_retryable_run_failure({}, result) is True
+
+    def test_stale_is_retryable(self):
+        result = {"stdout": "", "stderr": "", "stale": True}
+        assert runner_mod._is_retryable_run_failure({}, result) is True
+
+    def test_5xx_stderr_is_retryable(self):
+        result = {"stdout": "", "stderr": "upstream error 503 service unavailable"}
+        assert runner_mod._is_retryable_run_failure({}, result) is True
+
+    def test_unexpected_argument_not_retryable(self):
+        """The exact failure mode from the 2 bugs fixed earlier today: codex
+        CLI rejecting a malformed invocation with 'unexpected argument'."""
+        result = {"stdout": "", "stderr": "error: unexpected argument '--foo' found", "returncode": 2}
+        assert runner_mod._is_retryable_run_failure({}, result) is False
+
+    def test_flag_used_multiple_times_not_retryable(self):
+        result = {"stdout": "", "stderr": "argument '--skip-git-repo-check' cannot be used multiple times", "returncode": 2}
+        assert runner_mod._is_retryable_run_failure({}, result) is False
+
+    def test_command_not_found_not_retryable(self):
+        result = {"stdout": "", "stderr": "bash: codexx: command not found", "returncode": 127}
+        assert runner_mod._is_retryable_run_failure({}, result) is False
+
+    def test_missing_binary_not_retryable(self):
+        result = {"stdout": "", "stderr": "/usr/bin/env: 'python5': No such file or directory", "returncode": 127}
+        assert runner_mod._is_retryable_run_failure({}, result) is False
+
+    def test_ambiguous_part_defaults_retryable(self):
+        """A worker-judged PART with no deterministic CLI signature (e.g. it
+        just didn't finish the task) still gets the benefit of the doubt."""
+        result = {"stdout": "some normal worker output", "stderr": "", "returncode": 0}
+        assert runner_mod._is_retryable_run_failure({}, result) is True
+
+
+class TestRetryLoopUsesSelectedProviderAndTier(object):
+    """End-to-end regression for finding #5: the PART/ERR retry call must
+    reuse the provider selected for the FIRST attempt (not the raw tier
+    config) and must pass tier= so agents_mod.run() ranks/records health
+    under the right tier bucket instead of falling back to 'default'."""
+
+    def _make_root(self, tmp_path: Path) -> Path:
+        root = tmp_path / ".burnless"
+        p = paths.paths_for(root)
+        for key in ("delegations", "logs", "temp", "capsules", "archive", "chat", "runs"):
+            p[key].mkdir(parents=True, exist_ok=True)
+        return root
+
+    def test_retry_call_receives_selected_agent_cfg_and_tier(self, tmp_path, monkeypatch):
+        root = self._make_root(tmp_path)
+        p = paths.paths_for(root)
+        did = "d001"
+        (p["delegations"] / f"{did}.md").write_text(
+            "- **Agent:** codex-gpt-5.5 (silver)\n\nDo the task.\n", encoding="utf-8"
+        )
+
+        # Two distinct providers under the same tier — ranking picks the
+        # SECOND one (simulating a health-based reorder). If the retry call
+        # still used the raw, un-ranked tier config (the pre-fix bug), it
+        # would neither match the selected provider's identity nor its
+        # command, since the raw tier dict here carries no runnable command
+        # of its own.
+        primary_provider = {"name": "primary-provider", "command": "primary-cmd", "provider": "codex"}
+        secondary_provider = {"name": "secondary-provider", "command": "secondary-cmd", "provider": "codex"}
+        cfg = {
+            "agents": {
+                "silver": {
+                    "name": "silver-tier",
+                    "providers": [primary_provider, secondary_provider],
+                }
+            },
+            "retry": {"max_attempts": 1, "stale_worker_retry": True, "audit_retry": False},
+            "metrics": {"expensive_model_usd_per_million": 15.0},
+            "validation": {"honest_exit_code": False},
+        }
+
+        from burnless.exec import runner as rmod
+
+        monkeypatch.setattr(rmod.config_mod, "load", lambda path: cfg)
+        monkeypatch.setattr(rmod.state_mod, "load", lambda path: {})
+        monkeypatch.setattr(rmod.metrics_mod, "load", lambda path: {"burnless_tokens": 0})
+        monkeypatch.setattr(rmod, "_record_and_bump", lambda *a, **k: None)
+        monkeypatch.setattr(rmod, "_emit_audit_record", lambda *a, **k: None)
+        monkeypatch.setattr(rmod.agents_mod, "is_available", lambda cfg: True)
+        monkeypatch.setattr(rmod.agents_mod, "maybe_prepend_prior_decision", lambda prompt, tier: prompt)
+        # Force ranking to prefer the SECOND provider, mimicking a
+        # health-based reorder distinct from source order.
+        monkeypatch.setattr(
+            rmod.agents_mod, "rank_providers",
+            lambda agent_cfg, tier: [{"cfg": secondary_provider}, {"cfg": primary_provider}],
+        )
+
+        first_result = {
+            "agent": "secondary-provider",
+            "command": ["codex", "exec"],
+            "stdout": _part_result(did),
+            "stderr": "",
+            "returncode": 0,
+            "started_at": "2026-07-02T00:00:00Z",
+            "ended_at": "2026-07-02T00:00:01Z",
+            "duration_s": 1.0,
+            "interrupted": False,
+            "stale": False,
+        }
+
+        class _FakeRunResult:
+            def to_dict(self_inner):
+                return dict(first_result)
+
+        monkeypatch.setattr(rmod.live_runner, "run_with_overflow_retries", lambda **kwargs: _FakeRunResult())
+
+        retry_calls = []
+
+        def fake_agents_run(agent_cfg, prompt, *, timeout, cwd, tier=None):
+            retry_calls.append({"agent_cfg": agent_cfg, "tier": tier})
+            return {"stdout": _ok_result(did), "stderr": "", "returncode": 0, "stale": False, "interrupted": False}
+
+        monkeypatch.setattr(rmod.agents_mod, "run", fake_agents_run)
+
+        opts = rmod.RunOpts(id=did)
+        rmod.execute_delegation(opts, root=root)
+
+        assert len(retry_calls) == 1, "retry should call agents_mod.run exactly once"
+        assert retry_calls[0]["agent_cfg"] == secondary_provider, (
+            "retry must reuse the provider selected for the first attempt "
+            f"(secondary-provider), got: {retry_calls[0]['agent_cfg']}"
+        )
+        assert retry_calls[0]["tier"] == "silver", (
+            "retry must pass tier= so provider health/ranking is recorded under the real tier, not 'default'"
+        )
+
+
+class TestColdCacheReachesSubprocessPath:
+    """Regression for finding #6: --cold-cache was only wired into the
+    cached_worker backend; the default subprocess/live_runner path (claude,
+    codex, gemini CLIs) ignored RunOpts.cold_cache entirely, so cold-cache
+    benchmarks against those providers were silently still warm."""
+
+    def _make_root(self, tmp_path: Path) -> Path:
+        root = tmp_path / ".burnless"
+        p = paths.paths_for(root)
+        for key in ("delegations", "logs", "temp", "capsules", "archive", "chat", "runs"):
+            p[key].mkdir(parents=True, exist_ok=True)
+        return root
+
+    def test_cold_cache_flag_reaches_live_runner_and_busts_prompt(self, tmp_path, monkeypatch):
+        root = self._make_root(tmp_path)
+        p = paths.paths_for(root)
+        did = "d002"
+        (p["delegations"] / f"{did}.md").write_text(
+            "- **Agent:** codex-gpt-5.5 (silver)\n\nDo the task.\n", encoding="utf-8"
+        )
+        (p["logs"] / f"{did}.log").write_text("", encoding="utf-8")
+
+        cfg = {
+            "agents": {
+                "silver": {"name": "codex-gpt-5.5", "command": "codex exec -m gpt-5.5", "provider": "codex"},
+            },
+            "retry": {"max_attempts": 1, "stale_worker_retry": True, "audit_retry": False},
+            "metrics": {"expensive_model_usd_per_million": 15.0},
+            "validation": {"honest_exit_code": False},
+        }
+
+        from burnless.exec import runner as rmod
+
+        monkeypatch.setattr(rmod.config_mod, "load", lambda path: cfg)
+        monkeypatch.setattr(rmod.state_mod, "load", lambda path: {})
+        monkeypatch.setattr(rmod.metrics_mod, "load", lambda path: {"burnless_tokens": 0})
+        monkeypatch.setattr(rmod, "_record_and_bump", lambda *a, **k: None)
+        monkeypatch.setattr(rmod, "_emit_audit_record", lambda *a, **k: None)
+        monkeypatch.setattr(rmod.agents_mod, "is_available", lambda cfg: True)
+        monkeypatch.setattr(rmod.agents_mod, "maybe_prepend_prior_decision", lambda prompt, tier: prompt)
+
+        captured_calls = []
+
+        class _FakeRunResult:
+            def to_dict(self_inner):
+                return {
+                    "agent": "codex-gpt-5.5",
+                    "command": ["codex", "exec"],
+                    "stdout": _ok_result(did),
+                    "stderr": "",
+                    "returncode": 0,
+                    "started_at": "2026-07-02T00:00:00Z",
+                    "ended_at": "2026-07-02T00:00:01Z",
+                    "duration_s": 1.0,
+                    "interrupted": False,
+                    "stale": False,
+                }
+
+        def fake_run_with_overflow_retries(**kwargs):
+            captured_calls.append(kwargs)
+            return _FakeRunResult()
+
+        monkeypatch.setattr(rmod.live_runner, "run_with_overflow_retries", fake_run_with_overflow_retries)
+
+        opts = rmod.RunOpts(id=did, cold_cache=True)
+        rmod.execute_delegation(opts, root=root)
+
+        assert len(captured_calls) == 1
+        assert captured_calls[0]["cold_cache"] is True, (
+            "cold_cache must reach live_runner.run_with_overflow_retries on the subprocess path"
+        )
+        assert "cache-bust:" in captured_calls[0]["prompt"], (
+            "cold_cache must also bust the prompt text itself, not just gate warm-session injection"
+        )

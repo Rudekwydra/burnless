@@ -33,6 +33,16 @@ def test_append_and_slot_names(tmp_path):
     assert (d / "003.md").read_text() == "epoch 3"
 
 
+def test_append_epoch_uses_max_plus_one_after_gap(tmp_path):
+    d = epoch_dir(tmp_path, "chatGap")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "001.md").write_text("first", encoding="utf-8")
+    (d / "003.md").write_text("third", encoding="utf-8")
+
+    new_path = append_epoch(tmp_path, "chatGap", "fourth")
+    assert new_path.name == "004.md"
+
+
 def test_needs_consolidation(tmp_path):
     for i in range(9):
         append_epoch(tmp_path, "chatX", f"epoch {i+1}")
@@ -40,6 +50,13 @@ def test_needs_consolidation(tmp_path):
     assert needs_consolidation(tmp_path, "chatX", 0) is False
 
     append_epoch(tmp_path, "chatX", "epoch 10")
+
+    assert needs_consolidation(tmp_path, "chatX", 0) is True
+
+
+def test_needs_consolidation_triggers_on_more_than_ten(tmp_path):
+    for i in range(11):
+        append_epoch(tmp_path, "chatX", f"epoch {i+1}")
 
     assert needs_consolidation(tmp_path, "chatX", 0) is True
 
@@ -63,6 +80,31 @@ def test_consolidate_moves_to_originais(tmp_path):
 
     assert (d / "originais" / "001.md").exists()
     assert (d / "originais" / "010.md").exists()
+
+
+def test_consolidate_uses_max_plus_one_after_gap(tmp_path):
+    up = lambda text: "CONS:" + str(len(text))
+
+    d = epoch_dir(tmp_path, "chatX")
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "001.md").write_text("epoch 1", encoding="utf-8")
+    (d / "003.md").write_text("epoch 3", encoding="utf-8")
+    for i in range(2, 11):
+        if i == 3:
+            continue
+        (d / f"{i:03d}.md").write_text(f"epoch {i}", encoding="utf-8")
+
+    result = consolidate_level(tmp_path, "chatX", 0, up)
+    assert result is not None
+    assert result.name == "a01.md"
+
+    (d / "b01.md").write_text("older level 1", encoding="utf-8")
+    (d / "b03.md").write_text("older level 3", encoding="utf-8")
+    for i in range(1, 11):
+        (d / f"a{i:02d}.md").write_text(f"level1 epoch {i}", encoding="utf-8")
+    result2 = consolidate_level(tmp_path, "chatX", 1, up)
+    assert result2 is not None
+    assert result2.name == "b04.md"
 
 
 def test_consolidate_fail_open(tmp_path):

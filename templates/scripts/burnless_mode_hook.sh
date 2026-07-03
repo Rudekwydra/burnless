@@ -19,16 +19,31 @@ python_hook() {
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 # canonical modes + legacy alias coercion (deprecated; not persisted as legacy)
 CANON = {"off", "observe", "on"}
 LEGACY = {"partner": "observe", "rollover": "on"}  # legacy alias coercion (deprecated)
+PROJECT_MODE_TTL_SECONDS = 24 * 60 * 60
+SESSION_MODE_GC_SECONDS = 7 * 24 * 60 * 60
 
 
 def canon(value):
     v = (value or "").strip()
     return LEGACY.get(v, v if v in CANON else "off")
+
+
+def slugify(value):
+    text = str(value or "").strip().lower()
+    out = []
+    for ch in text:
+        if ch.isalnum() or ch in {"-", "_"}:
+            out.append(ch)
+        else:
+            out.append("-")
+    slug = "".join(out).strip("-")
+    return slug or "project"
 
 
 def emit(context):
@@ -45,7 +60,24 @@ try:
     payload = json.loads(os.environ["INPUT_JSON"])
     sid = str(payload.get("session_id") or "").strip()
     prompt = str(payload.get("prompt") or "").strip()
+    project_source = (
+        payload.get("cwd")
+        or os.environ.get("PWD")
+        or os.environ.get("BURNLESS_WORKSPACE")
+        or Path.cwd()
+    )
+    project_slug = slugify(Path(str(project_source)).name)
     mode_file = state_dir / f"session-{sid}.mode" if sid else None
+    project_mode_file = state_dir / f"last-{project_slug}.mode"
+
+    def gc_orphans():
+        cutoff = time.time() - SESSION_MODE_GC_SECONDS
+        for path in state_dir.glob("session-*.mode"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def read_raw_mode():
         if mode_file and mode_file.exists():
@@ -53,14 +85,27 @@ try:
                 return mode_file.read_text(encoding="utf-8", errors="replace").strip() or "off"
             except OSError:
                 return "off"
+        if project_mode_file.exists():
+            try:
+                if time.time() - project_mode_file.stat().st_mtime > PROJECT_MODE_TTL_SECONDS:
+                    project_mode_file.unlink(missing_ok=True)
+                    return "off"
+                return project_mode_file.read_text(encoding="utf-8", errors="replace").strip() or "off"
+            except OSError:
+                return "off"
         return "off"
 
     def write_mode(value):
+        gc_orphans()
         if mode_file:
             try:
                 mode_file.write_text(value, encoding="utf-8")
             except OSError:
                 pass
+        try:
+            project_mode_file.write_text(value, encoding="utf-8")
+        except OSError:
+            pass
 
     # /burnless command handler
     if prompt and prompt.lstrip().startswith(("/burnless", "__BURNLESS_MODE_CMD__")):

@@ -91,7 +91,6 @@ def test_refine_owner_async_job_writes_real_refined_seed_with_fake_claude():
             "  enabled: true\n",
             encoding="utf-8",
         )
-        (burnless_root / "epochs.on").write_text("", encoding="utf-8")
 
         chat_a = "chat_a"
         chat_b = "chat_b"

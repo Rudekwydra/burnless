@@ -165,9 +165,9 @@ Retorne o documento COMPLETO atualizado com EXATAMENTE 5 seções (nesta ordem):
 Mantenha todo o doc sob ~{budget_tokens} tokens; comprima 'Decisões' ao máximo.
 Sem pensamento/debate/markdown extra — apenas as 5 seções.
 
-## Documento anterior (vazio se primeira vez)
+## Documento anterior (se houver)
 ```
-{prev_md if prev_md else '<vazio>'}
+{prev_md if prev_md else ''}
 ```
 
 ## Nova troca/evento
@@ -304,6 +304,7 @@ def parse_living_v3(md: str) -> dict[str, list[str]]:
     if not md.strip():
         return result
 
+    ignored_headers = {"Documento completo atualizado"}
     lines = md.split('\n')
     current_section = None
     current_body = []
@@ -314,6 +315,8 @@ def parse_living_v3(md: str) -> dict[str, list[str]]:
                 entries = _parse_section_entries(current_body)
                 result[current_section] = entries
             current_section = line[3:].strip()
+            if current_section in ignored_headers:
+                current_section = None
             current_body = []
         else:
             if current_section:
@@ -366,7 +369,7 @@ def _parse_section_entries(body_lines: list[str]) -> list[str]:
             else:
                 entry = line.strip()
 
-            if entry:
+            if entry and entry != "<vazio>":
                 entries.append(entry)
 
             i += 1
@@ -426,9 +429,9 @@ Sem pensamento/debate/markdown extra — apenas as 8 seções.
 - Para cada entrada que mantiver: copie o TEXTO-NÚCLEO exatamente como está (mesmas palavras), e só (a) mova-a para a seção semanticamente correta, (b) prefixe a faixa `[doctrine]/[state]/[inflight]`, (c) anexe provenance `[chat:ID·tN]` ou marque supersede. O núcleo entre as decorações deve ser substring exata do original.
 - Pode REMOVER entradas (dedup, superadas, irrelevantes) e REORDENAR. NÃO pode inventar frases novas nem juntar duas entradas numa paráfrase.
 
-## Documento anterior (vazio se primeira vez)
+## Documento anterior (se houver)
 ```
-{prev_md if prev_md else '<vazio>'}
+{prev_md if prev_md else ''}
 ```
 
 ## Nova troca/evento
@@ -614,15 +617,23 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
 
         try:
             if provider == "ollama-local":
-                local_api = os.environ.get("BURNLESS_LOCAL_API", "").strip().lower()
+                # RM-2: endpoint/timeout come from config (encoder.endpoint,
+                # encoder.timeout_s); BURNLESS_LOCAL_API is an override, not
+                # the only path. Defaults: ollama :11434, 90s.
+                local_api = (os.environ.get("BURNLESS_LOCAL_API") or str(enc.get("local_api") or "")).strip().lower()
+                cfg_endpoint = str(enc.get("endpoint") or "").strip()
+                try:
+                    cfg_timeout = float(enc.get("timeout_s") or 0)
+                except (TypeError, ValueError):
+                    cfg_timeout = 0
                 if local_api == "llamacpp":
-                    url = "http://localhost:11435/completion"
+                    url = cfg_endpoint or "http://localhost:11435/completion"
                     data = json.dumps({"prompt": prompt}).encode()
-                    timeout_val = 120
+                    timeout_val = cfg_timeout or 120
                 else:
-                    url = "http://localhost:11434/api/generate"
+                    url = cfg_endpoint or "http://localhost:11434/api/generate"
                     data = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
-                    timeout_val = 20
+                    timeout_val = cfg_timeout or 90
 
                 req = urllib.request.Request(
                     url,

@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -47,11 +48,21 @@ def append_epoch(root: Path, chat_id: str, summary_md: str) -> Path:
     d.mkdir(parents=True, exist_ok=True)
 
     level0_files = _level_files(d, 0)
-    next_n = len(level0_files) + 1
+    next_n = (int(level0_files[-1].stem) if level0_files else 0) + 1
 
     slot = _slot_name(0, next_n)
     path = d / slot
-    path.write_text(summary_md, encoding='utf-8')
+    tmp = tempfile.NamedTemporaryFile(mode='w', dir=d, delete=False, encoding='utf-8')
+    try:
+        tmp.write(summary_md)
+        tmp.close()
+        os.replace(tmp.name, path)
+    except Exception:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+        raise
 
     return path
 
@@ -62,7 +73,7 @@ def needs_consolidation(root: Path, chat_id: str, level: int) -> bool:
         return False
 
     level_files = _level_files(d, level)
-    return len(level_files) == 10 and level + 1 < len(LEVEL_PREFIXES)
+    return len(level_files) >= 10 and level + 1 < len(LEVEL_PREFIXES)
 
 
 def consolidate_level(root: Path, chat_id: str, level: int, summarizer) -> Path | None:
@@ -83,11 +94,21 @@ def consolidate_level(root: Path, chat_id: str, level: int, summarizer) -> Path 
 
     next_level = level + 1
     next_level_files = _level_files(d, next_level)
-    next_n = len(next_level_files) + 1
+    next_n = (int(next_level_files[-1].stem[1:]) if next_level_files else 0) + 1
 
     slot = _slot_name(next_level, next_n)
     path = d / slot
-    path.write_text(consolidated, encoding='utf-8')
+    tmp = tempfile.NamedTemporaryFile(mode='w', dir=d, delete=False, encoding='utf-8')
+    try:
+        tmp.write(consolidated)
+        tmp.close()
+        os.replace(tmp.name, path)
+    except Exception:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
+        raise
 
     originais_dir = d / "originais"
     originais_dir.mkdir(parents=True, exist_ok=True)
@@ -685,7 +706,7 @@ def build_refine_owner_candidates(root, current_chat_id=None) -> tuple[list[tupl
         for chat_dir in epochs_dir.iterdir():
             if not chat_dir.is_dir():
                 continue
-            if chat_dir.name == "_rolling" or chat_dir.name == current_chat_id:
+            if chat_dir.name == "_rolling":
                 continue
             lp = epochs_v2.living_path(root, chat_dir.name)
             if lp.exists() and lp.read_text(encoding='utf-8').strip():

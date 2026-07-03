@@ -154,6 +154,45 @@ def test_persisted_rollover_migrates_to_on(tmp_path):
     _no_rollover_artifacts(home, "mig-sid")
 
 
+def test_on_mode_survives_clear_via_project_fallback(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PWD"] = str(project)
+    proc = subprocess.run(
+        ["bash", str(HOOK)],
+        input=json.dumps({"session_id": "sid-a", "hook_event_name": "UserPromptSubmit", "prompt": "/burnless on"}),
+        text=True,
+        capture_output=True,
+        env=env,
+        cwd=project,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert _mode_file(home, "sid-a").read_text(encoding="utf-8").strip() == "on"
+    assert (home / ".burnless" / "state" / "last-project.mode").read_text(encoding="utf-8").strip() == "on"
+
+    env2 = os.environ.copy()
+    env2["HOME"] = str(home)
+    env2["PWD"] = str(project)
+    proc2 = subprocess.run(
+        ["bash", str(HOOK)],
+        input=json.dumps({"session_id": "sid-b", "hook_event_name": "UserPromptSubmit", "prompt": "do a thing"}),
+        text=True,
+        capture_output=True,
+        env=env2,
+        cwd=project,
+        check=False,
+    )
+    assert proc2.returncode == 0, proc2.stderr
+    assert "[BURNLESS ON]" in json.loads(proc2.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert not _mode_file(home, "sid-b").exists()
+
+
 # ---- menu lists only canonical modes -------------------------------------
 
 def test_menu_lists_canonical_modes(tmp_path):

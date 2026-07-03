@@ -1,52 +1,59 @@
 #!/bin/bash
 [[ -n "$BURNLESS_NO_EPOCH" ]] && exit 0
+# legacy compatibility: epoch refine-owner / ROOT/.burnless/epochs/_rolling/seed.md
 export PATH="$HOME/.local/bin:$PATH"
 BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 stdin_data=$(cat)
-SID=$(echo "$stdin_data" | /usr/bin/jq -r '.session_id // empty' 2>/dev/null)
-CWD=$(echo "$stdin_data" | /usr/bin/jq -r '.cwd // empty' 2>/dev/null)
-TP=$(echo "$stdin_data" | /usr/bin/jq -r '.transcript_path // empty' 2>/dev/null)
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+WORKSPACE_ROOT="${BURNLESS_WORKSPACE_ROOT:-${BURNLESS_WORKSPACE:-$HOME/antigravity/burnless}}"
+json_field() {
+  INPUT_JSON="$stdin_data" "$PYTHON_BIN" - "$1" <<'PY'
+import json
+import os
+import sys
+
+payload = json.loads(os.environ.get("INPUT_JSON", "{}"))
+field = sys.argv[1]
+if field == "session_id":
+    print(payload.get("session_id") or "")
+elif field == "cwd":
+    print(payload.get("cwd") or "")
+elif field == "transcript_path":
+    print(payload.get("transcript_path") or "")
+elif field == "process_instance_id":
+    print(payload.get("process_instance_id") or "")
+PY
+}
+# Stable lineage id: nearest claude/node ancestor pid. Survives /clear (same
+# host process, new session id) and distinguishes concurrent windows.
+host_pid() {
+  local pid=$$ i comm
+  for i in 1 2 3 4 5 6 7 8; do
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    [[ -z "$pid" || "$pid" == "0" || "$pid" == "1" ]] && break
+    comm=$(ps -o comm= -p "$pid" 2>/dev/null)
+    case "${comm##*/}" in
+      claude*|node*) printf 'host-%s' "$pid"; return 0;;
+    esac
+  done
+  return 1
+}
+SID=$(json_field session_id)
+CWD=$(json_field cwd)
+TP=$(json_field transcript_path)
+PID=$(json_field process_instance_id)
+[[ -z "$PID" ]] && PID=$(host_pid)
+[[ -z "$PID" ]] && PID="$SID"
 [[ -z "$SID" || -z "$CWD" || -z "$TP" ]] && exit 0
-ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$HOME/antigravity" --transcript "$TP" 2>/dev/null)
+ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --transcript "$TP" 2>/dev/null)
 [[ -z "$ROOT" ]] && exit 0
 [[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
-extracted=$(python3 -c '
-import sys, json
-u = ""
-a = ""
-try:
-  for ln in open(sys.argv[1]):
-    try:
-      o = json.loads(ln)
-      m = o.get("message", {})
-      r = m.get("role")
-      c = m.get("content")
-      if isinstance(c, list):
-        t = "".join(b.get("text", "") for b in c if b.get("type") == "text")
-      elif isinstance(c, str):
-        t = c
-      else:
-        t = ""
-      if not t.strip():
-        continue
-      if r == "user":
-        u = t
-      elif r == "assistant":
-        a = t
-    except:
-      pass
-  if u or a:
-    print("PERGUNTA:\n" + u + "\n\nRESPOSTA:\n" + a)
-except:
-  pass
-' "$TP" 2>/dev/null)
-case "$extracted" in *"Resuma o trecho de conversa abaixo"*) exit 0 ;; esac
-[[ -z "$extracted" ]] && exit 0
+EXTRACTED=$("$BB" epoch extract-exchange --transcript "$TP" --host claude --host-session-id "$SID" --process-instance-id "$PID" --cwd "$CWD" --source stop 2>/dev/null)
+[[ -z "$EXTRACTED" ]] && exit 0
 mkdir -p "$ROOT/.burnless/epochs/_rolling"
+RECORD=$(printf '%s' "$EXTRACTED" | "$BB" epoch journal-append --root "$ROOT" 2>/dev/null)
+[[ -z "$RECORD" ]] && exit 0
 {
-  tmp="$ROOT/.burnless/epochs/_rolling/.seed.md.tmp.$$"
-  echo "$extracted" | "$BB" epoch capture --chat-id "$SID" --root "$ROOT" --emit-chain > "$tmp" 2>/dev/null
-  if [[ -s "$tmp" ]]; then mv -f "$tmp" "$ROOT/.burnless/epochs/_rolling/seed.md"; else rm -f "$tmp"; fi
-  BURNLESS_EPOCH_V2=1 "$BB" epoch refine-owner --chat-id "$SID" --root "$ROOT" >/dev/null 2>&1
+  printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host claude --host-session-id "$SID" --process-instance-id "$PID" >/dev/null 2>&1
 } &
 exit 0

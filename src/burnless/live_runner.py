@@ -284,8 +284,13 @@ def run_with_live_panel(
     liveness_mode: str = "time",
     warm_codex_brief: str = "",
     warm_codex_flags: list[str] | None = None,
+    cold_cache: bool = False,
 ) -> RunResult:
-    """Run an agent while saving output and showing mode-specific progress."""
+    """Run an agent while saving output and showing mode-specific progress.
+
+    cold_cache=True skips warm-session fork/resume injection below, so a
+    --cold-cache run actually starts cold on the subprocess path too (it
+    previously only worked for the cached_worker backend)."""
     command = resolve_command(agent_cfg)
     if shutil.which(command[0]) is None:
         raise AgentError(
@@ -325,7 +330,7 @@ def run_with_live_panel(
     except Exception:
         pass
     fork_uuid = None
-    if "--resume" not in command:
+    if "--resume" not in command and not cold_cache:
         from .agents import _detect_provider_from_parts, _extract_model_from_parts
         provider = _detect_provider_from_parts(list(command))
         if provider is not None:
@@ -855,6 +860,7 @@ def run_with_overflow_retries(
     liveness_mode: str = "time",
     warm_codex_brief: str = "",
     warm_codex_flags: list[str] | None = None,
+    cold_cache: bool = False,
 ) -> RunResult:
     current_tier = tier
     current_cfg = agent_cfg
@@ -888,6 +894,7 @@ def run_with_overflow_retries(
             liveness_mode=liveness_mode,
             warm_codex_brief=warm_codex_brief,
             warm_codex_flags=warm_codex_flags,
+            cold_cache=cold_cache,
         )
         last_result = result
         first_started_at = first_started_at or result.started_at

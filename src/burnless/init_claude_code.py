@@ -17,6 +17,7 @@ _MANAGED = [
     ("scripts/burnless_session_seed.sh", ".claude/scripts/burnless_session_seed.sh"),
     ("scripts/burnless_offload_hook.sh", ".claude/scripts/burnless_offload_hook.sh"),
     ("scripts/burnless_epoch_stop.sh",    ".claude/scripts/burnless_epoch_stop.sh"),
+    ("scripts/burnless_epoch_end.sh",     ".claude/scripts/burnless_epoch_end.sh"),
     ("scripts/burnless_epoch_session.sh", ".claude/scripts/burnless_epoch_session.sh"),
 ]
 
@@ -50,6 +51,7 @@ def is_wired(home: Path, templates_dir: Path | None = None) -> dict:
     sessionstart = False
     userprompt = False
     stop = False
+    sessionend = False
     epoch_session = False
     data: dict = {}
 
@@ -79,6 +81,11 @@ def is_wired(home: Path, templates_dir: Path | None = None) -> dict:
         stop = any(
             "burnless_epoch_stop.sh" in h.get("command", "")
             for grp in hooks.get("Stop", [])
+            for h in grp.get("hooks", [])
+        )
+        sessionend = any(
+            "burnless_epoch_end.sh" in h.get("command", "")
+            for grp in hooks.get("SessionEnd", [])
             for h in grp.get("hooks", [])
         )
         epoch_session = any(
@@ -111,6 +118,7 @@ def is_wired(home: Path, templates_dir: Path | None = None) -> dict:
         "sessionstart": sessionstart,
         "userprompt": userprompt,
         "stop": stop,
+        "sessionend": sessionend,
         "epoch_session": epoch_session,
         "managed": managed,
         "templates_dir": str(templates_dir) if templates_dir else None,
@@ -142,8 +150,9 @@ def wire_settings_hook(home: Path) -> str:
         already_mode = wired_info["userprompt"]
         already_seed = wired_info["sessionstart"]
         already_stop = wired_info["stop"]
+        already_sessionend = wired_info["sessionend"]
         already_epoch_session = wired_info["epoch_session"]
-        if already_mode and already_seed and already_stop and already_epoch_session:
+        if already_mode and already_seed and already_stop and already_sessionend and already_epoch_session:
             return "already-wired"
 
         settings_path = home / ".claude" / "settings.json"
@@ -154,11 +163,13 @@ def wire_settings_hook(home: Path) -> str:
         hooks = data.setdefault("hooks", {})
         ups = hooks.setdefault("UserPromptSubmit", [])
         ss = hooks.setdefault("SessionStart", [])
+        se = hooks.setdefault("SessionEnd", [])
         stop_grp = hooks.setdefault("Stop", [])
         CMD = "bash ~/.claude/scripts/burnless_mode_hook.sh"
         CMD2 = "bash ~/.claude/scripts/burnless_session_seed.sh"
         CMD3 = "bash ~/.claude/scripts/burnless_epoch_stop.sh"
-        CMD4 = "bash ~/.claude/scripts/burnless_epoch_session.sh"
+        CMD4 = "bash ~/.claude/scripts/burnless_epoch_end.sh"
+        CMD5 = "bash ~/.claude/scripts/burnless_epoch_session.sh"
 
         if not already_mode:
             ups.append({"hooks": [{"type": "command", "command": CMD, "timeout": 3}]})
@@ -166,8 +177,10 @@ def wire_settings_hook(home: Path) -> str:
             ss.append({"hooks": [{"type": "command", "command": CMD2, "timeout": 10}]})
         if not already_stop:
             stop_grp.append({"hooks": [{"type": "command", "command": CMD3, "async": True}]})
+        if not already_sessionend:
+            se.append({"hooks": [{"type": "command", "command": CMD4, "timeout": 10}]})
         if not already_epoch_session:
-            ss.append({"hooks": [{"type": "command", "command": CMD4, "timeout": 10}]})
+            ss.append({"hooks": [{"type": "command", "command": CMD5, "timeout": 10}]})
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         if settings_path.exists():
             bak_path = settings_path.parent / (settings_path.name + ".bak-burnless")
@@ -208,6 +221,7 @@ def unwire_settings_hook(home: Path) -> str:
         ups = [grp for grp in ups if grp.get("hooks")]
 
         ss = hooks.setdefault("SessionStart", [])
+        se = hooks.setdefault("SessionEnd", [])
         new_ss = []
         for grp in ss:
             new_hooks = []
@@ -221,6 +235,19 @@ def unwire_settings_hook(home: Path) -> str:
                 grp["hooks"] = new_hooks
                 new_ss.append(grp)
         ss[:] = new_ss
+
+        new_se = []
+        for grp in se:
+            new_hooks = []
+            for h in grp.get("hooks", []):
+                if "burnless_epoch_end.sh" not in h.get("command", ""):
+                    new_hooks.append(h)
+                else:
+                    changed = True
+            if new_hooks:
+                grp["hooks"] = new_hooks
+                new_se.append(grp)
+        se[:] = new_se
 
         stop_grp = hooks.setdefault("Stop", [])
         new_stop = []

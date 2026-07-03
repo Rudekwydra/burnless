@@ -98,6 +98,40 @@ def test_audit_session_mode_returns_all(tmp_project_with_audit, capsys, monkeypa
     assert "d43" in captured.out
 
 
+def test_audit_session_mode_includes_usage_summary(tmp_project_with_audit, capsys, monkeypatch):
+    """Session audit should surface real usage when spend.jsonl is present."""
+    burnless_root = tmp_project_with_audit / ".burnless"
+    monkeypatch.setattr("burnless.paths.require_root", lambda: burnless_root)
+
+    spend_path = burnless_root / "spend.jsonl"
+    spend_path.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-02T00:00:00Z",
+                "delegation_id": "d42",
+                "tier": "silver",
+                "provider": "claude",
+                "model": "claude-sonnet",
+                "usage": {"input_tokens": 4, "output_tokens": 8},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    args = argparse.Namespace(
+        delegation_id=None,
+        session=True,
+        json=False,
+    )
+    rc = cli.cmd_audit(args)
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "usage real:" in captured.out
+    assert "silver" in captured.out
+    assert "claude" in captured.out
+
+
 def test_audit_session_json_returns_all(tmp_project_with_audit, capsys, monkeypatch):
     """Test that --session --json returns all records as JSON."""
     burnless_root = tmp_project_with_audit / ".burnless"

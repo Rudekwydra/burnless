@@ -2,6 +2,8 @@
 import json
 import urllib.request
 
+import pytest
+
 
 class _MockResponse:
     def __init__(self, data: dict):
@@ -15,6 +17,12 @@ class _MockResponse:
 
     def __exit__(self, *args):
         pass
+
+
+@pytest.fixture(autouse=True)
+def _clear_local_api_env(monkeypatch):
+    """Keep these tests deterministic regardless of the shell's local API mode."""
+    monkeypatch.delenv("BURNLESS_LOCAL_API", raising=False)
 
 
 def test_is_ollama_tools_agent():
@@ -162,3 +170,49 @@ def test_run_ollama_tools_generic_done_no_tools_keeps_generic_summary(monkeypatc
     assert env["status"] == "OK"
     assert env["files_touched"] == []
     assert env["summary"] == "done"
+
+
+def test_run_ollama_tools_llamacpp_branch_handles_tool_calls(tmp_path, monkeypatch):
+    from burnless.ollama_worker import run_ollama_tools
+
+    target = tmp_path / "llama.txt"
+    call_count = [0]
+
+    def fake_urlopen(req, timeout=None):
+        assert req.full_url.endswith("/v1/chat/completions")
+        c = call_count[0]
+        call_count[0] += 1
+        if c == 0:
+            return _MockResponse({
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "escrever_arquivo",
+                                        "arguments": json.dumps(
+                                            {
+                                                "caminho": str(target),
+                                                "conteudo": "llama path",
+                                            }
+                                        ),
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            })
+        return _MockResponse({"choices": [{"message": {"role": "assistant", "content": "done"}}]})
+
+    monkeypatch.setenv("BURNLESS_LOCAL_API", "llamacpp")
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    env = run_ollama_tools("test-model", "write the file", cwd=str(tmp_path))
+    assert env["status"] == "OK"
+    assert target.exists()
+    assert target.read_text() == "llama path"
+    assert str(target) in env["files_touched"]
