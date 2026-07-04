@@ -2,7 +2,7 @@
 # Burnless restore (rolling memory carry-forward)
 stdin_data=$(cat)
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-WORKSPACE_ROOT="${BURNLESS_WORKSPACE_ROOT:-${BURNLESS_WORKSPACE:-$HOME/antigravity/burnless}}"
+WORKSPACE_ROOT="${BURNLESS_WORKSPACE_ROOT:-${BURNLESS_WORKSPACE:-$HOME/antigravity}}"
 json_field() {
   INPUT_JSON="$stdin_data" "$PYTHON_BIN" - "$1" <<'PY'
 import json

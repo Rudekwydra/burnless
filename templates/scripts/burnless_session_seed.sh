@@ -32,7 +32,7 @@ def _burnless_cmd(*args: str) -> list[str]:
 
 def _resolve_root(cwd: str, transcript: str | None = None) -> str | None:
     proc = subprocess.run(
-        _burnless_cmd("epoch", "resolve-root", "--cwd", cwd, "--workspace", os.environ.get("BURNLESS_WORKSPACE_ROOT") or os.environ.get("BURNLESS_WORKSPACE") or f"{Path.home()}/antigravity/burnless", *(("--transcript", transcript) if transcript else ())),
+        _burnless_cmd("epoch", "resolve-root", "--cwd", cwd, "--workspace", os.environ.get("BURNLESS_WORKSPACE_ROOT") or os.environ.get("BURNLESS_WORKSPACE") or f"{Path.home()}/antigravity", *(("--transcript", transcript) if transcript else ())),
         capture_output=True,
         text=True,
         check=False,
