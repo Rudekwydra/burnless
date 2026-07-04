@@ -100,3 +100,23 @@ def test_resolve_ignores_stray_home_config(tmp_path, monkeypatch):
 
     result = resolve_root(tmp_path, workspace=tmp_path)
     assert result == proj
+
+
+def test_detect_from_transcript_ignores_json_garbage(tmp_path):
+    """A transcript line where the workspace path is followed immediately by
+    JSON (no slash, no whitespace before the next token) must NOT be counted
+    as a project name -- this corrupted resolve_root's return value for real
+    on 2026-07-04 (a hook JSON payload citing the workspace path leaked into
+    the returned "root")."""
+    workspace = tmp_path / "antigravity"
+    workspace.mkdir()
+    transcript = tmp_path / "transcript.jsonl"
+
+    garbage_line = f'{{"cwd":"{workspace}/burnless","sessionId":"abc","version":"2.1.201","gitBranch":"HEAD"}}\n'
+    real_line = f'edited {workspace}/RealProj/src/main.py\n'
+
+    content = (garbage_line * 6) + (real_line * 6)
+    transcript.write_text(content, encoding="utf-8")
+
+    result = _detect_from_transcript(transcript, workspace)
+    assert result == workspace / "RealProj"

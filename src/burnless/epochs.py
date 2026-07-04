@@ -385,6 +385,7 @@ def _detect_from_transcript(transcript, workspace) -> Path | None:
         proj_counts = {}
         text = transcript_path.read_text(encoding='utf-8', errors='ignore')
 
+        _SAFE_PROJ_NAME_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
         for line in text.split('\n'):
             try:
                 if workspace.as_posix() in line:
@@ -392,7 +393,7 @@ def _detect_from_transcript(transcript, workspace) -> Path | None:
                     if len(parts) > 1:
                         remainder = parts[1]
                         proj_name = remainder.split('/')[0] if '/' in remainder else remainder.split()[0]
-                        if proj_name and not proj_name.startswith('.'):
+                        if proj_name and not proj_name.startswith('.') and _SAFE_PROJ_NAME_RE.match(proj_name):
                             proj_counts[proj_name] = proj_counts.get(proj_name, 0) + 1
             except Exception:
                 continue
