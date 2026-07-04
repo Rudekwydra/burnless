@@ -57,7 +57,7 @@ def write_refined_seed(
     }
     
     tmp_path = cache_path + ".tmp"
-    with open(tmp_path, "w") as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     Path(tmp_path).rename(cache_path)
 
@@ -76,7 +76,7 @@ def read_valid_refined_seed(cache_path: str, current_fingerprint: str) -> str | 
         Never raises exception to caller (fail-closed).
     """
     try:
-        with open(cache_path) as f:
+        with open(cache_path, encoding="utf-8") as f:
             payload = json.load(f)
         
         if payload.get("fingerprint") == current_fingerprint:
