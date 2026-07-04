@@ -83,3 +83,20 @@ def test_carry_forward_seed_fallback(tmp_path):
 
     result = carry_forward_chain(root, "newsid")
     assert result == seed_text
+
+
+def test_resolve_ignores_stray_home_config(tmp_path, monkeypatch):
+    """A stray .burnless/config.yaml directly at Path.home() (e.g. from an
+    accidental `burnless init` run in $HOME) must NOT make resolve_root
+    treat home as its own project root -- home is the global state bucket,
+    not a project. Falls through to the freshest real project instead."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".burnless").mkdir(parents=True)
+    (tmp_path / ".burnless" / "config.yaml").write_text("project_name: Project")
+
+    proj = tmp_path / "RealProj"
+    (proj / ".burnless" / "epochs" / "_rolling").mkdir(parents=True)
+    (proj / ".burnless" / "epochs" / "_rolling" / "seed.md").write_text("real seed")
+
+    result = resolve_root(tmp_path, workspace=tmp_path)
+    assert result == proj

@@ -94,7 +94,7 @@ def index_record(
 
     index_path = _index_path(root)
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(index_path, "a") as f:
+    with open(index_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
     if content is not None:
@@ -117,7 +117,7 @@ def read_index(root: pathlib.Path | str) -> list[dict]:
         return []
 
     records = []
-    with open(index_path, "r") as f:
+    with open(index_path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:

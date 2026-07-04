@@ -12,10 +12,12 @@ from pathlib import Path
 
 LEVEL_PREFIXES = ["", "a", "b", "c", "d", "e", "f", "g", "h"]
 SLOT_RE = re.compile(r"^([a-h]?)(\d{2,3})\.md$")
+_CHAT_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 
 def epoch_dir(root: Path, chat_id: str) -> Path:
-    return root / ".burnless" / "epochs" / chat_id
+    safe_chat_id = _CHAT_ID_UNSAFE_RE.sub("_", chat_id)
+    return root / ".burnless" / "epochs" / safe_chat_id
 
 
 def _slot_name(level: int, n: int) -> str:
@@ -303,6 +305,8 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
         current = cwd
         while current != Path(current.root):
             if workspace is not None and current.parent == workspace:
+                break
+            if current == Path.home():
                 break
             config_file = current / ".burnless" / "config.yaml"
             if config_file.exists():
