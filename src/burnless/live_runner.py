@@ -246,6 +246,7 @@ class RunResult:
     duration_s: float
     interrupted: bool = False
     stale: bool = False
+    session_id: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -259,6 +260,7 @@ class RunResult:
             "duration_s": self.duration_s,
             "interrupted": self.interrupted,
             "stale": self.stale,
+            "session_id": self.session_id,
         }
 
 
@@ -745,6 +747,7 @@ def run_with_live_panel(
         duration_s=(ended - started).total_seconds(),
         interrupted=interrupted,
         stale=stale_worker,
+        session_id=(session_holder[-1] if session_holder else None),
     )
 
 

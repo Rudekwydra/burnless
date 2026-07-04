@@ -25,7 +25,6 @@ from . import compression as compression_mod
 from . import lifetime as lifetime_mod
 from . import claude_integration
 from . import provider_autodetect
-from . import maestro_adapters
 from . import dashboard
 from . import live_runner
 from .estimator import estimate_tokens
