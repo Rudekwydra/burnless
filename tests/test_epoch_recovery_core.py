@@ -1129,3 +1129,103 @@ def test_compact_pending_skip_does_not_advance_applied_through(tmp_path):
         root, "claude", "sid-1"
     )
     assert checkpoint_after["applied_through"] == 0
+
+
+def test_compact_pending_enforces_budget_before_write(tmp_path):
+    """F2: enforce_budget_v3 must be called after validation and BEFORE
+    write_checkpoint, ensuring the persisted living_md respects the budget."""
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    env = {
+        "schema": 1,
+        "host": "claude",
+        "host_session_id": "sid-1",
+        "process_instance_id": "proc-1",
+        "transcript_path": "/tmp/transcript-a.jsonl",
+        "exchange_id": "sha256:one",
+        "user_text": "pergunta",
+        "assistant_text": "resposta",
+        "files": [],
+    }
+    recovery.journal_append(root, env)
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- baseline\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    def fake_rewriter_large_candidate(prompt: str) -> str:
+        decisions_section = "## Decisões\n"
+        for i in range(30):
+            decisions_section += f"- decisão número {i} com algum conteúdo repetido\n"
+        return "## Foco atual\n- baseline\n" + decisions_section
+
+    result = recovery.compact_pending(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        rewriter=fake_rewriter_large_candidate,
+        budget_tokens=200,
+        source="end",
+    )
+
+    assert result["status"] == "committed", f"Expected committed, got {result}"
+
+    checkpoint = recovery.read_checkpoint(root, "claude", "sid-1")
+    living_md = checkpoint["living_md"]
+    char_budget = len(living_md) // 4
+    assert char_budget <= 200, f"living_md size {char_budget} tokens exceeds budget 200"
+
+
+def test_compact_pending_budget_enforcement_does_not_break_valid_candidate_under_budget(tmp_path):
+    """F2: when candidate is already under budget, enforce_budget_v3 must not
+    modify it (pass-through) and the integrated living_md must be identical."""
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    small_candidate = "## Foco atual\n- objetivo pequeno\n"
+    env = {
+        "schema": 1,
+        "host": "claude",
+        "host_session_id": "sid-1",
+        "process_instance_id": "proc-1",
+        "transcript_path": "/tmp/transcript-a.jsonl",
+        "exchange_id": "sha256:one",
+        "user_text": "pergunta",
+        "assistant_text": "resposta",
+        "files": [],
+    }
+    recovery.journal_append(root, env)
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- baseline\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    def fake_rewriter_small(prompt: str) -> str:
+        return small_candidate
+
+    result = recovery.compact_pending(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        rewriter=fake_rewriter_small,
+        budget_tokens=2500,
+        source="end",
+    )
+
+    assert result["status"] == "committed", f"Expected committed, got {result}"
+
+    checkpoint = recovery.read_checkpoint(root, "claude", "sid-1")
+    assert checkpoint["living_md"] == small_candidate.strip(), "under-budget candidate must pass unchanged (after strip)"
