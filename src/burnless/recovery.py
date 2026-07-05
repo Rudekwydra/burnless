@@ -818,7 +818,27 @@ def _build_compact_prompt(
 _PHANTOM_SEQ_RE = re.compile(r"[Ss]eq\s+(\d+)")
 
 
-def _validate_candidate(candidate: str, prev_md: str, pending: list[dict[str, Any]]) -> tuple[bool, str]:
+def _entry_core(line: str) -> str:
+    """Strip trust-boundary prefix ([doctrine]/[state]/[inflight]) and any
+    trailing bracketed provenance tags ([chat:ID·tN], [seq N], etc) to get
+    the semantic core of a living_md entry line."""
+    s = line.strip()
+    s = re.sub(r'^\[(?:doctrine|state|inflight)\]\s*', '', s)
+    while True:
+        m = re.search(r'\s*\[[^\]]*\]\s*$', s)
+        if not m:
+            break
+        s = s[:m.start()]
+    return s.strip()
+
+
+def _validate_candidate(
+    candidate: str,
+    prev_md: str,
+    pending: list[dict[str, Any]],
+    *,
+    require_seq_origem: bool = False,
+) -> tuple[bool, str]:
     from .epochs_v2 import SECTIONS_V3, parse_living_v3
 
     parsed = parse_living_v3(candidate)
@@ -840,6 +860,18 @@ def _validate_candidate(candidate: str, prev_md: str, pending: list[dict[str, An
         seq_value = match.group(1)
         if seq_value not in known_seqs and seq_value not in prev_md:
             return False, f"phantom_seq_{seq_value}"
+
+    if require_seq_origem:
+        from .epochs_v2 import parse_living_v3
+
+        parsed_candidate = parse_living_v3(candidate)
+        for section in ("Decisões", "Riscos", "Refs"):
+            for line in parsed_candidate.get(section, []):
+                core = _entry_core(line)
+                if not core or core in prev_md:
+                    continue
+                if not re.search(r"\[seq \d+(?:-\d+)?\]", line):
+                    return False, "missing_seq_origem"
 
     return True, ""
 
@@ -1052,7 +1084,12 @@ def compact_pending(
                 "generation": current_generation,
             }
 
-        ok, reason = _validate_candidate(candidate, checkpoint.get("living_md") or "", pending)
+        ok, reason = _validate_candidate(
+            candidate,
+            checkpoint.get("living_md") or "",
+            pending,
+            require_seq_origem=bool(compact_cfg.get("require_seq_origem", False)),
+        )
         if not ok:
             owner_loop.log_owner_event(
                 root_path,
