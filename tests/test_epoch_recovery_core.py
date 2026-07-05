@@ -1229,3 +1229,104 @@ def test_compact_pending_budget_enforcement_does_not_break_valid_candidate_under
 
     checkpoint = recovery.read_checkpoint(root, "claude", "sid-1")
     assert checkpoint["living_md"] == small_candidate.strip(), "under-budget candidate must pass unchanged (after strip)"
+
+
+def test_validate_candidate_missing_seq_origem_rejected_when_required():
+    """F4: a candidate with new entry in Decisões/Riscos/Refs without [seq N]
+    must be rejected when require_seq_origem=True."""
+    from burnless import recovery
+
+    candidate = "## Foco atual\n- x\n\n## Decisões\n- decisao nova sem marcador\n"
+    ok, reason = recovery._validate_candidate(candidate, "", [], require_seq_origem=True)
+    assert ok is False
+    assert reason == "missing_seq_origem"
+
+
+def test_validate_candidate_inherited_entry_without_seq_passes_when_required():
+    """F4: a candidate with inherited entry (core exists in prev_md) without [seq N]
+    should pass even when require_seq_origem=True."""
+    from burnless import recovery
+
+    prev_md = "## Decisões\n- decisao antiga\n"
+    candidate = "## Foco atual\n- x\n\n## Decisões\n- decisao antiga\n"
+    ok, reason = recovery._validate_candidate(candidate, prev_md, [], require_seq_origem=True)
+    assert ok is True
+
+
+def test_validate_candidate_new_entry_with_seq_marker_passes_when_required():
+    """F4: a candidate with new entry marked with [seq N] should pass
+    when require_seq_origem=True."""
+    from burnless import recovery
+
+    candidate = "## Foco atual\n- x\n\n## Decisões\n- decisao nova [seq 12]\n"
+    pending = [{"seq": 12}]
+    ok, reason = recovery._validate_candidate(candidate, "", pending, require_seq_origem=True)
+    assert ok is True
+
+
+def test_validate_candidate_missing_seq_origem_not_enforced_by_default():
+    """F4: when require_seq_origem is not passed or False, new entries without
+    [seq N] should be accepted (backward compat)."""
+    from burnless import recovery
+
+    candidate = "## Foco atual\n- x\n\n## Decisões\n- decisao nova sem marcador\n"
+    ok, reason = recovery._validate_candidate(candidate, "", [])
+    assert ok is True
+
+
+def test_compact_pending_reads_require_seq_origem_from_config(tmp_path):
+    """F4: compact_pending must read require_seq_origem from config and pass
+    it to _validate_candidate."""
+    from burnless import recovery
+    import yaml
+
+    root = tmp_path / ".burnless"
+    config_file = root / "config.yaml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        yaml.dump({
+            "epochs": {
+                "compact": {
+                    "require_seq_origem": True
+                }
+            }
+        }),
+        encoding="utf-8"
+    )
+
+    env = {
+        "schema": 1,
+        "host": "claude",
+        "host_session_id": "sid-1",
+        "process_instance_id": "proc-1",
+        "transcript_path": "/tmp/transcript-a.jsonl",
+        "exchange_id": "sha256:one",
+        "user_text": "pergunta",
+        "assistant_text": "resposta",
+        "files": [],
+    }
+    recovery.journal_append(root, env)
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- baseline\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    def fake_rewriter(_prompt: str) -> str:
+        return "## Foco atual\n- baseline\n\n## Decisões\n- nova decisao sem marcador\n"
+
+    result = recovery.compact_pending(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        rewriter=fake_rewriter,
+        source="end",
+    )
+
+    assert result["status"] == "rejected"
+    assert result["reason"] == "missing_seq_origem"
