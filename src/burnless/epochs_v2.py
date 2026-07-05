@@ -666,10 +666,15 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                 out = _strip_gemma_channels(out)
             else:
                 try:
+                    from . import warm_session
                     from .warm_session import _claude_binary
                     claude_bin = _claude_binary() or "claude"
                 except Exception:
                     claude_bin = "claude"
+                try:
+                    iso_cwd = warm_session.worker_cwd(Path(project_root) / ".burnless", model)
+                except Exception:
+                    iso_cwd = None
                 result = subprocess.run(
                     [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
                      "--append-system-prompt", ENCODER_SYSTEM_PROMPT,
@@ -678,6 +683,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     capture_output=True,
                     text=True,
                     timeout=60,
+                    cwd=iso_cwd,
                     env={**os.environ, "BURNLESS_NO_EPOCH": "1"},
                 )
                 data = json.loads(result.stdout)

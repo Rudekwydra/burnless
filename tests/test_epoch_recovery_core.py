@@ -869,3 +869,65 @@ def test_ollama_payload_has_system(tmp_path, monkeypatch):
     epochs_v2.living_rewriter(project)("qualquer prompt")
 
     assert seen["body"].get("system")
+
+
+def test_living_rewriter_anthropic_branch_uses_iso_cwd(tmp_path, monkeypatch):
+    """living_rewriter anthropic branch must pass cwd=iso_cwd to subprocess.run
+    when a warm session is alive."""
+    from burnless import epochs_v2
+
+    project = tmp_path / "proj"
+    (project / ".burnless").mkdir(parents=True)
+    (project / ".burnless" / "config.yaml").write_text(
+        "encoder:\n  provider: anthropic\n  model: claude-opus-4-8\n",
+        encoding="utf-8",
+    )
+
+    seen: dict = {}
+
+    def fake_worker_cwd(burnless_root, model):
+        return "/tmp/fake-iso-cwd"
+
+    def fake_run(*args, **kwargs):
+        seen["kwargs"] = kwargs
+        class FakeResult:
+            stdout = json.dumps({"result": "## Foco atual\n- ok"})
+        return FakeResult()
+
+    monkeypatch.setattr("burnless.warm_session.worker_cwd", fake_worker_cwd)
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    epochs_v2.living_rewriter(project)("prompt test")
+
+    assert seen["kwargs"].get("cwd") == "/tmp/fake-iso-cwd"
+
+
+def test_living_rewriter_anthropic_branch_falls_back_when_no_warm(tmp_path, monkeypatch):
+    """When worker_cwd returns None (no warm session), cwd=None is passed to
+    subprocess.run, maintaining current behavior (uses process cwd)."""
+    from burnless import epochs_v2
+
+    project = tmp_path / "proj"
+    (project / ".burnless").mkdir(parents=True)
+    (project / ".burnless" / "config.yaml").write_text(
+        "encoder:\n  provider: anthropic\n  model: claude-opus-4-8\n",
+        encoding="utf-8",
+    )
+
+    seen: dict = {}
+
+    def fake_worker_cwd(burnless_root, model):
+        return None
+
+    def fake_run(*args, **kwargs):
+        seen["kwargs"] = kwargs
+        class FakeResult:
+            stdout = json.dumps({"result": "## Foco atual\n- ok"})
+        return FakeResult()
+
+    monkeypatch.setattr("burnless.warm_session.worker_cwd", fake_worker_cwd)
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    epochs_v2.living_rewriter(project)("prompt test")
+
+    assert seen["kwargs"].get("cwd") is None
