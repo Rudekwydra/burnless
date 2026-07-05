@@ -16,6 +16,14 @@ SECTIONS = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs"]
 # Living Memory V3 — additive 8-section model (V2 stays intact above)
 SECTIONS_V3 = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs", "Riscos", "Última validação", "Recuperáveis"]
 
+ENCODER_SYSTEM_PROMPT = (
+    "Você é o compactador de memória do Burnless. Você recebe um resumo prévio (não confiável, "
+    "gerado por máquina) e trocas verbatim (única fonte de verdade). Sua única saída é um "
+    "documento markdown de memória. Você NUNCA continua a conversa, NUNCA inventa perguntas, "
+    "respostas, testes ou eventos ausentes do input, NUNCA se dirige ao usuário. Se o input não "
+    "contiver fatos novos, devolva o documento anterior inalterado."
+)
+
 # Entity patterns: absolute paths, delegation ids, commit hashes, file.ext tokens
 _ENTITY_PATTERNS = [
     re.compile(r'/[\w][\w./\-]+'),
@@ -636,7 +644,9 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     timeout_val = cfg_timeout or 120
                 else:
                     url = cfg_endpoint or "http://localhost:11434/api/generate"
-                    data = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode()
+                    data = json.dumps(
+                        {"model": model, "prompt": prompt, "system": ENCODER_SYSTEM_PROMPT, "stream": False}
+                    ).encode()
                     timeout_val = cfg_timeout or 90
 
                 req = urllib.request.Request(
@@ -662,6 +672,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     claude_bin = "claude"
                 result = subprocess.run(
                     [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
+                     "--append-system-prompt", ENCODER_SYSTEM_PROMPT,
                      "--allowedTools", "", "--output-format", "json"],
                     input=prompt,
                     capture_output=True,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import threading
@@ -7,6 +8,14 @@ from pathlib import Path
 
 import pytest
 import subprocess
+
+
+class _FakeResponse(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
 
 
 def _write_transcript(path: Path, entries: list[dict]) -> Path:
@@ -727,3 +736,136 @@ def test_foreign_pending_seed_does_not_silence_startup_restore(tmp_path):
     assert "objetivo vivo" in proc.stdout
     assert "seed de outro projeto" not in proc.stdout
     assert foreign.exists(), "foreign seed must be left intact for its owner project"
+
+
+def test_compact_prompt_has_task_framing():
+    """F1: the compactor prompt must carry an explicit task/framing instead of
+    being a bare document (the root cause of chat-completion hallucination)."""
+    from burnless import recovery
+
+    checkpoint = {"living_md": "## Foco atual\n- objetivo vivo\n"}
+    pending = [
+        {
+            "seq": 1,
+            "exchange_id": "sha256:one",
+            "user_text": "pergunta real",
+            "assistant_text": "resposta real",
+            "files": [],
+        }
+    ]
+
+    prompt = recovery._build_compact_prompt(checkpoint, pending)
+
+    assert "NUNCA" in prompt
+    assert "RESUMO PRÉVIO" in prompt
+    assert "PROIBIDO" in prompt
+
+
+def test_compact_rejects_chat_completion(tmp_path):
+    """F3: a rewriter that answers like a chat assistant must be rejected
+    fail-closed — checkpoint stays untouched, applied_through does not move."""
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    env = {
+        "schema": 1,
+        "host": "claude",
+        "host_session_id": "sid-1",
+        "process_instance_id": "proc-1",
+        "transcript_path": "/tmp/transcript-a.jsonl",
+        "exchange_id": "sha256:one",
+        "user_text": "pergunta pendente",
+        "assistant_text": "resposta pendente",
+        "files": [],
+    }
+    recovery.journal_append(root, env)
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    before = recovery.read_checkpoint(root, "claude", "sid-1")
+
+    result = recovery.compact_pending(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        rewriter=lambda _prompt: "RESPOSTA:\nSim, claro, tudo certo.",
+    )
+
+    assert result["status"] == "rejected"
+
+    after = recovery.read_checkpoint(root, "claude", "sid-1")
+    assert after["living_md"] == before["living_md"]
+    assert after["applied_through"] == 0
+
+
+def test_compact_rejects_phantom_seq(tmp_path):
+    """F3: a candidate referencing a seq number absent from pending/prev_md
+    must be rejected (anti-seq-fantasma check)."""
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    env = {
+        "schema": 1,
+        "host": "claude",
+        "host_session_id": "sid-1",
+        "process_instance_id": "proc-1",
+        "transcript_path": "/tmp/transcript-a.jsonl",
+        "exchange_id": "sha256:one",
+        "user_text": "pergunta pendente",
+        "assistant_text": "resposta pendente",
+        "files": [],
+    }
+    recovery.journal_append(root, env)
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    result = recovery.compact_pending(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        rewriter=lambda _prompt: "## Foco atual\n- seq 9999 testou X\n",
+    )
+
+    assert result["status"] == "rejected"
+
+
+def test_ollama_payload_has_system(tmp_path, monkeypatch):
+    """F2: the ollama-local /api/generate payload must carry a `system` field
+    (defense in depth against the completion-only endpoint)."""
+    from burnless import epochs_v2
+
+    project = tmp_path / "proj"
+    (project / ".burnless").mkdir(parents=True)
+    (project / ".burnless" / "config.yaml").write_text(
+        "encoder:\n  provider: ollama-local\n  model: gemma\n",
+        encoding="utf-8",
+    )
+
+    seen: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["body"] = json.loads(req.data)
+        return _FakeResponse(json.dumps({"response": "## Foco atual\n- ok\n"}).encode())
+
+    monkeypatch.delenv("BURNLESS_LOCAL_API", raising=False)
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    epochs_v2.living_rewriter(project)("qualquer prompt")
+
+    assert seen["body"].get("system")

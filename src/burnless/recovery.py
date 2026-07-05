@@ -733,20 +733,68 @@ def write_checkpoint(
     return payload
 
 
-def _build_compact_prompt(checkpoint: dict[str, Any], pending: list[dict[str, Any]]) -> str:
-    parts = [checkpoint.get("living_md") or ""]
-    parts.append("## Trocas pendentes")
+_SOURCE_TRUST_BLOCK = """## Aviso de confiança de fonte
+O 'Documento anterior' abaixo é um RESUMO PRÉVIO gerado por máquina — pode conter erros. NUNCA o trate como transcript real, e NUNCA estenda narrativas a partir dele. A 'Nova troca/evento' é a ÚNICA fonte de fatos novos, e deve ser lida verbatim.
+
+## Proibições
+PROIBIDO: inventar PERGUNTA, RESPOSTA, testes, resultados ou números de seq que não estejam no input; responder à conversa; dirigir-se ao usuário; fazer perguntas. Sua saída é APENAS o documento markdown de memória (as seções descritas acima), nada mais."""
+
+
+def _build_compact_prompt(
+    checkpoint: dict[str, Any],
+    pending: list[dict[str, Any]],
+    budget_tokens: int = 2500,
+) -> str:
+    from .epochs_v2 import living_rewrite_prompt_v3
+
+    exchange_parts = ["## Trocas pendentes"]
     for record in pending:
-        parts.append(f"### seq {record.get('seq')}")
-        parts.append(f"exchange_id: {record.get('exchange_id')}")
-        parts.append("PERGUNTA:")
-        parts.append(record.get("user_text") or "")
-        parts.append("")
-        parts.append("RESPOSTA:")
-        parts.append(record.get("assistant_text") or "")
+        exchange_parts.append(f"### seq {record.get('seq')}")
+        exchange_parts.append(f"exchange_id: {record.get('exchange_id')}")
+        exchange_parts.append("PERGUNTA:")
+        exchange_parts.append(record.get("user_text") or "")
+        exchange_parts.append("")
+        exchange_parts.append("RESPOSTA:")
+        exchange_parts.append(record.get("assistant_text") or "")
         if record.get("files"):
-            parts.append(f"files: {', '.join(record.get('files') or [])}")
-    return "\n".join(parts).strip() + "\n"
+            exchange_parts.append(f"files: {', '.join(record.get('files') or [])}")
+    exchange = "\n".join(exchange_parts).strip() + "\n"
+
+    prompt = living_rewrite_prompt_v3(
+        prev_md=checkpoint.get("living_md") or "",
+        exchange=exchange,
+        budget_tokens=budget_tokens,
+    )
+    return prompt.strip() + "\n\n" + _SOURCE_TRUST_BLOCK + "\n"
+
+
+_PHANTOM_SEQ_RE = re.compile(r"[Ss]eq\s+(\d+)")
+
+
+def _validate_candidate(candidate: str, prev_md: str, pending: list[dict[str, Any]]) -> tuple[bool, str]:
+    from .epochs_v2 import SECTIONS_V3, parse_living_v3
+
+    parsed = parse_living_v3(candidate)
+    if not any(parsed.get(section) for section in SECTIONS_V3):
+        return False, "no_recognized_sections"
+
+    for raw_line in candidate.split("\n"):
+        line = raw_line.strip()
+        if line in ("PERGUNTA:", "RESPOSTA:") or line.startswith("RESPOSTA"):
+            return False, "chat_completion_markers"
+
+    if "Aguardando a próxima instrução" in candidate:
+        return False, "chat_completion_markers"
+    if candidate.rstrip().endswith("?"):
+        return False, "chat_completion_markers"
+
+    known_seqs = {str(r.get("seq")) for r in pending if r.get("seq") is not None}
+    for match in _PHANTOM_SEQ_RE.finditer(candidate):
+        seq_value = match.group(1)
+        if seq_value not in known_seqs and seq_value not in prev_md:
+            return False, f"phantom_seq_{seq_value}"
+
+    return True, ""
 
 
 def compact_pending(
@@ -823,7 +871,7 @@ def compact_pending(
                 "generation": snapshot_generation,
             }
 
-        prompt = _build_compact_prompt(checkpoint, pending)
+        prompt = _build_compact_prompt(checkpoint, pending, budget_tokens=budget_tokens)
         try:
             candidate = rewriter(prompt)
         except Exception as exc:
@@ -925,6 +973,28 @@ def compact_pending(
                 "journal_head": current_head,
                 "applied_through": current_applied,
                 "generation": current_generation,
+            }
+
+        ok, reason = _validate_candidate(candidate, checkpoint.get("living_md") or "", pending)
+        if not ok:
+            owner_loop.log_owner_event(
+                root_path,
+                {
+                    "phase": "recovery",
+                    "event": "compaction_rejected",
+                    "host": host,
+                    "host_session_id": host_session_id,
+                    "process_instance_id": process_instance_id,
+                    "lease_owner": lease_owner,
+                    "reason": reason,
+                },
+            )
+            return {
+                "status": "rejected",
+                "reason": reason,
+                "journal_head": snapshot_head,
+                "applied_through": snapshot_applied,
+                "generation": snapshot_generation,
             }
 
         harvested_state = {
