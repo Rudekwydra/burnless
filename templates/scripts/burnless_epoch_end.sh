@@ -92,5 +92,6 @@ rm -f "$Handoff_ERR"
 log_pilot_event
 {
   printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host claude --host-session-id "$SID" --process-instance-id "$PID" --source clear >/dev/null 2>&1
+  "$BB" epoch seal --root "$ROOT" --host claude --host-session-id "$SID" >/dev/null 2>&1
 } &
 exit 0
