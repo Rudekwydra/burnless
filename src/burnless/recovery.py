@@ -740,6 +740,53 @@ O 'Documento anterior' abaixo é um RESUMO PRÉVIO gerado por máquina — pode 
 PROIBIDO: inventar PERGUNTA, RESPOSTA, testes, resultados ou números de seq que não estejam no input; responder à conversa; dirigir-se ao usuário; fazer perguntas. Sua saída é APENAS o documento markdown de memória (as seções descritas acima), nada mais."""
 
 
+def should_compact(
+    checkpoint: dict[str, Any],
+    pending: list[dict[str, Any]],
+    source: str | None,
+    compact_cfg: dict[str, Any],
+) -> str:
+    """Retorna 'compact' ou 'skip'. Determinístico, sem LLM, sem I/O."""
+    if source in ("clear", "end"):
+        return "compact"
+
+    from .epochs_v2 import _is_trivial_text
+
+    min_nontrivial = int(compact_cfg.get("min_pending_nontrivial", 3))
+    min_tokens = int(compact_cfg.get("min_pending_tokens", 1200))
+    max_age_s = int(compact_cfg.get("max_pending_age_s", 900))
+
+    nontrivial_count = sum(
+        1 for r in pending if not _is_trivial_text(r.get("user_text") or "")
+    )
+    if nontrivial_count >= min_nontrivial:
+        return "compact"
+
+    total_tokens = sum(
+        (len((r.get("user_text") or "") + (r.get("assistant_text") or "")) // 4)
+        for r in pending
+    )
+    if total_tokens >= min_tokens:
+        return "compact"
+
+    oldest_captured_at = None
+    for r in pending:
+        ts = r.get("captured_at")
+        if ts and (oldest_captured_at is None or ts < oldest_captured_at):
+            oldest_captured_at = ts
+    if oldest_captured_at:
+        from datetime import datetime, timezone
+        try:
+            oldest_dt = datetime.strptime(oldest_captured_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            age_s = (datetime.now(timezone.utc) - oldest_dt).total_seconds()
+            if age_s >= max_age_s:
+                return "compact"
+        except (ValueError, TypeError):
+            pass
+
+    return "skip"
+
+
 def _build_compact_prompt(
     checkpoint: dict[str, Any],
     pending: list[dict[str, Any]],
@@ -805,6 +852,7 @@ def compact_pending(
     process_instance_id: str,
     rewriter,
     budget_tokens: int = 2500,
+    source: str | None = None,
 ) -> dict[str, Any]:
     root_path = _root_path(root)
     journal_dir = _journal_dir(root_path, host, host_session_id)
@@ -866,6 +914,35 @@ def compact_pending(
         if not pending:
             return {
                 "status": "noop",
+                "journal_head": snapshot_head,
+                "applied_through": snapshot_applied,
+                "generation": snapshot_generation,
+            }
+
+        from . import config as _config, paths as _paths
+        try:
+            _cfg = _config.load(_paths.paths_for(root_path)["config"])
+        except Exception:
+            _cfg = {}
+        compact_cfg = ((_cfg.get("epochs") or {}).get("compact") or {})
+
+        decision = should_compact(checkpoint, pending, source, compact_cfg)
+        if decision == "skip":
+            owner_loop.log_owner_event(
+                root_path,
+                {
+                    "phase": "recovery",
+                    "event": "compaction_deferred",
+                    "host": host,
+                    "host_session_id": host_session_id,
+                    "process_instance_id": process_instance_id,
+                    "reason": "l0_skip",
+                    "pending": len(pending),
+                },
+            )
+            return {
+                "status": "deferred",
+                "reason": "l0_skip",
                 "journal_head": snapshot_head,
                 "applied_through": snapshot_applied,
                 "generation": snapshot_generation,
