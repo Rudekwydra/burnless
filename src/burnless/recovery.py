@@ -1074,6 +1074,13 @@ def compact_pending(
                 "generation": snapshot_generation,
             }
 
+        try:
+            from .epochs_v2 import enforce_budget_v3
+
+            candidate = enforce_budget_v3(candidate, budget_tokens=budget_tokens)
+        except Exception:
+            pass
+
         harvested_state = {
             "contracts": [],
             "refs": [],
