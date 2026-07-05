@@ -1,14 +1,17 @@
 import pytest
 import tempfile
 import json
+import re
 from pathlib import Path
 
 from burnless.epochs_v2 import (
     extract_entities,
     is_noop,
     parse_living,
+    parse_living_v3,
     harvest_state,
     living_rewrite_prompt,
+    living_rewrite_prompt_v3,
     preserve_guard,
     enforce_budget,
     apply_capture,
@@ -358,3 +361,45 @@ def test_apply_capture_persists_turn_and_ages(tmp_path):
     assert state_data["turn"] == 2
     assert "contract_ages" in state_data
     assert "y.py" in state_data["contract_ages"]
+
+
+def test_harvest_state_parses_structured_ref_line():
+    md = """## Refs
+- /Users/roberto/x/y.py#L10-20 — motivo curto [seq 12]
+"""
+    harvested = harvest_state(md)
+    assert len(harvested["refs"]) == 1
+    parsed_ref = harvested["refs"][0]
+    assert isinstance(parsed_ref, dict)
+    assert parsed_ref["path"] == "/Users/roberto/x/y.py"
+    assert parsed_ref["lines"] == [10, 20]
+    assert parsed_ref["why"] == "motivo curto"
+    assert parsed_ref["seq"] == [12, 12]
+
+
+def test_harvest_state_parses_structured_recuperavel_line():
+    md = """## Recuperáveis
+- d725 — pytest /Users/roberto/antigravity/burnless/tests/test_x.py [seq 40]
+"""
+    harvested = harvest_state(md)
+    assert len(harvested["recuperaveis"]) == 1
+    parsed_rec = harvested["recuperaveis"][0]
+    assert isinstance(parsed_rec, dict)
+    assert parsed_rec["d"] == "d725"
+    assert parsed_rec["why"] == "pytest /Users/roberto/antigravity/burnless/tests/test_x.py"
+    assert parsed_rec["seq"] == [40, 40]
+
+
+def test_harvest_state_tolerates_legacy_ref_line():
+    md = """## Refs
+- so um texto livre sem gramatica
+"""
+    harvested = harvest_state(md)
+    assert len(harvested["refs"]) == 1
+    assert harvested["refs"][0] == "so um texto livre sem gramatica"
+    assert harvested["refs_unparsed"] == 1
+
+
+def test_living_rewrite_prompt_v3_has_no_literal_seq_digit_example():
+    prompt = living_rewrite_prompt_v3("", "")
+    assert re.search(r'\[seq \d+\]', prompt) is None

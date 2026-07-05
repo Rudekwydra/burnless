@@ -16,6 +16,13 @@ SECTIONS = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs"]
 # Living Memory V3 — additive 8-section model (V2 stays intact above)
 SECTIONS_V3 = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs", "Riscos", "Última validação", "Recuperáveis"]
 
+_REF_LINE_RE = re.compile(
+    r'^(?P<path>/\S+?)(?:#L(?P<l1>\d+)(?:-(?P<l2>\d+))?)?\s+—\s+(?P<why>.+?)\s+\[seq (?P<seq>\d+(?:-\d+)?)\]$'
+)
+_RECUPERAVEL_LINE_RE = re.compile(
+    r'^(?P<did>d\d{2,4})\s+—\s+(?P<why>.+?)\s+\[seq (?P<seq>\d+(?:-\d+)?)\]$'
+)
+
 ENCODER_SYSTEM_PROMPT = (
     "Você é o compactador de memória do Burnless. Você recebe um resumo prévio (não confiável, "
     "gerado por máquina) e trocas verbatim (única fonte de verdade). Sua única saída é um "
@@ -146,15 +153,69 @@ def parse_living(md: str) -> dict[str, list[str]]:
     return result
 
 
+def _parse_seq_range(seq_raw: str) -> list[int]:
+    if '-' in seq_raw:
+        a, b = seq_raw.split('-', 1)
+        return [int(a), int(b)]
+    return [int(seq_raw), int(seq_raw)]
+
+
+def _parse_ref_line(line: str) -> dict | str:
+    m = _REF_LINE_RE.match(line.strip())
+    if not m:
+        return line
+    l1 = m.group('l1')
+    l2 = m.group('l2')
+    lines = None
+    if l1:
+        lines = [int(l1), int(l2) if l2 else int(l1)]
+    return {
+        "path": m.group('path'),
+        "lines": lines,
+        "why": m.group('why'),
+        "seq": _parse_seq_range(m.group('seq')),
+    }
+
+
+def _parse_recuperavel_line(line: str) -> dict | str:
+    m = _RECUPERAVEL_LINE_RE.match(line.strip())
+    if not m:
+        return line
+    return {
+        "d": m.group('did'),
+        "why": m.group('why'),
+        "seq": _parse_seq_range(m.group('seq')),
+    }
+
+
 def harvest_state(md: str) -> dict:
-    parsed = parse_living(md)
+    parsed = parse_living_v3(md)
     contracts = [line.lstrip('- ').strip() for line in parsed.get('Contracts', [])]
-    refs = [line.lstrip('- ').strip() for line in parsed.get('Refs', [])]
     open_threads = [line.lstrip('- ').strip() for line in parsed.get('Threads abertas', [])]
+
+    refs = []
+    refs_unparsed = 0
+    for line in parsed.get('Refs', []):
+        parsed_ref = _parse_ref_line(line)
+        refs.append(parsed_ref)
+        if isinstance(parsed_ref, str):
+            refs_unparsed += 1
+
+    recuperaveis = []
+    recuperaveis_unparsed = 0
+    for line in parsed.get('Recuperáveis', []):
+        parsed_rec = _parse_recuperavel_line(line)
+        recuperaveis.append(parsed_rec)
+        if isinstance(parsed_rec, str):
+            recuperaveis_unparsed += 1
+
     return {
         "contracts": contracts,
         "refs": refs,
         "open_threads": open_threads,
+        "recuperaveis": recuperaveis,
+        "refs_unparsed": refs_unparsed,
+        "recuperaveis_unparsed": recuperaveis_unparsed,
     }
 
 
@@ -423,6 +484,9 @@ Sem pensamento/debate/markdown extra — apenas as 8 seções.
 - 'Riscos': riscos abertos / o que pode dar errado, ainda não mitigado.
 - 'Última validação': último comando/teste/auditoria verificado e seu status (ex: 'pytest -q OK', 'd724 OK').
 - 'Recuperáveis': ids dNNN + dicas de comando para recuperar contexto (NÃO logs crus). Ex: 'd725 — pytest tests/test_epochs_v3.py'.
+- Formato de linha em 'Refs': `<path_absoluto>[#Linicio[-fim]] — <why curto> [seq <numero-real-do-seq>]` — troque `<numero-real-do-seq>` pelo número de seq verdadeiro da troca que originou o fato (olhe o `seq NNN` da troca pendente ou do documento anterior). NUNCA copie um número de exemplo — se não souber o seq real, omita o marcador `[seq ...]` inteiro nessa linha.
+- Formato de linha em 'Recuperáveis': `dNNN — <dica de comando> [seq <numero-real-do-seq>]` — mesma regra: use o seq real da troca, nunca um placeholder.
+- Linha que não seguir o formato ainda é aceita (fallback), mas PREFIRA o formato quando souber o path/seq exatos.
 
 ### Eixos de consolidação
 - Provenance: toda entrada de 'Threads abertas', 'Decisões' e 'Riscos' termina com marcador de origem `[chat:CURTO·tN]` quando a troca trouxer essa info; se não houver, omita o marcador (não invente).
