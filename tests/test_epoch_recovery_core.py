@@ -162,6 +162,7 @@ def test_compaction_failure_preserves_checkpoint_and_restore_delta(tmp_path):
         host_session_id="sid-1",
         process_instance_id="proc-1",
         rewriter=lambda _prompt: None,
+        source="end",
     )
     assert result["status"] == "failed"
 
@@ -674,7 +675,7 @@ def test_inherited_doc_evolves_on_compaction(tmp_path):
         return prompt.split("## Trocas pendentes")[0].strip() + "\n- evoluido com nova troca\n"
 
     result = recovery.compact_pending(
-        root, host="claude", host_session_id="new-sid", process_instance_id="proc-x", rewriter=rewriter
+        root, host="claude", host_session_id="new-sid", process_instance_id="proc-x", rewriter=rewriter, source="end"
     )
     assert result["status"] == "committed", result
     assert "objetivo vivo" in prompts[0], "compaction prompt must carry the inherited doc"
@@ -797,6 +798,7 @@ def test_compact_rejects_chat_completion(tmp_path):
         host_session_id="sid-1",
         process_instance_id="proc-1",
         rewriter=lambda _prompt: "RESPOSTA:\nSim, claro, tudo certo.",
+        source="end",
     )
 
     assert result["status"] == "rejected"
@@ -840,6 +842,7 @@ def test_compact_rejects_phantom_seq(tmp_path):
         host_session_id="sid-1",
         process_instance_id="proc-1",
         rewriter=lambda _prompt: "## Foco atual\n- seq 9999 testou X\n",
+        source="end",
     )
 
     assert result["status"] == "rejected"
@@ -931,3 +934,198 @@ def test_living_rewriter_anthropic_branch_falls_back_when_no_warm(tmp_path, monk
     epochs_v2.living_rewriter(project)("prompt test")
 
     assert seen["kwargs"].get("cwd") is None
+
+
+def test_should_compact_skip_when_trivial_and_small():
+    """L0: when pending has only trivial text and low volume, skip."""
+    from burnless import recovery
+    from datetime import datetime, timezone
+
+    checkpoint = {"generation": 0, "living_md": "", "applied_through": 0}
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pending = [
+        {
+            "seq": 1,
+            "user_text": "ok",
+            "assistant_text": "ok",
+            "captured_at": now,
+        }
+    ]
+    compact_cfg = {
+        "min_pending_nontrivial": 3,
+        "min_pending_tokens": 1200,
+        "max_pending_age_s": 900,
+    }
+
+    result = recovery.should_compact(checkpoint, pending, None, compact_cfg)
+    assert result == "skip"
+
+
+def test_should_compact_promotes_on_nontrivial_count():
+    """L0: when nontrivial count >= threshold, compact."""
+    from burnless import recovery
+    from datetime import datetime, timezone
+
+    checkpoint = {"generation": 0, "living_md": "", "applied_through": 0}
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pending = [
+        {
+            "seq": 1,
+            "user_text": "x" * 300,
+            "assistant_text": "y" * 300,
+            "captured_at": now,
+        },
+        {
+            "seq": 2,
+            "user_text": "a" * 300,
+            "assistant_text": "b" * 300,
+            "captured_at": now,
+        },
+        {
+            "seq": 3,
+            "user_text": "p" * 300,
+            "assistant_text": "q" * 300,
+            "captured_at": now,
+        },
+    ]
+    compact_cfg = {
+        "min_pending_nontrivial": 3,
+        "min_pending_tokens": 1200,
+        "max_pending_age_s": 900,
+    }
+
+    result = recovery.should_compact(checkpoint, pending, None, compact_cfg)
+    assert result == "compact"
+
+
+def test_should_compact_promotes_on_token_volume():
+    """L0: when token volume >= threshold, compact."""
+    from burnless import recovery
+    from datetime import datetime, timezone
+
+    checkpoint = {"generation": 0, "living_md": "", "applied_through": 0}
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pending = [
+        {
+            "seq": 1,
+            "user_text": "x" * 2400,
+            "assistant_text": "y" * 2400,
+            "captured_at": now,
+        }
+    ]
+    compact_cfg = {
+        "min_pending_nontrivial": 3,
+        "min_pending_tokens": 1200,
+        "max_pending_age_s": 900,
+    }
+
+    result = recovery.should_compact(checkpoint, pending, None, compact_cfg)
+    assert result == "compact"
+
+
+def test_should_compact_promotes_on_source_clear_or_end():
+    """L0: source='clear' or 'end' always compacts."""
+    from burnless import recovery
+    from datetime import datetime, timezone
+
+    checkpoint = {"generation": 0, "living_md": "", "applied_through": 0}
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pending = [
+        {
+            "seq": 1,
+            "user_text": "ok",
+            "assistant_text": "ok",
+            "captured_at": now,
+        }
+    ]
+    compact_cfg = {
+        "min_pending_nontrivial": 3,
+        "min_pending_tokens": 1200,
+        "max_pending_age_s": 900,
+    }
+
+    result_clear = recovery.should_compact(checkpoint, pending, "clear", compact_cfg)
+    assert result_clear == "compact"
+
+    result_end = recovery.should_compact(checkpoint, pending, "end", compact_cfg)
+    assert result_end == "compact"
+
+
+def test_should_compact_promotes_on_age():
+    """L0: when oldest pending record age >= threshold, compact."""
+    from burnless import recovery
+    from datetime import datetime, timezone, timedelta
+
+    checkpoint = {"generation": 0, "living_md": "", "applied_through": 0}
+    old_time = (datetime.now(timezone.utc) - timedelta(seconds=1000)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    pending = [
+        {
+            "seq": 1,
+            "user_text": "ok",
+            "assistant_text": "ok",
+            "captured_at": old_time,
+        }
+    ]
+    compact_cfg = {
+        "min_pending_nontrivial": 3,
+        "min_pending_tokens": 1200,
+        "max_pending_age_s": 900,
+    }
+
+    result = recovery.should_compact(checkpoint, pending, None, compact_cfg)
+    assert result == "compact"
+
+
+def test_compact_pending_skip_does_not_advance_applied_through(tmp_path):
+    """L0: when gate skips, applied_through in checkpoint does not advance."""
+    from burnless import recovery
+    from datetime import datetime, timezone
+
+    root = tmp_path / ".burnless"
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    env = {
+        "schema": 1,
+        "host": "claude",
+        "host_session_id": "sid-1",
+        "process_instance_id": "proc-1",
+        "transcript_path": "/tmp/transcript-a.jsonl",
+        "exchange_id": "sha256:one",
+        "user_text": "ok",
+        "assistant_text": "ok",
+    }
+    recovery.journal_append(root, env)
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    rewriter_called = []
+
+    def fake_rewriter(prompt):
+        rewriter_called.append(True)
+        raise RuntimeError("should not call rewriter on L0 skip")
+
+    result = recovery.compact_pending(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        rewriter=fake_rewriter,
+        source=None,
+    )
+
+    assert result["status"] == "deferred"
+    assert result["reason"] == "l0_skip"
+    assert len(rewriter_called) == 0
+
+    checkpoint_after = recovery.read_checkpoint(
+        root, "claude", "sid-1"
+    )
+    assert checkpoint_after["applied_through"] == 0

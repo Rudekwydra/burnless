@@ -81,6 +81,6 @@ fi
 rm -f "$JOURNAL_ERR"
 log_pilot_event
 {
-  printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host claude --host-session-id "$SID" --process-instance-id "$PID" >/dev/null 2>&1
+  printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host claude --host-session-id "$SID" --process-instance-id "$PID" --source stop >/dev/null 2>&1
 } &
 exit 0

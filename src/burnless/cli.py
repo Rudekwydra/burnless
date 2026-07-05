@@ -1415,6 +1415,7 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         host = getattr(args, "host", "claude")
         host_session_id = getattr(args, "host_session_id", "") or getattr(args, "session_id", "")
         process_instance_id = getattr(args, "process_instance_id", "") or host_session_id
+        source = getattr(args, "source", None)
         if not host_session_id:
             print("")
             return 0
@@ -1429,6 +1430,7 @@ def cmd_epoch(args: argparse.Namespace) -> int:
                 host_session_id=host_session_id,
                 process_instance_id=process_instance_id,
                 rewriter=rewriter or (lambda _prompt: None),
+                source=source,
             )
             print(json.dumps(result, ensure_ascii=False))
             return 0
