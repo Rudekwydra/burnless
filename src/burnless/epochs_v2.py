@@ -524,32 +524,126 @@ Retorne apenas o documento markdown atualizado. Sem markdown fence. Pronto."""
     return prompt
 
 
-def enforce_budget_v3(md: str, budget_tokens: int = 2500, contract_ages: dict | None = None, turn: int = 0, max_age: int = 15) -> str:
-    """Trim a V3 doc to fit budget while honoring V3 invariants.
+_TRUST_PREFIX_RE = re.compile(r'^\[(?:doctrine|state|inflight)\]\s*')
+_TRAILING_TAG_RE = re.compile(r'\s*\[[^\]]*\]\s*$')
+_SEQ_MARKER_RE = re.compile(r'\[seq \d+(?:-\d+)?\]')
+_POINTER_CORE_MAX_CHARS = 80
 
-    Trim order until within budget: Decisões (oldest first), then Refs
-    (oldest first), then Riscos (oldest first).
+
+def _compact_pointer_line(line: str) -> str:
+    """Demote a Decisões/Refs entry to a compact Recuperáveis pointer.
+
+    Keeps the seq_origem marker (grammar from c3ba90a) so the origin
+    exchange stays recoverable from the journal. Refs entries keep only
+    `path#Lx-y`; other entries keep a truncated core.
+    """
+    s = line.strip()
+    seq_m = _SEQ_MARKER_RE.search(s)
+    seq_marker = seq_m.group(0) if seq_m else ""
+
+    ref_m = _REF_LINE_RE.match(s)
+    if ref_m:
+        l1, l2 = ref_m.group('l1'), ref_m.group('l2')
+        loc = ""
+        if l1:
+            loc = f"#L{l1}" + (f"-{l2}" if l2 else "")
+        core = f"{ref_m.group('path')}{loc}"
+    else:
+        core = _TRUST_PREFIX_RE.sub('', s)
+        while True:
+            m = _TRAILING_TAG_RE.search(core)
+            if not m:
+                break
+            core = core[:m.start()]
+        core = core.strip().splitlines()[0] if core.strip() else ""
+        if len(core) > _POINTER_CORE_MAX_CHARS:
+            core = core[:_POINTER_CORE_MAX_CHARS - 1].rstrip() + "…"
+
+    return (core + (f" {seq_marker}" if seq_marker else "")).strip()
+
+
+def enforce_budget_v3(
+    md: str,
+    budget_tokens: int = 2500,
+    contract_ages: dict | None = None,
+    turn: int = 0,
+    max_age: int = 15,
+    *,
+    root=None,
+    recoverables_max_items: int = 12,
+    event_context: dict | None = None,
+) -> str:
+    """Fit a V3 doc into budget by DEMOTING before deleting (P6/A3).
+
+    Order until within budget:
+    1. Decisões (oldest first) demote to '## Recuperáveis' as compact
+       pointer lines that keep their seq_origem marker;
+    2. Refs (oldest first) demote the same way (path#Lx-y pointer);
+    3. Riscos (oldest first) are deleted (legacy order preserved);
+    4. only when Recuperáveis itself is full/over budget do real deletions
+       happen there (oldest first).
+
+    Every REAL deletion (cap eviction, Riscos trim, Recuperáveis trim) is
+    reported via the owner_loop event `budget_evicted` when ``root`` is
+    given — nothing disappears silently.
 
     Invariants (never violated even to meet budget):
-    - Foco atual is never trimmed here (never reduced to empty while
-      Threads abertas is non-empty).
-    - A Contracts line whose first extracted entity appears anywhere in
-      Threads abertas text is pinned (never removed).
+    - Foco atual / Threads abertas / Contracts / Última validação are never
+      trimmed here.
     """
     estimated_tokens = len(md) // 4
     if estimated_tokens <= budget_tokens:
         return md
 
     parsed = parse_living_v3(md)
+    recoverables = parsed.get('Recuperáveis', [])
+    cap = max(0, int(recoverables_max_items))
+    evicted: list[str] = []
 
-    for section in ('Decisões', 'Refs', 'Riscos'):
+    # 1-2: demote Decisões then Refs into Recuperáveis pointers.
+    for section in ('Decisões', 'Refs'):
         entries = parsed.get(section, [])
         while entries and (len(md) // 4) > budget_tokens:
-            entries.pop(0)
+            line = entries.pop(0)
+            pointer = _compact_pointer_line(line)
+            if pointer:
+                while cap and len(recoverables) >= cap:
+                    evicted.append(recoverables.pop(0))
+                if cap:
+                    recoverables.append(pointer)
+                else:
+                    evicted.append(line)
             parsed[section] = entries
+            parsed['Recuperáveis'] = recoverables
             md = _rebuild_md_v3(parsed)
         if (len(md) // 4) <= budget_tokens:
             break
+
+    # 3: Riscos are deleted oldest-first (no pointer form defined for them).
+    entries = parsed.get('Riscos', [])
+    while entries and (len(md) // 4) > budget_tokens:
+        evicted.append(entries.pop(0))
+        parsed['Riscos'] = entries
+        md = _rebuild_md_v3(parsed)
+
+    # 4: last resort — Recuperáveis itself is trimmed oldest-first.
+    while recoverables and (len(md) // 4) > budget_tokens:
+        evicted.append(recoverables.pop(0))
+        parsed['Recuperáveis'] = recoverables
+        md = _rebuild_md_v3(parsed)
+
+    if evicted and root is not None:
+        from . import owner_loop
+        event = {
+            "phase": "epochs",
+            "event": "budget_evicted",
+            "budget_tokens": budget_tokens,
+            "evicted_count": len(evicted),
+            "evicted_lines": evicted,
+        }
+        if event_context:
+            event.update(event_context)
+        owner_loop.log_owner_event(root, event)
 
     return md
 
@@ -637,7 +731,13 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
         ages = update_contract_ages(prev_ages, new_md, turn)
         new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)
         if eff_version >= 3:
-            new_md = enforce_budget_v3(new_md, contract_ages=ages, turn=turn)
+            new_md = enforce_budget_v3(
+                new_md,
+                contract_ages=ages,
+                turn=turn,
+                root=root,
+                event_context={"chat_id": chat_id},
+            )
         else:
             new_md = enforce_budget(new_md, contract_ages=ages, turn=turn)
         ages = update_contract_ages(ages, new_md, turn)

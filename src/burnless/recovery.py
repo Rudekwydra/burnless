@@ -1114,7 +1114,23 @@ def compact_pending(
         try:
             from .epochs_v2 import enforce_budget_v3
 
-            candidate = enforce_budget_v3(candidate, budget_tokens=budget_tokens)
+            try:
+                recoverables_cap = int(
+                    (_cfg.get("epochs") or {}).get("recoverables_max_items", 12)
+                )
+            except (TypeError, ValueError):
+                recoverables_cap = 12
+            candidate = enforce_budget_v3(
+                candidate,
+                budget_tokens=budget_tokens,
+                root=root_path,  # same sink as the other recovery owner events
+                recoverables_max_items=recoverables_cap,
+                event_context={
+                    "host": host,
+                    "host_session_id": host_session_id,
+                    "process_instance_id": process_instance_id,
+                },
+            )
         except Exception:
             pass
 
