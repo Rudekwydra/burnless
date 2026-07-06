@@ -367,10 +367,19 @@ def _check_c(checks: list[Check], home: Path | None = None, cwd: Path | None = N
     if project_root is not None:
         try:
             from .pilot import summarize_session_log
+            from . import config as config_mod
 
             summary = summarize_session_log(project_root)
             gap = summary.get("watermark_gap")
             last_error = summary.get("last_error")
+
+            # Read threshold from config
+            try:
+                cfg = config_mod.load(project_root / ".burnless" / "config.yaml")
+                threshold = int(cfg.get("epochs", {}).get("watermark_alarm_gap", 5))
+            except Exception:
+                threshold = 5
+
             if last_error:
                 checks.append(Check(
                     "C8",
@@ -378,11 +387,18 @@ def _check_c(checks: list[Check], home: Path | None = None, cwd: Path | None = N
                     "WARN",
                     f"recovery last_error: {last_error}",
                 ))
-            elif isinstance(gap, int) and gap > 0:
+            elif isinstance(gap, int) and gap >= threshold:
                 checks.append(Check(
                     "C8",
                     "C",
                     "WARN",
+                    f"recovery watermark gap: {gap}",
+                ))
+            elif isinstance(gap, int) and gap > 0:
+                checks.append(Check(
+                    "C8",
+                    "C",
+                    "PASS",
                     f"recovery watermark gap: {gap}",
                 ))
             else:
@@ -398,13 +414,27 @@ def _check_c(checks: list[Check], home: Path | None = None, cwd: Path | None = N
         checks.append(Check("C8", "C", "WARN", "recovery status unavailable: no project root"))
 
     # C9: hook error log visibility
-    hook_error_log = Path.home() / ".burnless" / "state" / "hook_errors.log"
+    from . import config as config_mod
+    hook_error_log = home / ".burnless" / "state" / "hook_errors.log"
+
+    # Read tail limit from config
+    try:
+        project_root_for_cfg = paths_mod.find_root(start=cwd or Path.cwd())
+        if project_root_for_cfg is not None:
+            cfg = config_mod.load(project_root_for_cfg / ".burnless" / "config.yaml")
+            tail_limit = int(cfg.get("epochs", {}).get("hook_error_tail", 5))
+        else:
+            tail_limit = 5
+    except Exception:
+        tail_limit = 5
+
     if hook_error_log.exists():
         try:
             text = hook_error_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
-            last = text[-1] if text else ""
-            if last:
-                checks.append(Check("C9", "C", "WARN", f"hook errors recorded: {last[:180]}"))
+            last_lines = text[-tail_limit:] if text else []
+            if last_lines:
+                detail = " ".join(l[:180] for l in last_lines)
+                checks.append(Check("C9", "C", "WARN", f"hook errors recorded: {detail}"))
             else:
                 checks.append(Check("C9", "C", "PASS", "hook error log present but empty"))
         except Exception as e:

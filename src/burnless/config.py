@@ -136,6 +136,8 @@ DEFAULT_CONFIG: dict = {
         # resolve from config; the flag stays as an explicit override.
         "restore_budget_tokens": 4000,   # SessionStart source=clear (rollover)
         "startup_budget_tokens": 2000,   # SessionStart source=startup (seed)
+        "watermark_alarm_gap": 5,        # doctor C8 warns only when gap >= this
+        "hook_error_tail": 5,            # doctor C9 shows last N lines
     },
     "display": {
         "progress_detail": "brief",  # minimal | brief | full

@@ -160,6 +160,12 @@ def record_hook_error(
     path = _hook_error_log_path(_root_path(root))
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        if path.exists() and path.stat().st_size > 1048576:
+            rotated = path.with_suffix(path.suffix + ".1")
+            path.rename(rotated)
+    except Exception:
+        pass
+    try:
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception:
