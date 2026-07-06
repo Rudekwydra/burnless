@@ -1156,6 +1156,19 @@ def compact_pending(
             applied_through=max(int(r.get("seq") or 0) for r in pending),
             journal_head=snapshot_head,
         )
+        # I2 metric: how pointer-shaped is the memory after this compaction?
+        refs_lines = 0
+        total_lines = 0
+        refs_ratio = 0.0
+        try:
+            from .epochs_v2 import parse_living_v3
+
+            parsed_candidate = parse_living_v3(candidate)
+            refs_lines = len(parsed_candidate.get("Refs") or [])
+            total_lines = sum(len(entries or []) for entries in parsed_candidate.values())
+            refs_ratio = round(refs_lines / total_lines, 3) if total_lines else 0.0
+        except Exception:
+            pass
         owner_loop.log_owner_event(
             root_path,
             {
@@ -1168,6 +1181,9 @@ def compact_pending(
                 "generation": committed["generation"],
                 "applied_through": committed["applied_through"],
                 "journal_head": committed["journal_head"],
+                "refs_lines": refs_lines,
+                "total_lines": total_lines,
+                "refs_ratio": refs_ratio,
             },
         )
         return {
