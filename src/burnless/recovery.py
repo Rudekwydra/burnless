@@ -1353,14 +1353,225 @@ def inherit_checkpoint(
     return committed
 
 
-def _truncate_text(text: str, max_chars: int) -> str:
+def _truncate_tail(text: str, max_chars: int, marker: str) -> str:
+    """Truncate only the TAIL of ``text`` (never the middle) to fit
+    ``max_chars`` including the marker. Cuts at a line boundary when one is
+    close enough so entries stay whole."""
     if len(text) <= max_chars:
         return text
-    head = max_chars // 2
-    tail = max_chars - head - 64
-    if tail < 0:
-        tail = 0
-    return text[:head] + "\n...\n[truncated]\n...\n" + text[-tail:]
+    keep = max(0, max_chars - len(marker) - 1)
+    head = text[:keep]
+    cut = head.rfind("\n")
+    if cut > keep // 2:
+        head = head[:cut]
+    return head.rstrip() + "\n" + marker
+
+
+_RESTORE_POINTER_RULE = (
+    "regra: Refs e Recuperáveis são PONTEIROS — use Read/grep sob demanda; "
+    "não releia arquivos já conhecidos sem motivo."
+)
+_MANIFEST_HEADER = "## Manifesto (leia sob demanda, não tudo)"
+_PENDING_HEADER = "## Trocas ainda não consolidadas"
+_LIVING_TRUNCATED_MARKER = "[living_md truncado — leia o checkpoint completo no Manifesto]"
+
+# Sections that carry "the thread" and are never truncated (A1 layer 2).
+_PRIORITY_SECTIONS = ("Foco atual", "Threads abertas")
+
+
+def _latest_export_path(root_path: Path) -> Path | None:
+    """Newest `.burnless/exports/epoch-*.md` artifact, if any."""
+    exports_dir = root_path / "exports"
+    try:
+        files = sorted(
+            (p for p in exports_dir.glob("epoch-*.md") if p.is_file()),
+            key=lambda p: (p.stat().st_mtime, p.name),
+        )
+        return files[-1] if files else None
+    except Exception:
+        return None
+
+
+def _render_manifest(
+    root_path: Path,
+    checkpoint_path: Path | None,
+    journal_dir: Path,
+    journal_head: int,
+    applied_through: int,
+) -> str:
+    """I1: fixed manifest block — ALWAYS present in a restore, never truncated.
+
+    It is the map for the model to self-serve the rest of the memory on
+    demand instead of pasting everything into context.
+    """
+    lines = [_MANIFEST_HEADER]
+    if checkpoint_path is not None:
+        lines.append(f"- checkpoint completo: {checkpoint_path}")
+    lines.append(f"- journal: {journal_dir} (head={journal_head}, applied={applied_through})")
+    export_path = _latest_export_path(root_path)
+    if export_path is not None:
+        lines.append(f"- exports da sessão anterior: {export_path}")
+    lines.append(
+        "- Refs do documento vivo: já no formato `path#Lx-y — why [seq N]` — "
+        "leia só o que a tarefa atual pedir"
+    )
+    return "\n".join(lines)
+
+
+def _render_pending_block(record: dict[str, Any]) -> str:
+    block = [
+        f"### seq {record.get('seq')}",
+        f"exchange_id: {record.get('exchange_id')}",
+        "PERGUNTA:",
+        record.get("user_text") or "",
+        "",
+        "RESPOSTA:",
+        record.get("assistant_text") or "",
+    ]
+    files = record.get("files") or []
+    if files:
+        block.append(f"files: {', '.join(files)}")
+    return "\n".join(block)
+
+
+def _pending_summary_line(record: dict[str, Any], max_chars: int = 120) -> str:
+    """One-line summary for an old pending exchange that did not fit whole."""
+    user_text = (record.get("user_text") or "").strip()
+    first_line = ""
+    for line in user_text.splitlines():
+        if line.strip():
+            first_line = line.strip()
+            break
+    if len(first_line) > max_chars:
+        first_line = first_line[: max_chars - 1].rstrip() + "…"
+    return f"- seq {record.get('seq')} · {first_line}"
+
+
+def _render_v3_sections(parsed: dict[str, list[str]], names: Iterable[str]) -> str:
+    out: list[str] = []
+    for name in names:
+        entries = parsed.get(name) or []
+        if not entries:
+            continue
+        out.append(f"## {name}")
+        for entry in entries:
+            if "\n" in entry or entry.startswith("- ") or entry.startswith("#"):
+                out.append(entry)
+            else:
+                out.append(f"- {entry}")
+        out.append("")
+    return "\n".join(out).rstrip()
+
+
+def _assemble_restore_layers(
+    header: str,
+    manifest: str,
+    living_md: str,
+    pending: list[dict[str, Any]],
+    max_chars: int,
+) -> tuple[str, int, int]:
+    """Priority-layered restore assembly (A1). Used when the naive full render
+    exceeds the budget. Never truncates the MIDDLE of anything; instead it
+    demotes what does not fit, in this priority order:
+
+    1. metadata header (always whole)
+    2. living_md 'Foco atual' + 'Threads abertas' (never truncated)
+    3. most recent pending exchanges WHOLE, newest first, while they fit
+    4. the rest of living_md (tail-truncated as a last resort, never the middle)
+    5. old pending exchanges as one-line summaries
+    6. manifest block (always whole — see _render_manifest)
+
+    Returns (context, pending_whole_count, pending_summarized_count).
+    """
+    from .epochs_v2 import SECTIONS_V3, parse_living_v3
+
+    # Fixed overhead: part separators, the pending-section header and the
+    # one-line-summary label. Conservative so the final join stays in budget.
+    budget = max_chars - len(header) - len(manifest) - 200
+    pending_sorted = sorted(pending, key=lambda r: int(r.get("seq") or 0))
+
+    parsed = parse_living_v3(living_md)
+    is_v3 = any(parsed.get(section) for section in SECTIONS_V3)
+
+    if is_v3:
+        priority_block = _render_v3_sections(parsed, _PRIORITY_SECTIONS)
+        rest_names = [name for name in parsed.keys() if name not in _PRIORITY_SECTIONS]
+        rest_block = _render_v3_sections(parsed, rest_names)
+    else:
+        # Fallback: living_md does not parse as V3 — serve it first, whole if
+        # possible, tail-truncated (never the middle) if not.
+        priority_block = living_md.rstrip()
+        rest_block = ""
+
+    if priority_block:
+        budget -= len(priority_block) + 2
+        if not is_v3 and budget < 0:
+            # Non-V3 docs have no untouchable sections: tail-truncate to keep
+            # room for the most recent exchange (the thread itself).
+            allowed = max(200, len(priority_block) + budget)
+            priority_block = _truncate_tail(priority_block, allowed, _LIVING_TRUNCATED_MARKER)
+            budget = 0
+
+    # Layer 3: newest pending exchanges whole, while they fit.
+    whole_seqs: set[int] = set()
+    for record in reversed(pending_sorted):
+        block_cost = len(_render_pending_block(record)) + 1
+        if budget - block_cost < 0:
+            break
+        budget -= block_cost
+        whole_seqs.add(int(record.get("seq") or 0))
+
+    # Layer 5 cost is reserved up front: one-line summaries are small and
+    # bounded, and they are the only trace left of demoted exchanges — the
+    # rest of living_md (layer 4) expands into what remains AFTER them.
+    summary_lines = [
+        (int(r.get("seq") or 0), _pending_summary_line(r))
+        for r in pending_sorted
+        if int(r.get("seq") or 0) not in whole_seqs
+    ]
+    summaries_cost = sum(len(line) + 1 for _seq, line in summary_lines)
+
+    # Layer 4: the rest of living_md, whole if it fits, tail-truncated if not.
+    if rest_block:
+        rest_allowance = budget - summaries_cost
+        if len(rest_block) + 2 <= rest_allowance:
+            budget -= len(rest_block) + 2
+        elif rest_allowance > 200:
+            rest_block = _truncate_tail(rest_block, rest_allowance - 2, _LIVING_TRUNCATED_MARKER)
+            budget -= len(rest_block) + 2
+        else:
+            rest_block = _LIVING_TRUNCATED_MARKER if budget - summaries_cost >= len(_LIVING_TRUNCATED_MARKER) else ""
+            budget -= len(rest_block)
+
+    # Layer 5: old pending exchanges as one-line summaries (newest first while
+    # they fit; presented in chronological order).
+    summaries: list[tuple[int, str]] = []
+    summarized = 0
+    for seq, line in reversed(summary_lines):
+        if budget - (len(line) + 1) < 0:
+            continue
+        budget -= len(line) + 1
+        summaries.append((seq, line))
+        summarized += 1
+    summaries.sort(key=lambda item: item[0])
+
+    parts = [header]
+    if priority_block:
+        parts += ["", priority_block]
+    if rest_block:
+        parts += ["", rest_block]
+    if pending_sorted:
+        pending_lines: list[str] = ["", _PENDING_HEADER]
+        if summaries:
+            pending_lines.append("Trocas antigas (resumo de 1 linha; conteúdo no journal — ver Manifesto):")
+            pending_lines.extend(line for _seq, line in summaries)
+        for record in pending_sorted:
+            if int(record.get("seq") or 0) in whole_seqs:
+                pending_lines.append(_render_pending_block(record))
+        parts.extend(pending_lines)
+    parts += ["", manifest]
+    context = "\n".join(parts).strip()
+    return context, len(whole_seqs), summarized
 
 
 def render_restore(
@@ -1397,7 +1608,7 @@ def render_restore(
     if not living_md.strip() and not pending and applied_through <= 0 and journal_head <= 0:
         return None
 
-    body_parts = [
+    header_parts = [
         _RESTORE_PREFIX,
         f"host={host}",
         f"old_sid={checkpoint_session_id}",
@@ -1407,31 +1618,11 @@ def render_restore(
         f"applied_through={applied_through}",
         f"journal_head={journal_head}",
         f"pending_count={len(pending)}",
+        _RESTORE_POINTER_RULE,
     ]
-    if living_md.strip():
-        body_parts.append("")
-        body_parts.append(living_md.rstrip())
-
-    if pending:
-        body_parts.append("")
-        body_parts.append("## Trocas ainda não consolidadas")
-        for record in pending:
-            block = [
-                f"### seq {record.get('seq')}",
-                f"exchange_id: {record.get('exchange_id')}",
-                "PERGUNTA:",
-                record.get("user_text") or "",
-                "",
-                "RESPOSTA:",
-                record.get("assistant_text") or "",
-            ]
-            files = record.get("files") or []
-            if files:
-                block.append(f"files: {', '.join(files)}")
-            body_parts.extend(block)
+    header = "\n".join(header_parts)
 
     checkpoint_chars = len(living_md.strip())
-    context = "\n".join(body_parts).strip()
     max_chars = max(800, int(budget_tokens) * 4)
     selected_checkpoint_path = _latest_checkpoint_path(root_path, host, checkpoint_session_id)
     if selected_checkpoint_path is None:
@@ -1439,24 +1630,32 @@ def render_restore(
             if cp.exists():
                 selected_checkpoint_path = cp
                 break
-    reference_block = ""
-    if selected_checkpoint_path is not None:
-        reference_block = (
-            "\n\n## Referencia local\n"
-            f"- checkpoint: {selected_checkpoint_path}\n"
-            f"- journal_dir: {journal_dir}\n"
-            f"- journal_head: {journal_head}\n"
-            f"- applied_through: {applied_through}\n"
-        )
+    manifest = _render_manifest(
+        root_path, selected_checkpoint_path, journal_dir, journal_head, applied_through
+    )
+
+    pending_sorted = sorted(pending, key=lambda r: int(r.get("seq") or 0))
+    full_parts = [header]
+    if living_md.strip():
+        full_parts += ["", living_md.rstrip()]
+    if pending_sorted:
+        full_parts += ["", _PENDING_HEADER]
+        full_parts += [_render_pending_block(record) for record in pending_sorted]
+    full_parts += ["", manifest]
+    full_context = "\n".join(full_parts).strip()
+
     truncated = False
-    body_budget = max_chars
-    if reference_block:
-        body_budget = max(200, max_chars - len(reference_block))
-    if len(context) > body_budget:
-        context = _truncate_text(context, body_budget)
+    pending_whole = len(pending_sorted)
+    pending_summarized = 0
+    if len(full_context) <= max_chars:
+        # Small payload: single-pass render, everything whole (plus manifest).
+        context = full_context
+    else:
+        # Over budget: priority-layered assembly (A1) — demote, never cut the middle.
         truncated = True
-    if reference_block and truncated:
-        context = context + reference_block if context else reference_block.lstrip("\n")
+        context, pending_whole, pending_summarized = _assemble_restore_layers(
+            header, manifest, living_md, pending_sorted, max_chars
+        )
 
     owner_loop.log_owner_event(
         root_path,
@@ -1472,6 +1671,8 @@ def render_restore(
             "journal_head": journal_head,
             "applied_through": applied_through,
             "pending": len(pending),
+            "pending_whole": pending_whole,
+            "pending_summarized": pending_summarized,
             "watermark_gap": max(0, journal_head - applied_through),
             "truncated": truncated,
         },
@@ -1494,6 +1695,8 @@ def render_restore(
             "applied_through": applied_through,
             "watermark_gap": max(0, journal_head - applied_through),
             "truncated": truncated,
+            "pending_whole": pending_whole,
+            "pending_summarized": pending_summarized,
             "reference": str(selected_checkpoint_path) if selected_checkpoint_path else None,
         },
     }
