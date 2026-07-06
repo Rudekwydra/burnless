@@ -81,3 +81,38 @@ def test_extract_result_json_falls_back_per_density_key():
         "out_of_box": 0.5,
     }
     assert parsed["salience"] == 0.5
+
+
+def test_normalize_files_touched_coerces_dict_entries_to_paths():
+    """A worker that reports files_touched as dicts (e.g. {"path": ...}) must
+    not crash the syntax gate (isabs/join) or set-based indexing downstream:
+    every entry is reduced to a plain path string, unusable entries dropped."""
+    payload = {
+        "id": "d999",
+        "status": "OK",
+        "kind": "execution",
+        "summary": "done",
+        "files_touched": [
+            {"path": "src/burnless/recovery.py", "lines": "1-9"},
+            "src/burnless/doctor.py",
+            {"file": "src/burnless/config.py"},
+            {"lines": "no path here"},
+            None,
+        ],
+        "validated": [],
+        "evidence": ["pytest tests"],
+        "issues": [],
+        "next": "",
+    }
+
+    normalized = decoder_mod.normalize_worker_envelope(payload)
+    files = normalized["files_touched"]
+
+    assert files == [
+        "src/burnless/recovery.py",
+        "src/burnless/doctor.py",
+        "src/burnless/config.py",
+    ]
+    # every entry is a hashable, joinable string (the properties the crash sites need)
+    assert all(isinstance(f, str) for f in files)
+    assert len(set(files)) == 3

@@ -258,6 +258,28 @@ def _coerce_to_list(value: Any) -> list:
     return [str(value)]
 
 
+def _coerce_path_entry(entry: Any) -> str | None:
+    """Reduce one files_touched entry to a plain path string.
+
+    Workers may report files_touched as strings or as dicts like
+    ``{"path": "a.py", "lines": "1-9"}``. Downstream consumers join these onto
+    cwd, py_compile them, and put them in a set() for indexing — all of which
+    need hashable, path-like strings. A dict entry would crash those call sites
+    (isabs() / unhashable set member), so extract the path or drop the entry.
+    """
+    if isinstance(entry, str):
+        return entry.strip() or None
+    if isinstance(entry, dict):
+        for key in ("path", "file", "filename", "name", "target"):
+            val = entry.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return None
+    if entry is None:
+        return None
+    return str(entry)
+
+
 def normalize_worker_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     """Backwards-compatible normalization for worker JSON envelopes."""
     normalized = dict(payload or {})
@@ -282,6 +304,15 @@ def normalize_worker_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     for field in _LIST_FIELDS:
         if field in normalized:
             normalized[field] = _coerce_to_list(normalized[field])
+    # files_touched must be a list of path strings: element-coerce dict entries
+    # (e.g. {"path": ...}) so the syntax gate, set-based indexing and reports
+    # never choke on a non-string / unhashable member.
+    if "files_touched" in normalized:
+        normalized["files_touched"] = [
+            p
+            for p in (_coerce_path_entry(e) for e in normalized["files_touched"])
+            if p
+        ]
     return normalized
 
 
