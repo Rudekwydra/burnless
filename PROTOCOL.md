@@ -155,6 +155,70 @@ The key is not embedded in the capsule. The default keyring is local process
 memory. This closes the v1 footgun, but the current envelope is still not an
 enterprise cryptography claim.
 
+## Epoch Export Contract — `burnless-epoch-export/v1`
+
+Burnless is hot memory: a living, per-session document that survives `/clear`.
+Cold-memory systems (search indexes, capsule stores, archival tools) may want
+to ingest that document — but the bridge is an **on-disk artifact, not a
+call**. Burnless never invokes another application; it only writes files.
+
+On SessionEnd, `burnless epoch export` writes the consolidated `living_md`
+(V3) to:
+
+```text
+<project>/.burnless/exports/epoch-<host>-<sid8>-<UTCts>.md
+```
+
+where `<sid8>` is the first 8 characters of the host session id and `<UTCts>`
+is a compact UTC timestamp (`YYYYMMDDTHHMMSSZ`). The file format is a YAML
+front-matter block followed by the living document **verbatim**
+(byte-identical to the checkpoint):
+
+```markdown
+---
+schema: burnless-epoch-export/v1
+project: <project directory name>
+host: <host name, e.g. claude>
+host_session_id: <full host session id>
+generation: <checkpoint generation N>
+applied_through: <last journal seq applied to living_md>
+journal_head: <highest journal seq at export time>
+created: <ISO8601 UTC, e.g. 2026-07-06T12:34:56Z>
+---
+<living_md V3, verbatim>
+```
+
+Field semantics:
+
+- `schema` — always `burnless-epoch-export/v1`; consumers must ignore files
+  with schemas they do not understand.
+- `project` — the name of the project directory containing `.burnless/`.
+- `host` / `host_session_id` — the host application and its full session id;
+  together with `generation` they identify the source checkpoint.
+- `generation` — monotonically increasing checkpoint generation. A later
+  export for the same `host_session_id` supersedes an earlier one.
+- `applied_through` / `journal_head` — journal sequence numbers: what the
+  living document has absorbed vs. what had been captured at export time.
+- `created` — export wall-clock time, ISO8601 UTC.
+
+Guarantees:
+
+- **Atomicity** — exports are written tmp + fsync + `os.replace`. A reader
+  never observes a partial file; any `epoch-*.md` present is complete.
+- **Fail-open** — export never raises and never affects the hot checkpoint.
+  An empty `living_md` produces no file.
+- **Retention** — burnless keeps the newest `epochs.exports_keep` exports
+  (default 30) per project and garbage-collects the oldest. Consumers must
+  not rely on files staying around forever.
+
+Consumer rule (the boundary):
+
+> Consumers **PULL** `.burnless/exports/*.md` on their own schedule and keep
+> their **OWN ledger** of what they have ingested (e.g. file hash → verdict).
+> They **never write inside `.burnless/`** — no markers, no state, no
+> tombstones. The export directory is read-only territory for anything that
+> is not burnless itself.
+
 ## Non-Goals In v0.5
 
 - Burnless v0.5 does not claim zero-knowledge.

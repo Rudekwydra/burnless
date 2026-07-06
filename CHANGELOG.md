@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **`burnless epoch export` + published `burnless-epoch-export/v1` contract.**
+  On SessionEnd the consolidated `living_md` (V3) is written atomically
+  (tmp + fsync + rename) to
+  `<project>/.burnless/exports/epoch-<host>-<sid8>-<UTCts>.md` with a YAML
+  front-matter header followed by the living document verbatim. Fail-open,
+  skips empty documents, retention via `epochs.exports_keep` (default 30,
+  oldest GC'd). Full contract in `PROTOCOL.md` ("Epoch Export Contract").
+
+### Removed
+
+- **`burnless epoch seal`.** Sealing shelled out to an external cold-memory
+  binary at session end, which coupled burnless's hot-memory path to another
+  application's runtime (app separation violation: hot memory must never
+  depend on a consumer). The bridge is now an on-disk artifact: burnless
+  exports, consumers pull `.burnless/exports/` on their own schedule with
+  their own ledger and never write inside `.burnless/`. Use
+  `burnless epoch export` instead; the session-end hook already does.
+
 ## [0.8.0] — 2026-05-25
 
 ### Highlights
