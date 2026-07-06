@@ -1,0 +1,171 @@
+# feature_thread — 23 turnos, 3 rollovers, rewriter determinístico sempre OK.
+name: feature_thread
+description: >-
+  Fluxo padrão: objetivo declarado no turno 1 sobrevive a 3 /clear; decisão
+  antiga é substituída e thread encerrada não voltam.
+budget_tokens: null   # resolve do config default (epochs.restore_budget_tokens = 4000)
+compact_budget_tokens: 2500
+sessions:
+  - stop_compact: true
+    turns:
+      - user: >-
+          Quero começar a feature de auth hoje. [[FOCO: implementar refresh
+          automático de token OAuth no serviço de auth]] O fluxo atual derruba
+          o usuário a cada 30 minutos.
+        assistant: >-
+          Entendido, foco registrado. Vou mapear o fluxo atual de tokens antes
+          de propor o mecanismo de refresh.
+      - user: >-
+          Onde fica o ponto de entrada do refresh hoje? Precisamos de um mapa
+          antes de mexer em qualquer coisa do serviço.
+        assistant: >-
+          O ponto de entrada é o middleware de sessão. [[REF:
+          /src/app/auth/token_refresh.py#L12-88 — fluxo de refresh do token
+          OAuth]] Documentei o caminho completo no arquivo citado.
+        files:
+          - /src/app/auth/token_refresh.py
+      - user: >-
+          Por enquanto vamos simplificar o armazenamento pra destravar o
+          desenvolvimento. [[DECIDE: guardar refresh tokens em texto puro no
+          sqlite enquanto o keychain não está integrado]]
+        assistant: >-
+          Registrado como decisão provisória. Deixei um TODO apontando que
+          isso não pode ir para produção desse jeito.
+      - user: >-
+          O teste de login está intermitente no CI de novo. [[THREAD+:
+          investigar flakiness do teste de login no CI]] Falha 1 a cada 5
+          execuções, sempre no mesmo assert de sessão.
+        assistant: >-
+          Thread aberta. Coletei os últimos 20 runs do CI para comparar
+          timing de setup do fixture de sessão.
+      - user: >-
+          Precisamos de um contrato estável para o serviço consumidor não
+          quebrar quando o refresh entrar.
+        assistant: >-
+          Fechado. [[CONTRACT: /src/app/auth/api.py expõe refresh_session(token) -> Session]]
+          Assinatura congelada até a release.
+      - user: >-
+          Roda a suíte de auth pra gente ter uma linha de base antes das
+          mudanças estruturais.
+        assistant: >-
+          Rodei. [[VALID: pytest tests/auth -q OK, 84 passed]] Linha de base
+          verde registrada.
+      - user: >-
+          Bom ponto de parada por hoje, vou limpar o contexto e retomamos na
+          próxima sessão do zero.
+        assistant: >-
+          Combinado. O documento vivo guarda o foco, a ref do fluxo de refresh
+          e a decisão provisória do sqlite.
+  - stop_compact: true
+    turns:
+      - user: >-
+          Revisei a decisão provisória com o time de segurança e ela morreu.
+          [[SUPERSEDE: texto puro no sqlite => armazenar refresh tokens no
+          keychain do sistema operacional]]
+        assistant: >-
+          Substituição registrada: a decisão antiga sai de vigor e a nova
+          passa a valer. Nada de token em texto puro.
+      - user: >-
+          Confirma também a biblioteca que vamos usar pra falar com o
+          keychain em cada plataforma.
+        assistant: >-
+          Confirmado. [[DECIDE: usar a lib keyring para abstrair o keychain
+          nas três plataformas]] Ela cobre macOS, Linux e Windows.
+      - user: >-
+          Sobre o teste flaky de login: achei a causa no fixture. Pode
+          encerrar a thread. [[THREAD-: flakiness do teste de login]]
+        assistant: >-
+          Thread encerrada. A causa era o relógio do fixture; corrigido no
+          setup compartilhado.
+      - user: >-
+          Escreve o adaptador do keyring e liga ele no fluxo de refresh que
+          está mapeado na ref.
+        assistant: >-
+          Adaptador escrito e ligado no middleware. Os testes unitários do
+          adaptador passam localmente.
+        files:
+          - /src/app/auth/keyring_adapter.py
+      - user: >-
+          Valida o fluxo completo com o keychain fake antes de seguirmos para
+          a parte de expiração.
+        assistant: >-
+          Validei. [[VALID: pytest tests/auth/test_keyring_adapter.py -q OK]]
+          Fluxo completo verde com o fake.
+      - user: >-
+          Registra o risco de rate limit do provedor OAuth quando o refresh
+          automático entrar em produção.
+        assistant: >-
+          Registrado. [[RISK: refresh automático pode estourar rate limit do
+          provedor OAuth em picos]] Vamos precisar de jitter.
+      - user: >-
+          Fechando a sessão por aqui, limpo o contexto e sigo depois com a
+          expiração proativa.
+        assistant: >-
+          Fechado. Estado consolidado no documento vivo; retome pela
+          expiração proativa.
+  - stop_compact: true
+    turns:
+      - user: >-
+          Retomando: implementa a expiração proativa com base no exp do JWT,
+          renovando 5 minutos antes.
+        assistant: >-
+          Implementado no scheduler do middleware. [[DECIDE: renovar tokens 5
+          minutos antes do exp do JWT]]
+      - user: >-
+          Qual o próximo passo depois disso? Deixa registrado pra eu não
+          perder o fio se limpar o contexto.
+        assistant: >-
+          [[NEXT: rodar a suíte de integração de auth com o keychain fake]]
+          Esse é o próximo passo registrado.
+      - user: >-
+          Adiciona também a telemetria de refresh pra gente medir quantas
+          renovações acontecem por hora.
+        assistant: >-
+          Telemetria adicionada com contador por origem da renovação
+          (proativa vs reativa).
+        files:
+          - /src/app/auth/telemetry.py
+      - user: >-
+          Confere se o contrato do refresh_session continua intacto depois
+          dessas mudanças todas.
+        assistant: >-
+          Conferido: a assinatura refresh_session(token) -> Session está
+          intacta e coberta por teste de contrato.
+      - user: >-
+          Roda um smoke rápido do fluxo inteiro só pra garantir antes de eu
+          limpar o contexto de novo.
+        assistant: >-
+          Smoke verde: login, uso, renovação proativa e logout funcionando em
+          sequência no ambiente local.
+      - user: >-
+          Perfeito. Vou limpar o contexto agora; na volta quero começar direto
+          pela suíte de integração de auth.
+        assistant: >-
+          Combinado — o próximo passo registrado é exatamente rodar a suíte de
+          integração de auth com o keychain fake.
+  - stop_compact: true
+    turns:
+      - user: >-
+          Voltei. Confirma o que temos vigente antes de eu rodar a suíte de
+          integração.
+        assistant: >-
+          Vigente: keychain via keyring, renovação 5 minutos antes do exp e
+          contrato refresh_session estável.
+      - user: >-
+          Roda a suíte de integração então.
+        assistant: >-
+          Suíte de integração verde com o keychain fake; 23 testes passando.
+      - user: >-
+          Ótimo, encerramos o ciclo da feature aqui.
+        assistant: >-
+          Encerrado; a feature de refresh está pronta para revisão final.
+must_remember:
+  - implementar refresh automático de token OAuth no serviço de auth
+  - armazenar refresh tokens no keychain do sistema operacional
+  - /src/app/auth/token_refresh.py
+  - rodar a suíte de integração de auth com o keychain fake
+must_forget:
+  - texto puro no sqlite
+  - flakiness do teste de login
+expect:
+  truncated: false

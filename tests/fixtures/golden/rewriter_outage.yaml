@@ -1,0 +1,154 @@
+# rewriter_outage — bônus: o rewriter FALHA nas sessões 2 e 3 (rollovers 2-3
+# degradam para checkpoint + delta). O must_remember do rollover 1 precisa
+# sobreviver via herança de checkpoint, e a última troca continua literal.
+name: rewriter_outage
+description: >-
+  Migração de build para monorepo. Só a sessão 1 consolida; depois o encoder
+  morre e o sistema vive de herança de checkpoint + trocas pendentes.
+budget_tokens: null   # default do config (4000)
+compact_budget_tokens: 2500
+sessions:
+  - stop_compact: true
+    turns:
+      - user: >-
+          Hoje começa a migração do build. [[FOCO: migrar o pipeline de build
+          para o monorepo]] Também já decide a estratégia inicial de cache:
+          [[DECIDE: usar cache local em disco por runner enquanto o remoto
+          não existe]]
+        assistant: >-
+          Foco e decisão inicial registrados. Vou levantar os alvos de build
+          existentes antes de mexer no CI.
+      - user: >-
+          Abre uma thread pra questão da licença do orquestrador antigo, que
+          pode travar a migração. [[THREAD+: avaliar licença do orquestrador
+          antigo de build]]
+        assistant: >-
+          Thread aberta; pedi o parecer do jurídico e segui com o
+          levantamento técnico em paralelo.
+      - user: >-
+          Registra a referência do terraform do cache que o time de infra
+          subiu ontem.
+        assistant: >-
+          Registrada. [[REF: /infra/ci/build_cache.tf#L1-60 — bucket e
+          política do cache remoto de artefatos]]
+        files:
+          - /infra/ci/build_cache.tf
+      - user: >-
+          O benchmark do cache remoto ficou pronto e o resultado é claro.
+          Atualiza a decisão de cache de acordo.
+        assistant: >-
+          Atualizado. [[SUPERSEDE: cache local em disco por runner => usar
+          cache remoto de artefatos no CI]] O remoto reduz o build frio em
+          70%.
+      - user: >-
+          O jurídico respondeu sobre o orquestrador antigo: sem pendência,
+          pode encerrar aquela thread. [[THREAD-: licença do orquestrador
+          antigo]]
+        assistant: >-
+          Thread encerrada. Sem bloqueio de licença; a migração segue no
+          plano técnico.
+      - user: >-
+          Fecha a sessão com o próximo passo registrado pra retomada depois
+          do clear.
+        assistant: >-
+          [[NEXT: provisionar o bucket de cache e rodar o build canário]]
+          [[VALID: build local no monorepo OK em 4m12s]]
+      - user: >-
+          Perfeito, limpando o contexto agora. Até a sessão dois.
+        assistant: >-
+          Até lá — foco, cache remoto, ref do terraform e próximo passo estão
+          consolidados.
+  - stop_compact: true
+    rewriter: fail
+    turns:
+      - user: >-
+          Sessão dois. O encoder local caiu, então o consolidado pode não
+          rodar; seguimos mesmo assim com o bucket.
+        assistant: >-
+          Provisionei o bucket de cache seguindo o terraform referenciado no
+          documento vivo.
+      - user: >-
+          Roda o build canário apontando pro cache remoto recém provisionado.
+        assistant: >-
+          Build canário verde: 1m38s quente contra 4m12s frio. O cache remoto
+          está funcionando.
+      - user: >-
+          Documenta o resultado do canário no runbook da migração pra
+          plataforma acompanhar.
+        assistant: >-
+          Documentado no runbook com os tempos de build e o link do painel de
+          hit-rate do cache.
+      - user: >-
+          Liga o cache remoto pra metade dos runners e observa por uma hora
+          antes de expandir.
+        assistant: >-
+          Ligado em 50% dos runners; hit-rate em 82% na primeira hora, sem
+          erros de download de artefato.
+      - user: >-
+          Expande pra frota toda então e deixa o painel gravando as métricas
+          da virada.
+        assistant: >-
+          Expandido para 100% da frota; métricas da virada gravadas no painel
+          da migração.
+      - user: >-
+          Encerro a sessão dois aqui; o consolidado continua fora do ar,
+          confio no checkpoint herdado.
+        assistant: >-
+          Certo — a memória desta sessão fica como delta pendente; o
+          documento vivo herdado preserva o plano.
+  - stop_compact: true
+    rewriter: fail
+    turns:
+      - user: >-
+          Sessão três, encoder ainda fora. Começa a desligar o pipeline de
+          build antigo com cuidado.
+        assistant: >-
+          Desliguei os jobs do pipeline antigo em modo drenagem; nada novo
+          entra, o que está na fila termina.
+      - user: >-
+          Arquiva também os workflows antigos no repositório de CI pra
+          ninguém reativar por engano.
+        assistant: >-
+          Workflows antigos arquivados com aviso apontando para o pipeline do
+          monorepo.
+      - user: >-
+          Confere se algum job noturno ainda referencia o orquestrador
+          antigo antes do desligamento final.
+        assistant: >-
+          Conferido: dois jobs noturnos migrados; nenhum apontamento restante
+          para o orquestrador antigo.
+      - user: >-
+          Faz o desligamento final do orquestrador antigo então e guarda o
+          snapshot de configuração.
+        assistant: >-
+          Desligamento final feito; snapshot de configuração arquivado no
+          bucket de auditoria da migração.
+      - user: >-
+          Roda o build completo do monorepo mais uma vez pra selar a
+          migração com número recente.
+        assistant: >-
+          Build completo verde em 1m41s com cache remoto quente; a migração
+          está tecnicamente concluída.
+      - user: >-
+          Última troca antes do clear: o que falta pra declarar a migração
+          encerrada no comunicado?
+        assistant: >-
+          Falta só o comunicado interno com os números do canário e o
+          agradecimento ao time de infra; o resto está concluído.
+  - stop_compact: true
+    turns:
+      - user: >-
+          Voltei do clear. Me lembra o foco e o próximo passo registrados.
+        assistant: >-
+          Foco: migrar o pipeline de build para o monorepo; próximo passo
+          registrado: provisionar o bucket e rodar o build canário.
+must_remember:
+  - migrar o pipeline de build para o monorepo
+  - usar cache remoto de artefatos no CI
+  - /infra/ci/build_cache.tf
+  - provisionar o bucket de cache e rodar o build canário
+must_forget:
+  - cache local em disco por runner
+  - licença do orquestrador antigo
+expect:
+  truncated: false

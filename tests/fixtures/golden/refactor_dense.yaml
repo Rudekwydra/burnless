@@ -1,0 +1,228 @@
+# refactor_dense — cenário DENSO (valida A1/A2/A3 juntos): living_md volumoso,
+# 8 trocas pendentes (~2.4k chars cada) na sessão 3 com encoder fora do ar,
+# budget de restore 2000 tokens vindo do config (A2). O restore em camadas
+# (A1) precisa manter o fio; a pressão de budget na compaction gera pointers
+# em Recuperáveis (A3).
+name: refactor_dense
+description: >-
+  Refactor grande do pipeline de ingestão. Sessões 1-2 acumulam um documento
+  vivo denso; a sessão 3 roda com o rewriter fora do ar (checkpoint + delta),
+  deixando 8 trocas pendentes gordas para o restore do 3º rollover.
+budget_tokens: null   # resolve do config abaixo (A2)
+# budget de compaction apertado para forçar a demoção A3 (Decisões antigas
+# viram pointers em Recuperáveis) já com um documento de tamanho de teste
+compact_budget_tokens: 800
+config: |
+  epochs:
+    version: 3
+    restore_budget_tokens: 2000
+sessions:
+  - stop_compact: true
+    turns:
+      - user: >-
+          Vamos atacar o refactor grande de uma vez. [[FOCO: extrair o
+          pipeline de ingestão para o pacote ingest/ sem quebrar os
+          consumidores]] O monólito atual mistura parsing, validação e
+          persistência no mesmo módulo.
+        assistant: >-
+          Foco registrado. Começo mapeando as fronteiras atuais do módulo
+          antes de mover qualquer arquivo.
+      - user: >-
+          Mapeia o núcleo do parser e registra a referência pra gente não
+          redescobrir isso a cada sessão.
+        assistant: >-
+          Mapeado. [[REF: /src/pipeline/ingest/parser.py#L40-210 — núcleo do
+          parser de eventos do pipeline de ingestão]] O resto é cola.
+        files:
+          - /src/pipeline/ingest/parser.py
+      - user: >-
+          Registra as decisões de fatiamento que combinamos na revisão de
+          arquitetura de hoje cedo, uma por uma.
+        assistant: >-
+          Registradas. [[DECIDE: fatiar o módulo de ingestão em parser,
+          validador e sink com interfaces explícitas entre eles, mantendo o
+          contrato externo intacto durante toda a migração para não quebrar
+          os consumidores downstream do pipeline]] [[DECIDE: manter um shim
+          de compatibilidade no caminho antigo emitindo DeprecationWarning
+          por duas releases inteiras antes de remover qualquer símbolo
+          público do módulo legado de ingestão]]
+      - user: >-
+          Tem mais duas decisões daquela revisão que precisam entrar no
+          documento vivo antes que a gente esqueça o racional.
+        assistant: >-
+          Entraram. [[DECIDE: mover a validação de schema para o boundary do
+          parser usando os modelos declarativos já existentes, eliminando as
+          três camadas redundantes de checagem espalhadas pelo código do
+          pipeline de ingestão atual]] [[DECIDE: padronizar os erros do
+          pipeline numa hierarquia única IngestError com códigos estáveis
+          documentados, substituindo os cinco tipos de exceção ad-hoc que os
+          consumidores hoje precisam capturar um a um]]
+      - user: >-
+          Abre uma thread pra acompanhar a migração dos consumidores, que é
+          a parte politicamente sensível do refactor.
+        assistant: >-
+          Aberta. [[THREAD+: migrar os 4 consumidores downstream para o novo
+          contrato do pacote ingest/]] Começo pelo relatório diário.
+      - user: >-
+          Roda a suíte do pipeline pra termos a linha de base desta sessão
+          registrada no documento.
+        assistant: >-
+          Rodei. [[VALID: pytest tests/pipeline -q OK, 132 passed]] Linha de
+          base verde antes de mover arquivos.
+      - user: >-
+          Vou limpar o contexto. Esta troca final fica só como despedida da
+          sessão um do refactor.
+        assistant: >-
+          Tranquilo — foco, refs e as quatro decisões de fatiamento já estão
+          consolidadas no documento vivo.
+  - stop_compact: true
+    turns:
+      - user: >-
+          O plano de shim mudou depois da conversa com a plataforma.
+          [[SUPERSEDE: shim de compatibilidade no caminho antigo => remover o
+          caminho antigo na release 2.0 com migração assistida por codemod]]
+        assistant: >-
+          Substituído: o shim de duas releases sai de vigor; entra a remoção
+          na 2.0 com codemod assistido.
+      - user: >-
+          Registra a decisão principal desta fase, a que define onde o sink
+          novo vai viver.
+        assistant: >-
+          Registrada. [[DECIDE: publicar o sink novo como ingest/sink.py com
+          escrita idempotente por chave natural do evento]] Essa é a espinha
+          da fase dois.
+      - user: >-
+          Aponta também a referência do validador novo que subiu na branch
+          do refactor hoje de manhã.
+        assistant: >-
+          Apontada. [[REF: /src/pipeline/ingest/validator.py#L1-95 —
+          validador de schema no boundary do parser]] Cobertura completa dos
+          modelos declarativos.
+        files:
+          - /src/pipeline/ingest/validator.py
+      - user: >-
+          Agora despeja no documento os riscos que levantamos no war room de
+          ontem, sem perder nenhum detalhe do racional de cada um.
+        assistant: >-
+          Despejados. [[RISK: o consumidor de relatório diário depende da
+          ordem de campos do payload antigo e pode quebrar silenciosamente
+          quando o parser novo normalizar a serialização dos eventos do
+          pipeline de ingestão]] [[RISK: o backfill histórico de eventos usa
+          o caminho de código legado e precisa ser replanejado antes da
+          remoção do módulo antigo na release 2.0 para não corromper as
+          partições históricas do warehouse]] [[RISK: a fila intermediária
+          do pipeline tem limite de payload menor que o novo envelope de
+          eventos e pode passar a rejeitar mensagens grandes em produção nos
+          picos de ingestão de fim de mês]]
+      - user: >-
+          Tem mais um bloco de riscos operacionais daquele mesmo war room
+          que precisa ficar registrado com o mesmo nível de detalhe.
+        assistant: >-
+          Registrados. [[RISK: o deploy canário do pacote ingest/ divide
+          tráfego com o monólito e qualquer divergência de deduplicação
+          entre os dois caminhos gera métricas duplicadas no dashboard
+          executivo durante a janela de migração]] [[RISK: a biblioteca de
+          serialização usada pelo sink novo tem breaking change anunciado
+          para o trimestre e precisa ser pinada antes do rollout completo do
+          pipeline]] [[RISK: o time de dados consome o formato intermediário
+          não documentado direto do bucket e vai quebrar quando o layout de
+          partição mudar junto com o sink idempotente]]
+      - user: >-
+          Fecha esta fase validando o pacote novo de ponta a ponta no
+          ambiente de staging.
+        assistant: >-
+          Validado. [[VALID: pytest tests/pipeline -q OK + smoke de staging
+          verde no canário]] [[NEXT: migrar o consumidor de relatório diário
+          para o contrato novo do pacote ingest/]]
+      - user: >-
+          Vou limpar o contexto de novo; a sessão três começa direto na
+          migração do consumidor de relatório.
+        assistant: >-
+          Fechado — próximo passo registrado e riscos todos no documento
+          vivo. Até a próxima sessão.
+  - stop_compact: true
+    rewriter: fail
+    turns:
+      - user: >-
+          Começando a migração do relatório diário pro contrato novo. O
+          encoder local parece fora do ar, então cuidado com o consolidado.
+        assistant: >-
+          Migração iniciada; o adaptador do relatório diário compila e os
+          primeiros testes passam localmente.
+        pad_to: 1200
+      - user: >-
+          O relatório diário tem aquele campo calculado estranho; confirma
+          como ele é derivado antes de portar a lógica.
+        assistant: >-
+          Confirmado: o campo é derivado da janela móvel de 7 dias com ajuste
+          de fuso por região; portei a lógica com teste dedicado.
+        pad_to: 1200
+      - user: >-
+          Porta agora o consumidor de alertas, que é o segundo da lista dos
+          quatro downstream.
+        assistant: >-
+          Portado. O consumidor de alertas usa o envelope novo e os testes de
+          contrato dele passam contra o staging.
+        pad_to: 1200
+      - user: >-
+          O terceiro consumidor é o exportador fiscal. Ele tem auditoria
+          pesada, então documenta cada mudança de campo.
+        assistant: >-
+          Exportador fiscal portado com tabela de-para de campos documentada
+          no próprio módulo, revisável pela auditoria.
+        pad_to: 1200
+      - user: >-
+          Falta o quarto: o replicador do warehouse. Ele é o que mais me
+          preocupa por causa do layout de partição.
+        assistant: >-
+          Replicador portado preservando o layout de partição atual atrás de
+          uma flag até o time de dados migrar o consumo do bucket.
+        pad_to: 1200
+      - user: >-
+          Roda os testes de contrato dos quatro consumidores juntos agora
+          pra ver se a migração fecha redonda.
+        assistant: >-
+          Rodei: os quatro consumidores passam nos testes de contrato contra
+          o pacote ingest/ novo em staging.
+        pad_to: 1200
+      - user: >-
+          Marca a thread de migração como praticamente concluída, faltando
+          só o sign-off do time de dados.
+        assistant: >-
+          Anotado no relatório da sessão; o sign-off do time de dados é o
+          único pendente da thread de migração.
+        pad_to: 1200
+      - user: >-
+          Última troca antes do clear: resume o estado da migração dos
+          consumidores em uma frase pra eu colar no standup.
+        assistant: >-
+          Os 4 consumidores downstream rodam no contrato novo do pacote
+          ingest/ em staging, faltando só o sign-off do time de dados.
+        pad_to: 1200
+  - stop_compact: true
+    turns:
+      - user: >-
+          Voltei depois do clear; me diga o foco e o próximo passo antes de
+          eu pedir o sign-off.
+        assistant: >-
+          Foco: extrair o pipeline de ingestão para ingest/ sem quebrar
+          consumidores; próximo passo: fechar a migração do relatório diário.
+# Inline-guaranteed memory: objetivo (Foco), decisão vigente (Decisões, now
+# protected above the verbatim pending tail by A1), próximo passo (Foco).
+must_remember:
+  - extrair o pipeline de ingestão para o pacote ingest/
+  - publicar o sink novo como ingest/sink.py
+  - migrar o consumidor de relatório diário para o contrato novo
+# Pointer-class per the P6 contract: the parser Ref is reachable via the
+# manifest-referenced checkpoint even when the restore demotes it to a pointer.
+must_reach:
+  - /src/pipeline/ingest/parser.py
+must_forget:
+  - shim de compatibilidade no caminho antigo
+# A3 (Recuperáveis demotion) has dedicated coverage in
+# tests/test_budget_demotion.py; here the compacted living_md fits under the
+# compact budget, so nothing is demoted. This scenario proves A1 (Decisões now
+# protected above the verbatim pending tail) + A2 (budget from config).
+expect:
+  truncated: true
+  min_pending_summarized: 5
