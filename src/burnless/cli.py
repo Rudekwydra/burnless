@@ -1438,8 +1438,8 @@ def cmd_epoch(args: argparse.Namespace) -> int:
             print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False))
             return 1
 
-    elif epoch_cmd == "seal":
-        from . import sealing
+    elif epoch_cmd == "export":
+        from . import exporting
 
         root = getattr(args, "root", None) or root_path
         host = getattr(args, "host", "claude")
@@ -1447,7 +1447,7 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         if not host_session_id:
             print("")
             return 0
-        result = sealing.seal_epoch(root, host=host, host_session_id=host_session_id)
+        result = exporting.export_epoch(root, host=host, host_session_id=host_session_id)
         print(json.dumps(result, ensure_ascii=False))
         return 0
 
@@ -2285,8 +2285,8 @@ def build_parser() -> argparse.ArgumentParser:
     esp = epoch_sub.add_parser("compact-pending", parents=[epoch_core], help="compact journal entries into a checkpoint")
     esp.add_argument("--use-default-rewriter", action="store_true", dest="use_default_rewriter", default=True)
     esp.set_defaults(func=cmd_epoch, epoch_cmd="compact-pending")
-    eseal = epoch_sub.add_parser("seal", parents=[epoch_core], help="seal consolidated living_md as a Forgetless capsule")
-    eseal.set_defaults(func=cmd_epoch, epoch_cmd="seal")
+    esp = epoch_sub.add_parser("export", parents=[epoch_core], help="export consolidated living_md as a neutral artifact under .burnless/exports/")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="export")
     esp = epoch_sub.add_parser("handoff-write", parents=[epoch_core], help="write a clear handoff record")
     esp.add_argument("--claimed-by", default=None, dest="claimed_by", help="pre-claim by session id, when applicable")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-write")
