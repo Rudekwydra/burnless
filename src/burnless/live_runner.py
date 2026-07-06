@@ -367,8 +367,8 @@ def run_with_live_panel(
 
     # Bare-equivalent flags for OAuth/subscription workers — drops slash
     # commands, MCP servers, per-worker session persistence, the user-level
-    # settings.json (so hooks like forgetless auto-rank don't inject contaminating
-    # context into the worker via UserPromptSubmit), and dynamic per-machine
+    # settings.json (so user-level UserPromptSubmit hooks don't inject
+    # contaminating context into the worker), and dynamic per-machine
     # sections (cwd/env/git/memory) that drift between warm-init and fork and
     # cause cache_miss_reason: system_changed. Idempotent. Keeps prefix
     # byte-stable (CLI flags don't enter the cached system prompt).
