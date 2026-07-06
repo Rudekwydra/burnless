@@ -69,3 +69,20 @@ Single source of truth: `src/burnless/__init__.py` → `__version__`. `pyproject
 | `burnless epoch on` | Enable rolling memory (remove `.burnless/epochs.off`, opt-out marker). |
 | `burnless epoch off` | Disable rolling memory (create `.burnless/epochs.off`). |
 | `burnless epoch status` | Show ON/OFF state + count of chats and summary files. |
+
+### Restore budgets (P6/A2)
+
+`burnless epoch restore` renders the SessionStart payload within a token budget.
+The budget resolves from `.burnless/config.yaml` when the caller does not pass
+`--budget-tokens`:
+
+| Config key | Default | Used for |
+|---|---|---|
+| `epochs.restore_budget_tokens` | `4000` | `--source clear` (rollover restore after `/clear`) |
+| `epochs.startup_budget_tokens` | `2000` | `--source startup` (seed on a fresh session) |
+
+The installed hook scripts do NOT hardcode `--budget-tokens` anymore; they pass
+the flag only when explicitly overridden via `BURNLESS_RESTORE_BUDGET_TOKENS` /
+`BURNLESS_STARTUP_BUDGET_TOKENS`. `--budget-tokens N` on the CLI always wins
+over config. After changing budgets in a template, run
+`burnless init --claude-code --force` to refresh the installed scripts.

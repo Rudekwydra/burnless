@@ -1367,6 +1367,33 @@ def _truncate_tail(text: str, max_chars: int, marker: str) -> str:
     return head.rstrip() + "\n" + marker
 
 
+DEFAULT_RESTORE_BUDGET_TOKENS = 4000
+DEFAULT_STARTUP_BUDGET_TOKENS = 2000
+
+
+def _resolve_budget_tokens(root_path: Path, source: str) -> int:
+    """A2: budget comes from config when the caller does not pass one.
+
+    epochs.restore_budget_tokens (default 4000) governs clear/rollover
+    restores; epochs.startup_budget_tokens (default 2000) governs startup
+    seeds. Hooks stopped hardcoding --budget-tokens; the flag remains an
+    explicit override.
+    """
+    key = "startup_budget_tokens" if source == "startup" else "restore_budget_tokens"
+    fallback = (
+        DEFAULT_STARTUP_BUDGET_TOKENS if source == "startup" else DEFAULT_RESTORE_BUDGET_TOKENS
+    )
+    try:
+        from . import config as config_mod
+
+        cfg = config_mod.load(_project_root(root_path) / ".burnless" / "config.yaml")
+        epochs_cfg = cfg.get("epochs", {}) if isinstance(cfg, dict) else {}
+        value = int(epochs_cfg.get(key, fallback))
+        return max(1, value)
+    except Exception:
+        return fallback
+
+
 _RESTORE_POINTER_RULE = (
     "regra: Refs e Recuperáveis são PONTEIROS — use Read/grep sob demanda; "
     "não releia arquivos já conhecidos sem motivo."
@@ -1582,9 +1609,11 @@ def render_restore(
     process_instance_id: str,
     new_session_id: str,
     source: str,
-    budget_tokens: int = 2000,
+    budget_tokens: int | None = None,
 ) -> dict[str, Any] | None:
     root_path = _root_path(root)
+    if budget_tokens is None:
+        budget_tokens = _resolve_budget_tokens(root_path, source)
     checkpoint_session_id = host_session_id
     checkpoint = read_checkpoint(root_path, host, checkpoint_session_id)
     if checkpoint is None and source == "startup":

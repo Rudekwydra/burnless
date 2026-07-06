@@ -68,7 +68,11 @@ rm -f "$ROOT_ERR"
 [[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
 log_pilot_event
 RESTORE_ERR=$(mktemp)
-RESTORE=$("$BB" epoch restore --root "$ROOT" --host claude --process-instance-id "$PID" --new-session-id "$SID" --source clear --budget-tokens 2000 2>"$RESTORE_ERR")
+# Budget resolves from config (epochs.restore_budget_tokens, default 4000);
+# pass --budget-tokens only when explicitly configured via env override.
+BUDGET_ARGS=()
+[[ -n "${BURNLESS_RESTORE_BUDGET_TOKENS:-}" ]] && BUDGET_ARGS=(--budget-tokens "$BURNLESS_RESTORE_BUDGET_TOKENS")
+RESTORE=$("$BB" epoch restore --root "$ROOT" --host claude --process-instance-id "$PID" --new-session-id "$SID" --source clear "${BUDGET_ARGS[@]}" 2>"$RESTORE_ERR")
 if [[ -z "$RESTORE" ]]; then
   log_hook_error "restore" "$(cat "$RESTORE_ERR" 2>/dev/null)"
   rm -f "$RESTORE_ERR"

@@ -196,9 +196,12 @@ cmd = _burnless_cmd(
     sid or "",
     "--source",
     "startup",
-    "--budget-tokens",
-    "1200",
 )
+# Budget resolves from config (epochs.startup_budget_tokens, default 2000);
+# pass --budget-tokens only when explicitly configured via env override.
+_budget_override = (os.environ.get("BURNLESS_STARTUP_BUDGET_TOKENS") or "").strip()
+if _budget_override:
+    cmd += ["--budget-tokens", _budget_override]
 proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
 rest = (proc.stdout or "").strip()
 if not rest:
