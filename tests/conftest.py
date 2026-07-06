@@ -1,4 +1,38 @@
+import os
+import stat
+import tempfile
+from pathlib import Path
+
 import pytest
+
+
+def _install_security_shim() -> None:
+    """macOS Keychain guard.
+
+    Several tests spawn the real ``claude`` CLI (setup_wizard's --version probe,
+    MCP registration) and burnless shells out to ``security find-generic-password``
+    to read the Claude Code OAuth token. Under the tests' isolated ``$HOME`` the
+    login keychain is absent, so macOS SecurityAgent pops a *blocking* "Keychain
+    Not Found" modal — dozens per run (62 ``security`` calls observed in one pass,
+    one of them ``security -i``). Prepend a no-op ``security`` shim to ``PATH`` so
+    every such call returns cleanly with no GUI. Test-only; never touches the real
+    keychain. Set ``BURNLESS_ALLOW_KEYCHAIN=1`` to opt out.
+    """
+    if os.environ.get("BURNLESS_ALLOW_KEYCHAIN") == "1":
+        return
+    shim_dir = Path(tempfile.gettempdir()) / "burnless_test_shims"
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    shim = shim_dir / "security"
+    # Exit 0 with no output: callers treat it as "no credential" and move on.
+    shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    path = os.environ.get("PATH", "")
+    if str(shim_dir) not in path.split(os.pathsep):
+        os.environ["PATH"] = f"{shim_dir}{os.pathsep}{path}"
+
+
+# Run at import — before collection — so PATH is set for every spawned subprocess.
+_install_security_shim()
 
 
 @pytest.fixture(autouse=True)
