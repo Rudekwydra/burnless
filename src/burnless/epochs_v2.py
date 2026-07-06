@@ -488,6 +488,12 @@ Sem pensamento/debate/markdown extra — apenas as 8 seções.
 - Formato de linha em 'Recuperáveis': `dNNN — <dica de comando> [seq <numero-real-do-seq>]` — mesma regra: use o seq real da troca, nunca um placeholder.
 - Linha que não seguir o formato ainda é aceita (fallback), mas PREFIRA o formato quando souber o path/seq exatos.
 
+### Regra de PONTEIRO (crítica — a memória aponta, não cola)
+- Fato ancorado em arquivo (qualquer path citado na troca, com ou sem linhas) DEVE virar UMA linha em 'Refs' no formato `path#Lx-y — <why curto> [seq N]` — NUNCA um parágrafo em 'Decisões' colando o conteúdo do arquivo.
+- 'Decisões' registra apenas a decisão em si, numa linha curta; o detalhe fica no arquivo, apontado pela Ref. O leitor tem a tool Read e lê sob demanda.
+- Cole conteúdo no documento SOMENTE quando não existe arquivo-fonte para apontar.
+- NÃO duplique: se um fato virou linha de 'Refs', não repita o mesmo conteúdo em 'Decisões' (uma menção curta à decisão pode coexistir com a Ref, mas nunca o conteúdo copiado).
+
 ### Eixos de consolidação
 - Provenance: toda entrada de 'Threads abertas', 'Decisões' e 'Riscos' termina com marcador de origem `[chat:CURTO·tN]` quando a troca trouxer essa info; se não houver, omita o marcador (não invente).
 - Supersede: se a nova troca CONTRADIZ uma decisão existente, NÃO apague — mova a antiga pra 'Recuperáveis' como pointer e registre a nova em 'Decisões'. Recência sozinha NÃO supersede; só contradição explícita.
