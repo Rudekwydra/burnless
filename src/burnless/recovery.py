@@ -1436,6 +1436,9 @@ _LIVING_TRUNCATED_MARKER = "[living_md truncado — leia o checkpoint completo n
 
 # Sections that carry "the thread" and are never truncated (A1 layer 2).
 _PRIORITY_SECTIONS = ("Foco atual", "Threads abertas")
+# Current decisions: inline durable memory (not pointers), protected above
+# older pending exchanges and the rest of living_md (A1 layer 4).
+_DECISOES_SECTION = ("Decisões",)
 
 
 def _latest_export_path(root_path: Path) -> Path | None:
@@ -1535,10 +1538,17 @@ def _assemble_restore_layers(
 
     1. metadata header (always whole)
     2. living_md 'Foco atual' + 'Threads abertas' (never truncated)
-    3. most recent pending exchanges WHOLE, newest first, while they fit
-    4. the rest of living_md (tail-truncated as a last resort, never the middle)
-    5. old pending exchanges as one-line summaries
-    6. manifest block (always whole — see _render_manifest)
+    3. the single most recent pending exchange WHOLE (continuity reserve —
+       the thread's own last turn is served verbatim if it fits at all)
+    4. living_md 'Decisões' (current decisions outrank everything below —
+       they are inline durable memory, not pointers; tail-truncated only as a
+       last resort if the decisions alone overflow the remaining budget)
+    5. the remaining (older) pending exchanges WHOLE, newest first, while they
+       fit
+    6. the rest of living_md — Refs, Riscos, Contracts... (tail-truncated as a
+       last resort, never the middle)
+    7. old pending exchanges as one-line summaries
+    8. manifest block (always whole — see _render_manifest)
 
     Returns (context, pending_whole_count, pending_summarized_count).
     """
@@ -1553,13 +1563,22 @@ def _assemble_restore_layers(
     is_v3 = any(parsed.get(section) for section in SECTIONS_V3)
 
     if is_v3:
+        # Layer 2: Foco atual + Threads abertas — never truncated.
         priority_block = _render_v3_sections(parsed, _PRIORITY_SECTIONS)
-        rest_names = [name for name in parsed.keys() if name not in _PRIORITY_SECTIONS]
+        # Layer 4: current Decisões — protected above older pending / Refs.
+        decisoes_block = _render_v3_sections(parsed, _DECISOES_SECTION)
+        # Layer 6: the rest of living_md (Refs, Riscos, Contracts...).
+        rest_names = [
+            name
+            for name in parsed.keys()
+            if name not in _PRIORITY_SECTIONS and name not in _DECISOES_SECTION
+        ]
         rest_block = _render_v3_sections(parsed, rest_names)
     else:
         # Fallback: living_md does not parse as V3 — serve it first, whole if
         # possible, tail-truncated (never the middle) if not.
         priority_block = living_md.rstrip()
+        decisoes_block = ""
         rest_block = ""
 
     if priority_block:
@@ -1571,18 +1590,65 @@ def _assemble_restore_layers(
             priority_block = _truncate_tail(priority_block, allowed, _LIVING_TRUNCATED_MARKER)
             budget = 0
 
-    # Layer 3: newest pending exchanges whole, while they fit.
     whole_seqs: set[int] = set()
+
+    # Layer 3: continuity reserve — the single most recent pending exchange is
+    # served verbatim if it fits at all, BEFORE Decisões claim the budget. The
+    # thread's last turn is the anchor for resuming work.
+    if pending_sorted:
+        newest = pending_sorted[-1]
+        newest_cost = len(_render_pending_block(newest)) + 1
+        if budget - newest_cost >= 0:
+            budget -= newest_cost
+            whole_seqs.add(int(newest.get("seq") or 0))
+
+    # Reserve the cost of one-line summaries for every pending exchange that is
+    # not (yet) whole, so a decisions block that overflows the budget can still
+    # not starve the summaries — the only trace demoted exchanges leave behind.
+    summaries_reserve = sum(
+        len(_pending_summary_line(r)) + 1
+        for r in pending_sorted
+        if int(r.get("seq") or 0) not in whole_seqs
+    )
+
+    # Layer 4: current Decisões — whole if they fit, tail-truncated only as a
+    # last resort. They rank above older pending exchanges and the rest of the
+    # living_md because a live decision is inline memory, never a pointer.
+    if decisoes_block:
+        decisoes_allowance = budget - summaries_reserve
+        if len(decisoes_block) + 2 <= budget:
+            budget -= len(decisoes_block) + 2
+        elif decisoes_allowance > 200:
+            decisoes_block = _truncate_tail(
+                decisoes_block, decisoes_allowance - 2, _LIVING_TRUNCATED_MARKER
+            )
+            budget -= len(decisoes_block) + 2
+        else:
+            decisoes_block = (
+                _LIVING_TRUNCATED_MARKER if budget >= len(_LIVING_TRUNCATED_MARKER) else ""
+            )
+            budget -= len(decisoes_block)
+
+    # Layer 5: remaining (older) pending exchanges whole, newest first, while
+    # they fit — but never at the cost of the summaries reserve, so a demoted
+    # exchange always leaves at least its one-line trace (no silent drops). A
+    # promoted exchange no longer needs its own summary, so it frees that.
+    reserve = summaries_reserve
     for record in reversed(pending_sorted):
+        seq = int(record.get("seq") or 0)
+        if seq in whole_seqs:
+            continue
         block_cost = len(_render_pending_block(record)) + 1
-        if budget - block_cost < 0:
+        own_summary = len(_pending_summary_line(record)) + 1
+        if budget - block_cost < reserve - own_summary:
             break
         budget -= block_cost
-        whole_seqs.add(int(record.get("seq") or 0))
+        reserve -= own_summary
+        whole_seqs.add(seq)
 
-    # Layer 5 cost is reserved up front: one-line summaries are small and
+    # Layer 7 cost is reserved up front: one-line summaries are small and
     # bounded, and they are the only trace left of demoted exchanges — the
-    # rest of living_md (layer 4) expands into what remains AFTER them.
+    # rest of living_md (layer 6) expands into what remains AFTER them.
     summary_lines = [
         (int(r.get("seq") or 0), _pending_summary_line(r))
         for r in pending_sorted
@@ -1590,7 +1656,7 @@ def _assemble_restore_layers(
     ]
     summaries_cost = sum(len(line) + 1 for _seq, line in summary_lines)
 
-    # Layer 4: the rest of living_md, whole if it fits, tail-truncated if not.
+    # Layer 6: the rest of living_md, whole if it fits, tail-truncated if not.
     if rest_block:
         rest_allowance = budget - summaries_cost
         if len(rest_block) + 2 <= rest_allowance:
@@ -1602,7 +1668,7 @@ def _assemble_restore_layers(
             rest_block = _LIVING_TRUNCATED_MARKER if budget - summaries_cost >= len(_LIVING_TRUNCATED_MARKER) else ""
             budget -= len(rest_block)
 
-    # Layer 5: old pending exchanges as one-line summaries (newest first while
+    # Layer 7: old pending exchanges as one-line summaries (newest first while
     # they fit; presented in chronological order).
     summaries: list[tuple[int, str]] = []
     summarized = 0
@@ -1617,6 +1683,8 @@ def _assemble_restore_layers(
     parts = [header]
     if priority_block:
         parts += ["", priority_block]
+    if decisoes_block:
+        parts += ["", decisoes_block]
     if rest_block:
         parts += ["", rest_block]
     if pending_sorted:
