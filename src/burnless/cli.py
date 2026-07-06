@@ -1522,7 +1522,11 @@ def cmd_epoch(args: argparse.Namespace) -> int:
             process_instance_id=process_instance_id,
             new_session_id=new_session_id,
             source=source,
-            budget_tokens=int(getattr(args, "budget_tokens", 2000) or 2000),
+            budget_tokens=(
+                int(getattr(args, "budget_tokens", None))
+                if getattr(args, "budget_tokens", None) is not None
+                else None  # A2: resolve from epochs.*_budget_tokens config
+            ),
         )
         if payload is None:
             print("")
@@ -2258,7 +2262,8 @@ def build_parser() -> argparse.ArgumentParser:
     epoch_core.add_argument("--session-id", default=None, dest="session_id", help="compat alias for host/session ids")
     epoch_core.add_argument("--source", default=None, help="hook source (startup|clear|resume|...)")
     epoch_core.add_argument("--new-session-id", default=None, dest="new_session_id", help="new session id for clear handoff restore")
-    epoch_core.add_argument("--budget-tokens", default=2000, dest="budget_tokens", type=int, help="restore budget in tokens")
+    epoch_core.add_argument("--budget-tokens", default=None, dest="budget_tokens", type=int,
+                            help="restore budget in tokens (default: epochs.restore_budget_tokens / epochs.startup_budget_tokens from config)")
     epoch_sub = sp.add_subparsers(dest="epoch_cmd", required=True)
     esp = epoch_sub.add_parser("capture", parents=[epoch_common], help="read STDIN, summarize, append, consolidate")
     esp.add_argument("--emit-chain", action="store_true", dest="emit_chain", default=False,

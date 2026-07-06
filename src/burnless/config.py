@@ -126,7 +126,17 @@ DEFAULT_CONFIG: dict = {
         "raw_retention": "plain",  # current default: plain | none | encrypted (planned)
         "key_store": "memory",     # memory | local (planned for audit mode)
     },
-    "epochs": {"enabled": True, "version": 3, "budget_tokens": 2500, "contract_max_age_turns": 15, "recoverables_max_items": 12},
+    "epochs": {
+        "enabled": True,
+        "version": 3,
+        "budget_tokens": 2500,
+        "contract_max_age_turns": 15,
+        "recoverables_max_items": 12,
+        # Restore payload budgets (tokens). Hooks omit --budget-tokens so these
+        # resolve from config; the flag stays as an explicit override.
+        "restore_budget_tokens": 4000,   # SessionStart source=clear (rollover)
+        "startup_budget_tokens": 2000,   # SessionStart source=startup (seed)
+    },
     "display": {
         "progress_detail": "brief",  # minimal | brief | full
         # stale_timeout_seconds intentionally absent from DEFAULT_CONFIG so that
