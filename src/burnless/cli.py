@@ -341,6 +341,17 @@ def cmd_status(args: argparse.Namespace) -> int:
     orphans = scan_orphans(project_root)
     if orphans:
         print(f"⚠ {len(orphans)} delegation(s) ran without a capsule: {', '.join(orphans[:10])}")
+    try:
+        chains = recovery_mod.list_chains(root, host="claude")
+    except Exception:
+        chains = []
+    if chains:
+        print("")
+        print("chains:")
+        for c in chains:
+            state = "viva" if c["alive"] else "morta"
+            focus = c.get("focus_line") or "(sem foco registrado)"
+            print(f"  {c['chain_id']} · pid={c['pid']} ({state}) · last_seen={c['last_seen']} · gen={c['generation']} · {focus}")
     return 0
 
 
