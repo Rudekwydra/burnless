@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -21,6 +23,9 @@ LIVING_MIRROR_NAME = "living.md"
 STATE_MIRROR_NAME = "state.json"
 RING_DIR_NAME = "ring"
 HOOK_ERROR_LOG_NAME = "hook_errors.log"
+CHAINS_DIR_NAME = "chains"
+CHAIN_META_NAME = "chain.json"
+CHAIN_HANDOFF_NAME = "handoff.json"
 COMPACTION_LEASE_NAME = "compact.lease.json"
 
 _RESTORE_PREFIX = "[BURNLESS RESTORE]"
@@ -237,6 +242,89 @@ def _session_roots(root: Path, host: str, host_session_id: str) -> list[Path]:
 
 def _rolling_root(root: Path) -> Path:
     return root / "epochs" / ROLLING_ROOT_NAME
+
+
+def _chains_root(root: Path) -> Path:
+    return _rolling_root(root) / CHAINS_DIR_NAME
+
+
+def _chain_dir(root: Path, chain_id: str) -> Path:
+    return _chains_root(root) / _safe_part(chain_id)
+
+
+def _process_name_best_effort(pid_value: str) -> str:
+    if not pid_value or not str(pid_value).isdigit():
+        return ""
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid_value), "-o", "comm="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _find_chain_id_by_pid(root: Path, host: str, process_instance_id: str) -> str | None:
+    chains_root = _chains_root(root)
+    if not chains_root.exists():
+        return None
+    best_id: str | None = None
+    best_last_seen = ""
+    for meta_path in chains_root.glob("*/" + CHAIN_META_NAME):
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("host") != host:
+            continue
+        if str(payload.get("pid") or "") != str(process_instance_id):
+            continue
+        last_seen = str(payload.get("last_seen") or "")
+        if best_id is None or last_seen >= best_last_seen:
+            best_id = str(payload.get("chain_id") or meta_path.parent.name)
+            best_last_seen = last_seen
+    return best_id
+
+
+def _touch_chain(root: Path, chain_id: str, *, host: str, pid: str, cwd: str | None) -> dict:
+    chain_dir = _chain_dir(root, chain_id)
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = chain_dir / CHAIN_META_NAME
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    existing: dict = {}
+    if meta_path.exists():
+        try:
+            loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = loaded
+        except Exception:
+            existing = {}
+    payload = {
+        "chain_id": chain_id,
+        "host": host,
+        "created": existing.get("created") or now,
+        "last_seen": now,
+        "pid": pid,
+        "pid_proc_name": _process_name_best_effort(pid),
+        "cwd": cwd,
+        "generation": int(existing.get("generation") or 1),
+    }
+    _atomic_json_write(meta_path, payload)
+    return payload
+
+
+def resolve_or_create_chain(root, *, host: str, process_instance_id: str, cwd: str | None = None) -> str:
+    root_path = _root_path(root)
+    chain_id = _find_chain_id_by_pid(root_path, host, process_instance_id)
+    if chain_id is None:
+        chain_id = uuid.uuid4().hex[:8]
+    _touch_chain(root_path, chain_id, host=host, pid=process_instance_id, cwd=cwd)
+    return chain_id
 
 
 def _journal_dir(root: Path, host: str, host_session_id: str) -> Path:
@@ -620,6 +708,8 @@ def journal_append(root, envelope: dict[str, Any]) -> dict[str, Any]:
     host = str(envelope.get("host") or "claude")
     host_session_id = str(envelope.get("host_session_id") or envelope.get("session_id") or "")
     process_instance_id = str(envelope.get("process_instance_id") or host_session_id or "")
+    cwd = envelope.get("cwd")
+    chain_id = resolve_or_create_chain(root_path, host=host, process_instance_id=process_instance_id, cwd=cwd)
     if not host_session_id:
         raise ValueError("host_session_id is required")
 
@@ -648,6 +738,7 @@ def journal_append(root, envelope: dict[str, Any]) -> dict[str, Any]:
                 "process_instance_id": process_instance_id,
                 "journal_head": seq,
                 "captured_at": record.get("captured_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "chain_id": chain_id,
             }
         )
 
@@ -678,6 +769,7 @@ def _checkpoint_payload(
     applied_through: int,
     journal_head: int,
     generation: int,
+    chain_id: str | None = None,
 ) -> dict[str, Any]:
     content_hash = "sha256:" + hashlib.sha256(living_md.encode("utf-8")).hexdigest()
     return {
@@ -692,6 +784,7 @@ def _checkpoint_payload(
         "journal_head": journal_head,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "content_hash": content_hash,
+        "chain_id": chain_id,
     }
 
 
@@ -713,6 +806,7 @@ def write_checkpoint(
         journal_head = applied_through
 
     current = read_checkpoint(root_path, host, host_session_id)
+    chain_id = resolve_or_create_chain(root_path, host=host, process_instance_id=process_instance_id, cwd=None)
     generation = int((current or {}).get("generation") or 0) + 1
     payload = _checkpoint_payload(
         host=host,
@@ -723,6 +817,7 @@ def write_checkpoint(
         applied_through=applied_through,
         journal_head=journal_head,
         generation=generation,
+        chain_id=chain_id,
     )
     for checkpoint_path in _checkpoint_paths(root_path, host, host_session_id):
         _atomic_json_write(checkpoint_path, payload)
@@ -1215,6 +1310,7 @@ def write_handoff(
     host_session_id: str,
     process_instance_id: str,
     claimed_by: str | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     root_path = _root_path(root)
     journal_dir = _journal_dir(root_path, host, host_session_id)
@@ -1245,6 +1341,20 @@ def write_handoff(
             payload["claimed_by"] = current.get("claimed_by") if current.get("claimed_by") is not None else claimed_by
             payload["old_sid"] = payload.get("old_sid") or payload.get("host_session_id")
     _atomic_json_write(path, payload)
+    chain_id = resolve_or_create_chain(root_path, host=host, process_instance_id=process_instance_id, cwd=cwd)
+    chain_handoff_path = _chain_dir(root_path, chain_id) / CHAIN_HANDOFF_NAME
+    chain_payload = dict(payload)
+    chain_payload["chain_id"] = chain_id
+    if chain_handoff_path.exists():
+        try:
+            current_chain_handoff = json.loads(chain_handoff_path.read_text(encoding="utf-8"))
+        except Exception:
+            current_chain_handoff = {}
+        if isinstance(current_chain_handoff, dict):
+            chain_payload["claimed_by"] = current_chain_handoff.get("claimed_by") if current_chain_handoff.get("claimed_by") is not None else chain_payload.get("claimed_by")
+            chain_payload["claimed_at"] = current_chain_handoff.get("claimed_at") if current_chain_handoff.get("claimed_at") is not None else chain_payload.get("claimed_at")
+    _atomic_json_write(chain_handoff_path, chain_payload)
+    payload["chain_id"] = chain_id
     owner_loop.log_owner_event(
         root_path,
         {
