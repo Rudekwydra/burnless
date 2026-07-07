@@ -704,11 +704,30 @@ def _latest_checkpoint_path(root_path: Path, host: str, host_session_id: str) ->
     return None
 
 
-def _latest_project_checkpoint(root_path: Path, host: str) -> tuple[str, dict[str, Any]] | None:
+def _latest_project_checkpoint(
+    root_path: Path,
+    host: str,
+    process_instance_id: str | None = None,
+    allow_cross_chain: bool = True,
+) -> tuple[str, dict[str, Any]] | None:
+    """Freshest checkpoint in the project. When `process_instance_id` is given,
+    prefers the freshest checkpoint belonging to THAT SAME pid/chain lineage
+    over any other concurrently-active window's checkpoint, even if the
+    other window's is more recent -- multiple chains can be live in one
+    project at once (P7), and a window's own "no checkpoint yet" gap must
+    not be filled with a sibling window's in-flight content. Only falls back
+    to the unscoped project-wide freshest when this pid has no checkpoint of
+    its own at all (genuinely new window inheriting the shared consolidated
+    memory, per P7 Q2). Pass `allow_cross_chain=False` to disable that
+    unscoped fallback entirely -- used when the caller has an explicit
+    predecessor session (a same-chain rollover, not a brand-new chain) whose
+    checkpoint simply hasn't landed yet; that race must never be papered
+    over with a different chain's content."""
     sessions_root = root_path / "epochs" / SESSION_ROOT_NAME / _safe_part(host)
     if not sessions_root.exists():
         return None
-    latest: tuple[tuple[str, float], str, dict[str, Any]] | None = None
+    own_latest: tuple[tuple[str, float], str, dict[str, Any]] | None = None
+    any_latest: tuple[tuple[str, float], str, dict[str, Any]] | None = None
     for session_root in sessions_root.iterdir():
         if not session_root.is_dir():
             continue
@@ -721,11 +740,17 @@ def _latest_project_checkpoint(root_path: Path, host: str) -> tuple[str, dict[st
         except Exception:
             rank = ("", float(session_root.stat().st_mtime))
         session_id = str(checkpoint.get("host_session_id") or session_root.name)
-        if latest is None or rank > latest[0]:
-            latest = (rank, session_id, checkpoint)
-    if latest is None:
+        entry = (rank, session_id, checkpoint)
+        if any_latest is None or rank > any_latest[0]:
+            any_latest = entry
+        if process_instance_id is not None and str(checkpoint.get("process_instance_id") or "") == str(process_instance_id):
+            if own_latest is None or rank > own_latest[0]:
+                own_latest = entry
+    if own_latest is not None:
+        return own_latest[1], own_latest[2]
+    if not allow_cross_chain or any_latest is None:
         return None
-    return latest[1], latest[2]
+    return any_latest[1], any_latest[2]
 
 
 def journal_append(root, envelope: dict[str, Any]) -> dict[str, Any]:
@@ -1727,7 +1752,10 @@ def inherit_checkpoint(
     if source_sid and source_sid != new_session_id:
         source_checkpoint = read_checkpoint(root_path, host, source_sid)
     if source_checkpoint is None:
-        latest = _latest_project_checkpoint(root_path, host)
+        latest = _latest_project_checkpoint(
+            root_path, host, process_instance_id=process_instance_id,
+            allow_cross_chain=old_session_id is None,
+        )
         if latest is not None and latest[0] != new_session_id:
             source_sid, source_checkpoint = latest
     if not source_checkpoint:
@@ -2096,7 +2124,7 @@ def render_restore(
     checkpoint_session_id = host_session_id
     checkpoint = read_checkpoint(root_path, host, checkpoint_session_id)
     if checkpoint is None and source == "startup":
-        latest = _latest_project_checkpoint(root_path, host)
+        latest = _latest_project_checkpoint(root_path, host, process_instance_id=process_instance_id)
         if latest is not None:
             checkpoint_session_id, checkpoint = latest
     checkpoint = checkpoint or {
