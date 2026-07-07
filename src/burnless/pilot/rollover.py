@@ -121,7 +121,7 @@ def evaluate_rollover(
     run_id: str,
     new_session_id: str,
     context_usage: ContextUsage | None = None,
-    rollover_at_tokens: int = 120000,
+    rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
     delta_budget_tokens: int = 2000,
 ) -> dict:
@@ -182,7 +182,7 @@ def should_rollover(
     process_instance_id: str,
     run_id: str,
     context_usage: ContextUsage | None = None,
-    rollover_at_tokens: int = 120000,
+    rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
 ) -> dict:
     run_state = summarize_run_events(root, run_id)
@@ -226,7 +226,7 @@ def arm_rollover(
     run_id: str,
     new_session_id: str | None = None,
     context_usage: ContextUsage | None = None,
-    rollover_at_tokens: int = 120000,
+    rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
 ) -> dict:
     decision = should_rollover(
@@ -277,7 +277,7 @@ def monitor_rollover_once(
     run_id: str,
     new_session_id: str | None = None,
     context_usage: ContextUsage | None = None,
-    rollover_at_tokens: int = 120000,
+    rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
     delta_budget_tokens: int = 2000,
 ) -> dict:
@@ -333,7 +333,7 @@ def monitor_rollover_loop(
     run_id: str,
     new_session_id: str | None = None,
     context_usage_fn,
-    rollover_at_tokens: int = 120000,
+    rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
     delta_budget_tokens: int = 2000,
     poll_interval_s: float = 0.5,

@@ -2516,7 +2516,7 @@ def _run_pilot_cycle(
                     run_id=run_id,
                     new_session_id=fresh_session_id or _pilot_next_session_id(run_id, 1),
                     context_usage_fn=_usage_for_host_session,
-                    rollover_at_tokens=int(pilot_cfg.get("rollover_at_tokens", 120000)),
+                    rollover_at_tokens=int(pilot_cfg.get("rollover_at_tokens", 40000)),
                     rollover_at_pct=float(pilot_cfg.get("rollover_at_pct", 0.65)),
                     delta_budget_tokens=int(pilot_cfg.get("delta_budget_tokens", 2000)),
                     poll_interval_s=float(pilot_cfg.get("poll_interval_s", 0.5)),
@@ -2675,7 +2675,7 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         print(f"  configured model: {pilot_cfg.get('model', '(default)')}")
         print(f"  rollover mode: {pilot_cfg.get('rollover_mode', 'respawn')}")
         print(f"  auto_rollover: {pilot_cfg.get('auto_rollover', 'default-on (use --no-auto to disable)')}")
-        print(f"  rollover_at_tokens: {pilot_cfg.get('rollover_at_tokens', 120000)}")
+        print(f"  rollover_at_tokens: {pilot_cfg.get('rollover_at_tokens', 40000)}")
         print(f"  rollover_at_pct: {pilot_cfg.get('rollover_at_pct', 0.65)}")
         print(f"  delta_budget_tokens: {pilot_cfg.get('delta_budget_tokens', 2000)}")
         print(f"  hud: {pilot_cfg.get('hud', 'title')}")
