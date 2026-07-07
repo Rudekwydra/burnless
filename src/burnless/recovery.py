@@ -1648,6 +1648,56 @@ def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
     return {"archived": archived}
 
 
+def list_chains(root, *, host: str = "claude") -> list[dict[str, Any]]:
+    """Lista as chains do projeto (vivas e mortas, exceto as arquivadas em
+    chains/_archived/) para exibição em `burnless status`/`doctor`."""
+    root_path = _root_path(root)
+    chains_root = _chains_root(root_path)
+    result: list[dict[str, Any]] = []
+    if not chains_root.exists():
+        return result
+    for meta_path in sorted(chains_root.glob("*/" + CHAIN_META_NAME)):
+        chain_dir = meta_path.parent
+        if chain_dir.parent != chains_root:
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(meta, dict) or meta.get("host") != host:
+            continue
+        chain_id = str(meta.get("chain_id") or chain_dir.name)
+        pid = str(meta.get("pid") or "")
+        focus_line = ""
+        handoff_path = chain_dir / CHAIN_HANDOFF_NAME
+        if handoff_path.exists():
+            try:
+                handoff_payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+                host_session_id = str(handoff_payload.get("host_session_id") or "")
+                if host_session_id:
+                    checkpoint = read_checkpoint(root_path, host, host_session_id)
+                    living_md = (checkpoint or {}).get("living_md") or ""
+                    for line in living_md.splitlines():
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("#"):
+                            focus_line = stripped
+                            break
+            except Exception:
+                pass
+        result.append(
+            {
+                "chain_id": chain_id,
+                "pid": pid,
+                "alive": not _pid_is_dead(pid),
+                "last_seen": meta.get("last_seen"),
+                "generation": meta.get("generation"),
+                "cwd": meta.get("cwd"),
+                "focus_line": focus_line,
+            }
+        )
+    return result
+
+
 def inherit_checkpoint(
     root,
     *,

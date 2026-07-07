@@ -35,6 +35,7 @@ _BAND_NAMES = {
     "B": "Global Config",
     "C": "Claude Code",
     "D": "MCP",
+    "E": "Chains",
 }
 
 # Safe remediation order. mkdir/copy before wiring (hooks point at the copied
@@ -82,6 +83,7 @@ def _collect(*, home: Path, cwd: Path | None) -> list[Check]:
     _check_b(checks, cwd=cwd)
     _check_c(checks, home=home, cwd=cwd)
     _check_d(checks)
+    _check_e(checks, cwd=cwd)
     return checks
 
 
@@ -509,6 +511,48 @@ def _check_d(checks: list[Check]) -> None:
         checks.append(Check("D3", "D", "WARN", "claude mcp list timed out (3s)"))
     except Exception as e:
         checks.append(Check("D3", "D", "WARN", f"claude mcp list error: {e}"))
+
+
+def _check_e(checks: list[Check], cwd: Path | None = None) -> None:
+    from . import paths as paths_mod
+
+    root_path = paths_mod.find_root(start=cwd or Path.cwd())
+    if root_path is None:
+        return
+
+    try:
+        from . import recovery
+        chains = recovery.list_chains(root_path, host="claude")
+    except Exception:
+        chains = []
+
+    ambiguous_recent = False
+    log_path = root_path / "owner_loop.jsonl"
+    if log_path.exists():
+        try:
+            lines = log_path.read_text(encoding="utf-8").splitlines()[-500:]
+            for line in lines:
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    continue
+                if event.get("claim_mode") == "adoption_ambiguous":
+                    ambiguous_recent = True
+        except Exception:
+            pass
+
+    if ambiguous_recent:
+        checks.append(
+            Check(
+                "E1",
+                "E",
+                "WARN",
+                "adoção ambígua detectada (2+ chains mortas elegíveis na mesma reivindicação)",
+                "revise .burnless/owner_loop.jsonl para conferir qual chain foi adotada",
+            )
+        )
+    else:
+        checks.append(Check("E1", "E", "PASS", f"{len(chains)} chain(s) — nenhuma adoção ambígua recente"))
 
 
 # ── Renderers ─────────────────────────────────────────────────────────────────
