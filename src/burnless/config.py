@@ -196,7 +196,7 @@ DEFAULT_CONFIG: dict = {
         "extra_args": [],
         "rollover_mode": "respawn",
         "auto_rollover": False,
-        "rollover_at_tokens": 120000,
+        "rollover_at_tokens": 40000,
         "rollover_at_pct": 0.65,
         "delta_budget_tokens": 2000,
         "poll_interval_s": 0.5,
