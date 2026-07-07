@@ -120,3 +120,34 @@ def test_detect_from_transcript_ignores_json_garbage(tmp_path):
 
     result = _detect_from_transcript(transcript, workspace)
     assert result == workspace / "RealProj"
+
+
+def test_home_distinct_from_workspace_does_not_guess(tmp_path, monkeypatch):
+    """Bug real de dogfood: cwd = $HOME (distinto do workspace configurado)
+    NUNCA deve disparar o guess de freshest-project, mesmo que exista um
+    projeto com seed.md mais novo dentro do workspace. resolve_root deve
+    retornar None (fora de projeto), nunca adivinhar."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    workspace = tmp_path / "antigravity"
+    proj = workspace / "SomeProj"
+    (proj / ".burnless" / "epochs" / "_rolling").mkdir(parents=True)
+    (proj / ".burnless" / "epochs" / "_rolling" / "seed.md").write_text("fresh seed")
+
+    result = resolve_root(home, workspace=workspace)
+    assert result is None
+
+
+def test_unrelated_cwd_without_config_returns_none(tmp_path):
+    """cwd totalmente fora do workspace e sem .burnless ancestral em nenhum
+    lugar não deve mais cair para `return cwd` (root falso) -- deve
+    retornar None."""
+    workspace = tmp_path / "antigravity"
+    workspace.mkdir()
+    elsewhere = tmp_path / "elsewhere" / "randomdir"
+    elsewhere.mkdir(parents=True)
+
+    result = resolve_root(elsewhere, workspace=workspace)
+    assert result is None

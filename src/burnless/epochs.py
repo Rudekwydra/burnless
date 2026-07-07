@@ -322,14 +322,14 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
             except ValueError:
                 pass
 
-        if cwd == workspace or cwd == Path.home():
+        if workspace is not None and cwd == workspace:
             if transcript is not None:
                 detected = _detect_from_transcript(transcript, workspace)
                 if detected:
                     return detected
             return freshest_project_root(workspace)
 
-        return cwd
+        return None
     except Exception:
         return None
 
