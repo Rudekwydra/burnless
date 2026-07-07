@@ -1573,6 +1573,20 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         print(json.dumps({"status": "inherited" if committed else "noop"}, ensure_ascii=False))
         return 0
 
+    elif epoch_cmd == "migrate-chains":
+        root = getattr(args, "root", None) or root_path
+        host = getattr(args, "host", "claude")
+        result = recovery_mod.migrate_legacy_handoff_pool(root, host=host)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
+    elif epoch_cmd == "gc-chains":
+        root = getattr(args, "root", None) or root_path
+        host = getattr(args, "host", "claude")
+        result = recovery_mod.gc_dead_chains(root, host=host)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
     elif epoch_cmd == "hook-error":
         root = getattr(args, "root", None) or root_path
         message = getattr(args, "message", None)
@@ -2310,6 +2324,10 @@ def build_parser() -> argparse.ArgumentParser:
     esp.add_argument("--hook", default="unknown", help="hook name (Stop/SessionStart/SessionEnd)")
     esp.add_argument("--message", default=None, help="error message (defaults to stdin)")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="hook-error")
+    esp = epoch_sub.add_parser("migrate-chains", parents=[epoch_common], help="migrate legacy handoff pool entries into per-chain storage (idempotent)")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="migrate-chains")
+    esp = epoch_sub.add_parser("gc-chains", parents=[epoch_common], help="archive dead chains older than 7 days, exporting their consolidated living_md first")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="gc-chains")
     esp = epoch_sub.add_parser("refine-owner", parents=[epoch_common], help="async refine owner-loop seed from V2 predecessors")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="refine-owner")
 

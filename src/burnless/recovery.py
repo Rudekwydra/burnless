@@ -1517,6 +1517,137 @@ def claim_handoff(
         return None
 
 
+def migrate_legacy_handoff_pool(root, *, host: str = "claude") -> dict[str, Any]:
+    """Migração idempotente: handoffs do pool legado (_rolling/handoffs/) que
+    ainda não têm chain correspondente ganham uma chain nova (keyed pelo seu
+    process_instance_id), preservando old_sid/claimed_by. Handoffs já
+    reivindicados (claimed_by preenchido) são só arquivados, sem criar chain
+    nova para eles (lineage já consumida, não deve virar candidata de adoção).
+    Rodar 2x é no-op: uma vez migrado, _find_chain_id_by_pid já encontra a
+    chain e o segundo passe pula."""
+    root_path = _root_path(root)
+    handoff_dir = _rolling_root(root_path) / HANDOFF_DIR_NAME
+    archived_dir = handoff_dir / "_migrated"
+    migrated: list[str] = []
+    archived: list[str] = []
+    skipped: list[str] = []
+    if not handoff_dir.exists():
+        return {"migrated": migrated, "archived": archived, "skipped": skipped}
+    for path in sorted(handoff_dir.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("host") != host:
+            continue
+        pid = str(payload.get("process_instance_id") or "")
+        if not pid:
+            continue
+        if _find_chain_id_by_pid(root_path, host, pid) is not None:
+            skipped.append(path.name)
+            continue
+        if payload.get("claimed_by"):
+            archived_dir.mkdir(parents=True, exist_ok=True)
+            path.rename(archived_dir / path.name)
+            archived.append(path.name)
+            owner_loop.log_owner_event(
+                root_path,
+                {
+                    "phase": "recovery",
+                    "event": "legacy_handoff_archived",
+                    "host": host,
+                    "process_instance_id": pid,
+                    "file": path.name,
+                },
+            )
+            continue
+        cwd = payload.get("cwd")
+        chain_id = resolve_or_create_chain(root_path, host=host, process_instance_id=pid, cwd=cwd)
+        chain_handoff_path = _chain_dir(root_path, chain_id) / CHAIN_HANDOFF_NAME
+        migrated_payload = dict(payload)
+        migrated_payload["chain_id"] = chain_id
+        _atomic_json_write(chain_handoff_path, migrated_payload)
+        migrated.append(path.name)
+        owner_loop.log_owner_event(
+            root_path,
+            {
+                "phase": "recovery",
+                "event": "legacy_handoff_migrated",
+                "host": host,
+                "process_instance_id": pid,
+                "chain_id": chain_id,
+                "file": path.name,
+            },
+        )
+    return {"migrated": migrated, "archived": archived, "skipped": skipped}
+
+
+CHAIN_GC_TTL_SECONDS = 7 * 86400
+
+
+def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
+    """GC térmico: chain com PID morto E last_seen > CHAIN_GC_TTL_SECONDS
+    é selada via `exporting.export_epoch` (o consolidado dela vai pro
+    frio, nunca é deletado cru) e movida para chains/_archived/."""
+    from . import exporting
+
+    root_path = _root_path(root)
+    chains_root = _chains_root(root_path)
+    archived_root = chains_root / "_archived"
+    archived: list[str] = []
+    if not chains_root.exists():
+        return {"archived": archived}
+    now = time.time()
+    for meta_path in sorted(chains_root.glob("*/" + CHAIN_META_NAME)):
+        chain_dir = meta_path.parent
+        if chain_dir.parent != chains_root:
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(meta, dict):
+            continue
+        if meta.get("host") != host:
+            continue
+        last_seen = str(meta.get("last_seen") or "")
+        try:
+            last_seen_epoch = time.mktime(time.strptime(last_seen, "%Y-%m-%dT%H:%M:%SZ"))
+        except Exception:
+            continue
+        if (now - last_seen_epoch) <= CHAIN_GC_TTL_SECONDS:
+            continue
+        if not _pid_is_dead(str(meta.get("pid") or "")):
+            continue
+        chain_id = str(meta.get("chain_id") or chain_dir.name)
+        handoff_path = chain_dir / CHAIN_HANDOFF_NAME
+        export_result = {"status": "export_skipped", "reason": "no_handoff"}
+        if handoff_path.exists():
+            try:
+                handoff_payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+                host_session_id = str(handoff_payload.get("host_session_id") or "")
+                if host_session_id:
+                    export_result = exporting.export_epoch(root_path, host, host_session_id)
+            except Exception as exc:
+                export_result = {"status": "export_skipped", "reason": str(exc)}
+        archived_root.mkdir(parents=True, exist_ok=True)
+        chain_dir.rename(archived_root / chain_id)
+        archived.append(chain_id)
+        owner_loop.log_owner_event(
+            root_path,
+            {
+                "phase": "recovery",
+                "event": "chain_gc_archived",
+                "host": host,
+                "chain_id": chain_id,
+                "export_status": export_result.get("status"),
+            },
+        )
+    return {"archived": archived}
+
+
 def inherit_checkpoint(
     root,
     *,
