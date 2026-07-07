@@ -111,3 +111,6 @@ bench/results/2026*.json
 AUDIT_*.md
 GPT_AUDIT_REPORT.md
 GPT_REAUDIT_REPORT.md
+
+# Internal planning docs — never in the public repo
+docs/plans/
