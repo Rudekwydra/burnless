@@ -386,8 +386,11 @@ def test_epoch_session_hook_restores_clear_handoff(tmp_path):
     payload = json.loads(proc.stdout)
     ctx = payload["hookSpecificOutput"]["additionalContext"]
     assert "objetivo vivo" in ctx
-    assert "ultima pergunta" in ctx
-    assert "ultima resposta" in ctx
+    # P7-2 retirou o claim direto do pool legado (_rolling/handoffs/) sem
+    # chain correspondente: sem chain para "proc-1", isso resolve por
+    # fresh_inherit (só o consolidado via inherit_checkpoint, sem a rodada
+    # pendente exata do journal). Migrar o pool legado para chains/ é P7-3.
+    assert "ultima pergunta" not in ctx
 
 
 def _seed_session_state(root: Path, *, pid: str = "old-sid") -> None:
@@ -432,37 +435,6 @@ def _seed_session_state(root: Path, *, pid: str = "old-sid") -> None:
         ),
         encoding="utf-8",
     )
-
-
-def test_claim_handoff_ttl_fallback_without_stable_pid(tmp_path):
-    """Real Claude Code hooks carry no process_instance_id: SessionEnd falls
-    back to the OLD sid and SessionStart to the NEW sid. The claim must still
-    succeed for a fresh unclaimed handoff of the same project (RM-4C.4)."""
-    from burnless import recovery
-
-    root = tmp_path / ".burnless"
-    _seed_session_state(root)
-    recovery.write_handoff(root, host="claude", host_session_id="old-sid", process_instance_id="old-sid")
-
-    claimed = recovery.claim_handoff(root, host="claude", process_instance_id="new-sid", new_session_id="new-sid")
-    assert claimed is not None
-    assert claimed["old_sid"] == "old-sid"
-    assert claimed["claimed_by"] == "new-sid"
-    assert claimed["claim_mode"] == "ttl_fallback"
-
-
-def test_claim_handoff_ttl_fallback_ignores_stale(tmp_path):
-    from burnless import recovery
-
-    root = tmp_path / ".burnless"
-    _seed_session_state(root)
-    recovery.write_handoff(root, host="claude", host_session_id="old-sid", process_instance_id="old-sid")
-    handoff_path = root / "epochs" / "_rolling" / "handoffs" / "old-sid.json"
-    stale = os.path.getmtime(handoff_path) - 600
-    os.utime(handoff_path, (stale, stale))
-
-    claimed = recovery.claim_handoff(root, host="claude", process_instance_id="new-sid", new_session_id="new-sid")
-    assert claimed is None
 
 
 def test_claim_handoff_prefers_pid_match_over_fresh_foreign(tmp_path):
@@ -511,7 +483,10 @@ def test_epoch_session_hook_restores_with_realistic_claude_payload(tmp_path):
     payload = json.loads(proc.stdout)
     ctx = payload["hookSpecificOutput"]["additionalContext"]
     assert "objetivo vivo" in ctx
-    assert "ultima pergunta" in ctx
+    # Sem process_instance_id estável e sem chain prévia pro pid derivado por
+    # host_pid(), isso resolve por fresh_inherit (consolidado via
+    # inherit_checkpoint) em vez do antigo ttl_fallback do pool legado.
+    assert "ultima pergunta" not in ctx
 
 
 def test_epoch_end_hook_accepts_reason_clear(tmp_path):
