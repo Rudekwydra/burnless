@@ -119,12 +119,14 @@ def failing_rewriter(_prompt: str):  # encoder outage: compaction fails, fail-op
 class GoldenRun:
     """Drives the real pipeline for one scenario; keeps per-rollover results."""
 
-    def __init__(self, scenario: dict, project_root: Path):
+    def __init__(self, scenario: dict, project_root: Path, pid: str = "proc-golden", sid_prefix: str = "sid-golden", cwd: str = None):
         self.scenario = scenario
         self.project = project_root
         self.root = project_root / ".burnless"
         self.host = "claude"
-        self.pid = "proc-golden"
+        self.pid = pid
+        self.sid_prefix = sid_prefix
+        self.cwd = cwd or str(project_root)
         self.restores: list[dict] = []
         self.last_turns: list[dict] = []
         config = scenario.get("config")
@@ -141,7 +143,7 @@ class GoldenRun:
         sessions = self.scenario["sessions"]
         turn_no = 0
         for s_idx, session in enumerate(sessions):
-            sid = f"sid-golden-{s_idx + 1}"
+            sid = f"{self.sid_prefix}-{s_idx + 1}"
             rewriter = failing_rewriter if session.get("rewriter") == "fail" else fake_rewriter
             turns = session["turns"]
             for t_idx, turn in enumerate(turns):
@@ -176,12 +178,12 @@ class GoldenRun:
             if s_idx == len(sessions) - 1:
                 break
             # ── rollover (SessionEnd clear → SessionStart clear) ────────────
-            new_sid = f"sid-golden-{s_idx + 2}"
+            new_sid = f"{self.sid_prefix}-{s_idx + 2}"
             recovery.write_handoff(
-                self.root, host=self.host, host_session_id=sid, process_instance_id=self.pid
+                self.root, host=self.host, host_session_id=sid, process_instance_id=self.pid, cwd=self.cwd
             )
             claimed = recovery.claim_handoff(
-                self.root, host=self.host, process_instance_id=self.pid, new_session_id=new_sid
+                self.root, host=self.host, process_instance_id=self.pid, new_session_id=new_sid, cwd=self.cwd
             )
             assert claimed is not None, f"handoff not claimed at rollover {s_idx + 1}"
             old_sid = str(claimed.get("host_session_id"))
@@ -327,3 +329,49 @@ def test_golden_rewriter_outage_inheritance():
     scenario = _load(fixture)
     assert scenario["sessions"][1].get("rewriter") == "fail"
     assert scenario["sessions"][2].get("rewriter") == "fail"
+
+
+def test_golden_multi_window_isolation(tmp_path):
+    """P7-5: estende o harness dourado pra 2 janelas concorrentes no MESMO
+    projeto (mesmo tmp_path, mesmo .burnless), pids e sid_prefix distintos.
+    must_remember de cada janela só aparece na própria; must_forget inclui
+    o conteúdo da outra -- inclusive via inherit_checkpoint (que antes desse
+    fix vazava o checkpoint mais recente do PROJETO INTEIRO, não escopado
+    por pid, para qualquer janela sem checkpoint próprio ainda)."""
+    scenario_a = {
+        "sessions": [
+            {"turns": [{"user": "pergunta A1", "assistant": "resposta A1 [[FOCO: OBJETIVO_JANELA_A]] [[DECIDE: decisao_exclusiva_A]]"}]},
+            {"turns": [{"user": "pergunta A2", "assistant": "resposta A2"}]},
+            {"turns": [{"user": "pergunta A3", "assistant": "resposta A3"}]},
+            {"turns": [{"user": "pergunta A4 final", "assistant": "resposta A4 final"}]},
+        ],
+        "must_remember": ["OBJETIVO_JANELA_A", "decisao_exclusiva_A"],
+        "must_forget": ["OBJETIVO_JANELA_B", "decisao_exclusiva_B"],
+    }
+    scenario_b = {
+        "sessions": [
+            {"turns": [{"user": "pergunta B1", "assistant": "resposta B1 [[FOCO: OBJETIVO_JANELA_B]] [[DECIDE: decisao_exclusiva_B]]"}]},
+            {"turns": [{"user": "pergunta B2", "assistant": "resposta B2"}]},
+            {"turns": [{"user": "pergunta B3", "assistant": "resposta B3"}]},
+            {"turns": [{"user": "pergunta B4 final", "assistant": "resposta B4 final"}]},
+        ],
+        "must_remember": ["OBJETIVO_JANELA_B", "decisao_exclusiva_B"],
+        "must_forget": ["OBJETIVO_JANELA_A", "decisao_exclusiva_A"],
+    }
+
+    run_a = GoldenRun(scenario_a, tmp_path, pid="proc-window-a", sid_prefix="sid-window-a")
+    run_a.run()
+    run_b = GoldenRun(scenario_b, tmp_path, pid="proc-window-b", sid_prefix="sid-window-b")
+    run_b.run()
+
+    ctx_a = run_a.restores[-1]["hookSpecificOutput"]["additionalContext"]
+    ctx_b = run_b.restores[-1]["hookSpecificOutput"]["additionalContext"]
+
+    for needle in scenario_a["must_remember"]:
+        assert needle in ctx_a, f"janela A: must_remember lost: {needle!r}"
+    for needle in scenario_a["must_forget"]:
+        assert needle not in ctx_a, f"janela A: must_forget leaked: {needle!r}"
+    for needle in scenario_b["must_remember"]:
+        assert needle in ctx_b, f"janela B: must_remember lost: {needle!r}"
+    for needle in scenario_b["must_forget"]:
+        assert needle not in ctx_b, f"janela B: must_forget leaked: {needle!r}"
