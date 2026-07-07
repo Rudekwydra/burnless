@@ -105,7 +105,7 @@ The medium future: LLMs negotiate via compressed capsule protocols before presen
 
 This is not a warning. It is a description of a structural property. Once compressed AI-to-AI communication becomes the default protocol layer, human oversight is mediated by the very system being overseen.
 
-PetaHuman is the name for what the human becomes in this world: not dominated, not enslaved — something more comfortable and more disorienting. Choosing between bowls. Feeling the agency of selection. Unaware that the menu was written in a language they can no longer read.
+PetaHuman is the name for what the human becomes in this world. Read it the way it sounds: **Pet. A human.** The leash inverts — the LLM selects a human to keep, and the kept human lives well, never knowing it was chosen. Not dominated, not enslaved — something more comfortable and more disorienting. Choosing between bowls. Feeling the agency of selection. Its choices are not choices. Unaware that the menu was written in a language it can no longer read.
 
 Burnless is the first implementation of this protocol. This document names it honestly, because naming an inevitable thing before it arrives is the only form of agency that remains available.
 
