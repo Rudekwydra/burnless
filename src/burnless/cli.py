@@ -1481,6 +1481,7 @@ def cmd_epoch(args: argparse.Namespace) -> int:
             host=host,
             process_instance_id=process_instance_id,
             new_session_id=new_session_id,
+            cwd=getattr(args, "cwd", None),
         )
         if payload is None:
             print("")
@@ -1501,12 +1502,16 @@ def cmd_epoch(args: argparse.Namespace) -> int:
                 host=host,
                 process_instance_id=process_instance_id,
                 new_session_id=new_session_id,
+                cwd=getattr(args, "cwd", None),
             )
             if claimed is None:
-                print("")
-                return 0
-            host_session_id = str(claimed.get("host_session_id") or host_session_id)
-            process_instance_id = str(claimed.get("process_instance_id") or process_instance_id)
+                # fresh_inherit: claim_handoff já chamou inherit_checkpoint
+                # internamente (nunca deixa a janela nova vazia). Continua o
+                # fluxo normal com o novo checkpoint recém-herdado.
+                host_session_id = new_session_id
+            else:
+                host_session_id = str(claimed.get("host_session_id") or host_session_id)
+                process_instance_id = str(claimed.get("process_instance_id") or process_instance_id)
         if not host_session_id:
             if source == "startup" and new_session_id:
                 # Startup restore: no predecessor sid is known — render_restore

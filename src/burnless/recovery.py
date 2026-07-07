@@ -38,6 +38,7 @@ _IGNORED_RESTORE_MARKERS = (
 # RM-4C.4: when the host cannot provide a stable process_instance_id, an
 # unclaimed handoff for the same project may still be claimed if fresh enough.
 HANDOFF_CLAIM_TTL_SECONDS = 120
+HANDOFF_ADOPT_TTL_SECONDS = 86400
 JOURNAL_RETENTION_RECORDS = 256
 
 
@@ -267,6 +268,29 @@ def _process_name_best_effort(pid_value: str) -> str:
         return ""
 
 
+def _extract_os_pid(process_instance_id: str) -> int | None:
+    s = str(process_instance_id or "")
+    m = re.match(r"^host-(\d+)$", s)
+    if m:
+        return int(m.group(1))
+    if s.isdigit():
+        return int(s)
+    return None
+
+
+def _pid_is_dead(process_instance_id: str) -> bool:
+    os_pid = _extract_os_pid(process_instance_id)
+    if os_pid is None:
+        return False
+    try:
+        os.kill(os_pid, 0)
+    except ProcessLookupError:
+        return True
+    except Exception:
+        return False
+    return False
+
+
 def _find_chain_id_by_pid(root: Path, host: str, process_instance_id: str) -> str | None:
     chains_root = _chains_root(root)
     if not chains_root.exists():
@@ -291,7 +315,7 @@ def _find_chain_id_by_pid(root: Path, host: str, process_instance_id: str) -> st
     return best_id
 
 
-def _touch_chain(root: Path, chain_id: str, *, host: str, pid: str, cwd: str | None) -> dict:
+def _touch_chain(root: Path, chain_id: str, *, host: str, pid: str, cwd: str | None, bump_generation: bool = False) -> dict:
     chain_dir = _chain_dir(root, chain_id)
     chain_dir.mkdir(parents=True, exist_ok=True)
     meta_path = chain_dir / CHAIN_META_NAME
@@ -304,6 +328,7 @@ def _touch_chain(root: Path, chain_id: str, *, host: str, pid: str, cwd: str | N
                 existing = loaded
         except Exception:
             existing = {}
+    base_generation = int(existing.get("generation") or 1)
     payload = {
         "chain_id": chain_id,
         "host": host,
@@ -312,7 +337,7 @@ def _touch_chain(root: Path, chain_id: str, *, host: str, pid: str, cwd: str | N
         "pid": pid,
         "pid_proc_name": _process_name_best_effort(pid),
         "cwd": cwd,
-        "generation": int(existing.get("generation") or 1),
+        "generation": base_generation + 1 if bump_generation else base_generation,
     }
     _atomic_json_write(meta_path, payload)
     return payload
@@ -1375,64 +1400,121 @@ def claim_handoff(
     host: str,
     process_instance_id: str,
     new_session_id: str,
-    ttl_seconds: int = HANDOFF_CLAIM_TTL_SECONDS,
+    cwd: str | None = None,
 ) -> dict[str, Any] | None:
     root_path = _root_path(root)
-    handoff_dir = _rolling_root(root_path) / HANDOFF_DIR_NAME
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = handoff_dir / "handoff.lock"
-    now = time.time()
+    chains_root = _chains_root(root_path)
+    chains_root.mkdir(parents=True, exist_ok=True)
+    lock_path = chains_root / "claim.lock"
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     with _exclusive_lock(lock_path):
-        pid_matches: list[tuple[float, Path, dict[str, Any]]] = []
-        fresh_unclaimed: list[tuple[float, Path, dict[str, Any]]] = []
-        for path in handoff_dir.glob("*.json"):
+        own_chain_id = _find_chain_id_by_pid(root_path, host, process_instance_id)
+        if own_chain_id is not None:
+            handoff_path = _chain_dir(root_path, own_chain_id) / CHAIN_HANDOFF_NAME
+            if not handoff_path.exists():
+                return None
             try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+            payload["claimed_by"] = new_session_id
+            payload["claimed_at"] = now_iso
+            payload["claim_mode"] = "pid"
+            payload["chain_id"] = own_chain_id
+            _atomic_json_write(handoff_path, payload)
+            _touch_chain(root_path, own_chain_id, host=host, pid=process_instance_id, cwd=cwd)
+            owner_loop.log_owner_event(
+                root_path,
+                {
+                    "phase": "recovery",
+                    "event": "handoff_claimed",
+                    "host": host,
+                    "process_instance_id": process_instance_id,
+                    "new_session_id": new_session_id,
+                    "old_sid": payload.get("host_session_id"),
+                    "claim_mode": "pid",
+                    "chain_id": own_chain_id,
+                },
+            )
+            return payload
+
+        candidates: list[tuple[str, str, dict[str, Any]]] = []
+        for meta_path in chains_root.glob("*/" + CHAIN_META_NAME):
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if not isinstance(payload, dict):
+            if not isinstance(meta, dict):
                 continue
-            if payload.get("host") != host:
+            if meta.get("host") != host:
                 continue
-            if payload.get("claimed_by"):
+            if str(meta.get("cwd") or "") != str(cwd or ""):
                 continue
-            mtime = path.stat().st_mtime
-            if str(payload.get("process_instance_id") or "") == str(process_instance_id):
-                pid_matches.append((mtime, path, payload))
-            elif ttl_seconds > 0 and (now - mtime) <= ttl_seconds:
-                # RM-4C.4 fallback: host did not carry a stable
-                # process_instance_id across SessionEnd -> SessionStart
-                # (e.g. real Claude Code hook payloads). A fresh unclaimed
-                # handoff for the same project is the weaker-but-real lineage.
-                fresh_unclaimed.append((mtime, path, payload))
-        claim_mode = "pid"
-        candidates = pid_matches
-        if not candidates:
-            claim_mode = "ttl_fallback"
-            candidates = fresh_unclaimed
-        if not candidates:
-            return None
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        _, path, payload = candidates[0]
-        payload = dict(payload)
-        payload["claimed_by"] = new_session_id
-        payload["claimed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        payload["old_sid"] = payload.get("old_sid") or payload.get("host_session_id")
-        payload["claim_mode"] = claim_mode
-        _atomic_json_write(path, payload)
+            last_seen = str(meta.get("last_seen") or "")
+            if last_seen:
+                try:
+                    last_seen_epoch = time.mktime(time.strptime(last_seen, "%Y-%m-%dT%H:%M:%SZ"))
+                    if (time.time() - last_seen_epoch) > HANDOFF_ADOPT_TTL_SECONDS:
+                        continue
+                except Exception:
+                    pass
+            if not _pid_is_dead(str(meta.get("pid") or "")):
+                continue
+            chain_id = str(meta.get("chain_id") or meta_path.parent.name)
+            candidates.append((last_seen, chain_id, meta))
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            claim_mode = "adoption" if len(candidates) == 1 else "adoption_ambiguous"
+            _, chain_id, _meta = candidates[0]
+            handoff_path = _chain_dir(root_path, chain_id) / CHAIN_HANDOFF_NAME
+            if handoff_path.exists():
+                try:
+                    payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+                except Exception:
+                    payload = None
+                if payload is not None:
+                    payload["claimed_by"] = new_session_id
+                    payload["claimed_at"] = now_iso
+                    payload["claim_mode"] = claim_mode
+                    payload["chain_id"] = chain_id
+                    _atomic_json_write(handoff_path, payload)
+                    _touch_chain(root_path, chain_id, host=host, pid=process_instance_id, cwd=cwd, bump_generation=True)
+                    owner_loop.log_owner_event(
+                        root_path,
+                        {
+                            "phase": "recovery",
+                            "event": "handoff_claimed",
+                            "host": host,
+                            "process_instance_id": process_instance_id,
+                            "new_session_id": new_session_id,
+                            "old_sid": payload.get("host_session_id"),
+                            "claim_mode": claim_mode,
+                            "chain_id": chain_id,
+                        },
+                    )
+                    return payload
+
+        new_chain_id = resolve_or_create_chain(root_path, host=host, process_instance_id=process_instance_id, cwd=cwd)
+        inherit_checkpoint(
+            root_path,
+            host=host,
+            new_session_id=new_session_id,
+            process_instance_id=process_instance_id,
+            old_session_id=None,
+        )
         owner_loop.log_owner_event(
             root_path,
             {
                 "phase": "recovery",
-                "event": "handoff_claimed",
+                "event": "handoff_claim_fresh_inherit",
                 "host": host,
                 "process_instance_id": process_instance_id,
                 "new_session_id": new_session_id,
-                "old_sid": payload.get("host_session_id"),
-                "claim_mode": claim_mode,
+                "chain_id": new_chain_id,
             },
         )
-        return payload
+        return None
 
 
 def inherit_checkpoint(
