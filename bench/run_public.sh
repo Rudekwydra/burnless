@@ -53,6 +53,8 @@ COMMAND = "bench/run_public.sh"
 README_READY = "markdown block ready to paste into README"
 ITERATIONS_DEFAULT = 100
 STABILITY_TOLERANCE = 0.10
+TOKEN_SWEEP_TURNS = (20, 50, 100)
+TOKEN_ROLLOVER_CADENCE_TURNS = 8
 LLM_MARKERS = (
     "anthropic",
     "openai",
@@ -211,6 +213,59 @@ def load_scenario() -> dict[str, Any]:
     return yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
 
 
+def flatten_fixture_turns(scenario: dict[str, Any]) -> list[dict[str, Any]]:
+    turns: list[dict[str, Any]] = []
+    for session_index, session in enumerate(scenario["sessions"]):
+        for turn in session["turns"]:
+            cloned = dict(turn)
+            cloned["_fixture_session_index"] = session_index
+            cloned["_fixture_rewriter"] = session.get("rewriter")
+            turns.append(cloned)
+    if not turns:
+        raise RuntimeError("fixture has no turns")
+    return turns
+
+
+def synthesize_turn(base_turn: dict[str, Any], seq: int, fixture_turn_count: int) -> dict[str, Any]:
+    cycle = (seq - 1) // fixture_turn_count
+    if cycle == 0:
+        return {key: value for key, value in base_turn.items() if not key.startswith("_")}
+    turn = {key: value for key, value in base_turn.items() if not key.startswith("_")}
+    replay_tag = f"\n\n[deterministic replay {cycle}, synthetic seq {seq}]"
+    turn["user"] = f"{turn['user']}{replay_tag}"
+    turn["assistant"] = f"{turn['assistant']}{replay_tag}"
+    return turn
+
+
+def synthesize_sweep_scenario(scenario: dict[str, Any], turns: int) -> dict[str, Any]:
+    if turns <= 1:
+        raise RuntimeError("token sweep depth must be greater than one turn")
+    fixture_turns = flatten_fixture_turns(scenario)
+
+    synthetic_turns = [
+        synthesize_turn(fixture_turns[(seq - 1) % len(fixture_turns)], seq, len(fixture_turns))
+        for seq in range(1, turns + 1)
+    ]
+    sessions = []
+    for start in range(0, turns, TOKEN_ROLLOVER_CADENCE_TURNS):
+        chunk = synthetic_turns[start : start + TOKEN_ROLLOVER_CADENCE_TURNS]
+        session_index = len(sessions)
+        session: dict[str, Any] = {"stop_compact": True, "turns": chunk}
+        # Preserve the dense harness shape: every third session simulates a
+        # deterministic rewriter outage, accumulating pending exchanges.
+        if session_index % 3 == 2:
+            session["rewriter"] = "fail"
+        sessions.append(session)
+
+    cloned = dict(scenario)
+    cloned["name"] = f"{scenario.get('name', 'scenario')}_sweep_{turns}"
+    cloned["description"] = (
+        f"Deterministic replay/synthesis of the golden dense fixture to {turns} turns."
+    )
+    cloned["sessions"] = sessions
+    return cloned
+
+
 def pad_text(text: str, pad_to: int) -> str:
     while len(text) < pad_to:
         text += "\n" + PAD_SENTENCE
@@ -226,7 +281,9 @@ def prepare_project(project: Path, scenario: dict[str, Any]) -> Path:
     return root
 
 
-def run_dense_pipeline(project: Path, scenario: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+def run_dense_pipeline(
+    project: Path, scenario: dict[str, Any], expected_rollovers: int | None = 3
+) -> tuple[list[dict[str, Any]], list[str]]:
     root = prepare_project(project, scenario)
     host = "claude"
     pid = "proc-public-bench"
@@ -316,8 +373,8 @@ def run_dense_pipeline(project: Path, scenario: dict[str, Any]) -> tuple[list[di
         )
         exporting.export_epoch(root, host=host, host_session_id=old_sid)
 
-    if len(restores) != 3:
-        raise RuntimeError(f"expected 3 rollovers, got {len(restores)}")
+    if expected_rollovers is not None and len(restores) != expected_rollovers:
+        raise RuntimeError(f"expected {expected_rollovers} rollovers, got {len(restores)}")
     return restores, transcript_before_rollover
 
 
@@ -366,11 +423,19 @@ def token_counter():
     return lambda text: len(encoding.encode(text))
 
 
-def measure_token_economy(scenario: dict[str, Any], tmp_parent: Path) -> dict[str, Any]:
-    project = tmp_parent / "tokens"
+def measure_token_economy_depth(
+    scenario: dict[str, Any], turns: int, tmp_parent: Path
+) -> dict[str, Any]:
+    project = tmp_parent / f"tokens-{turns}"
     project.mkdir(parents=True, exist_ok=True)
+    sweep_scenario = synthesize_sweep_scenario(scenario, turns)
+    expected_rollovers = len(sweep_scenario["sessions"]) - 1
+    if expected_rollovers <= 0:
+        raise RuntimeError(f"token sweep depth {turns} produced no rollovers")
     with no_llm_guard() as guard:
-        restores, transcripts = run_dense_pipeline(project, scenario)
+        restores, transcripts = run_dense_pipeline(
+            project, sweep_scenario, expected_rollovers=expected_rollovers
+        )
         if guard.calls:
             raise LLMCallDetected("\n".join(guard.calls))
     count_tokens = token_counter()
@@ -393,10 +458,8 @@ def measure_token_economy(scenario: dict[str, Any], tmp_parent: Path) -> dict[st
     total_with = sum(row["tokens"] for row in with_rows)
     if total_without <= 0 or total_with <= 0:
         raise RuntimeError("token measurement produced non-positive totals")
-    total_turns = sum(len(session["turns"]) for session in scenario["sessions"])
     return {
-        "method": "local cl100k_base tokens; identical estimator; 3 rollover payloads; no provider cache/cost claim",
-        "turns": total_turns,
+        "turns": turns,
         "rollovers": len(restores),
         "without_burnless_tokens": total_without,
         "with_burnless_tokens": total_with,
@@ -405,6 +468,49 @@ def measure_token_economy(scenario: dict[str, Any], tmp_parent: Path) -> dict[st
         "without_burnless_by_rollover": without_rows,
         "with_burnless_by_rollover": with_rows,
     }
+
+
+def classify_trend(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    deltas = []
+    for prev, curr in zip(rows, rows[1:]):
+        deltas.append(
+            {
+                "from_turns": prev["turns"],
+                "to_turns": curr["turns"],
+                "saved_pct_delta_points": curr["saved_pct"] - prev["saved_pct"],
+            }
+        )
+    if all(delta["saved_pct_delta_points"] > 0 for delta in deltas):
+        verdict = "crescente"
+    elif all(abs(delta["saved_pct_delta_points"]) < 0.05 for delta in deltas):
+        verdict = "plana"
+    elif all(delta["saved_pct_delta_points"] < 0 for delta in deltas):
+        verdict = "decrescente"
+    else:
+        verdict = "não monotônica"
+    return {
+        "verdict": verdict,
+        "monotonically_increasing": verdict == "crescente",
+        "deltas": deltas,
+    }
+
+
+def measure_token_economy(scenario: dict[str, Any], tmp_parent: Path) -> dict[str, Any]:
+    sweep = [
+        measure_token_economy_depth(scenario, turns, tmp_parent)
+        for turns in TOKEN_SWEEP_TURNS
+    ]
+    trend = classify_trend(sweep)
+    final = dict(sweep[-1])
+    final["method"] = (
+        "local cl100k_base tokens; identical estimator; token_economy_sweep depths "
+        f"{'/'.join(str(turns) for turns in TOKEN_SWEEP_TURNS)}; deterministic replay/synthesis "
+        f"of golden dense fixture; rollover cadence 1 per ~{TOKEN_ROLLOVER_CADENCE_TURNS} turns; "
+        "no provider cache/cost claim"
+    )
+    final["token_economy_sweep"] = sweep
+    final["trend"] = trend
+    return final
 
 
 def stable_enough(first: dict[str, Any], second: dict[str, Any]) -> tuple[bool, dict[str, float]]:
@@ -440,23 +546,40 @@ def format_markdown(report: dict[str, Any]) -> str:
     latency = report["restore_latency"]
     tokens = report["token_economy"]
     stability = report["stability"]
+    sweep_rows = "\n".join(
+        "| {turns} | {without:,} | {with_:,} | {saved_pct:.1f}% |".format(
+            turns=row["turns"],
+            without=row["without_burnless_tokens"],
+            with_=row["with_burnless_tokens"],
+            saved_pct=row["saved_pct"],
+        )
+        for row in tokens["token_economy_sweep"]
+    )
+    trend = tokens["trend"]
+    trend_deltas = ", ".join(
+        "{from_turns}->{to_turns}: {saved_pct_delta_points:+.1f} pp".format(**delta)
+        for delta in trend["deltas"]
+    )
     return f"""## Burnless Public Benchmark
 
 - {README_READY}
 - Date: {report["date"]}
 - Version: burnless {report["version"]} ({report["git"]})
 - Reproduce: `{COMMAND}`
-- Scenario: `tests/fixtures/golden/refactor_dense.yaml` ({tokens["turns"]} turns, {tokens["rollovers"]} rollovers)
+- Scenario: `tests/fixtures/golden/refactor_dense.yaml` deterministic sweep ({', '.join(str(turns) for turns in TOKEN_SWEEP_TURNS)} turns; rollover cadence 1 per ~{TOKEN_ROLLOVER_CADENCE_TURNS} turns)
 - LLM calls in critical path: {report["llm_calls"]}
 
-| Metric | Value |
+| Restore Metric | Value |
 |---|---:|
 | Restore p50 | {latency["p50_ms"]:.2f} ms |
 | Restore p95 | {latency["p95_ms"]:.2f} ms |
 | Restore iterations | {latency["iterations"]} |
-| Without Burnless | {tokens["without_burnless_tokens"]:,} tokens |
-| With Burnless | {tokens["with_burnless_tokens"]:,} tokens |
-| Saved | {tokens["saved_tokens"]:,} tokens ({tokens["saved_pct"]:.1f}%) |
+
+| Turns | Without | With | Saved % |
+|---:|---:|---:|---:|
+{sweep_rows}
+
+Trend verdict: {trend["verdict"]}; saved_pct deltas: {trend_deltas}.
 
 Stability check: run1 p50={stability["run1"]["p50_ms"]:.2f} ms, p95={stability["run1"]["p95_ms"]:.2f} ms; run2 p50={stability["run2"]["p50_ms"]:.2f} ms, p95={stability["run2"]["p95_ms"]:.2f} ms; tolerance ±10%.
 
@@ -496,6 +619,7 @@ def main(argv: list[str]) -> int:
         "llm_calls": 0,
         "restore_latency": second,
         "token_economy": tokens,
+        "token_economy_sweep": tokens["token_economy_sweep"],
         "stability": {"stable": stable, "deltas": deltas, "run1": first, "run2": second},
     }
 
