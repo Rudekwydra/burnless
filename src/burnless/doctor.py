@@ -36,6 +36,8 @@ _BAND_NAMES = {
     "C": "Claude Code",
     "D": "MCP",
     "E": "Chains",
+    "F": "Ambiente",
+    "G": "Jobs Agendados",
 }
 
 # Safe remediation order. mkdir/copy before wiring (hooks point at the copied
@@ -84,6 +86,8 @@ def _collect(*, home: Path, cwd: Path | None) -> list[Check]:
     _check_c(checks, home=home, cwd=cwd)
     _check_d(checks)
     _check_e(checks, cwd=cwd)
+    _check_f(checks)
+    _check_g(checks, cwd=cwd)
     return checks
 
 
@@ -553,6 +557,101 @@ def _check_e(checks: list[Check], cwd: Path | None = None) -> None:
         )
     else:
         checks.append(Check("E1", "E", "PASS", f"{len(chains)} chain(s) — nenhuma adoção ambígua recente"))
+
+
+# ── Band F: Ambiente (local server reachability) ───────────────────────────────
+
+def _check_f(checks: list[Check]) -> None:
+    import os
+    import socket
+    import urllib.request
+    from urllib.parse import urlparse
+
+    api_mode = os.environ.get("BURNLESS_LOCAL_API", "ollama").lower()
+    if api_mode == "llamacpp":
+        local_host = os.environ.get("BURNLESS_LOCAL_HOST", "http://localhost:11435")
+        parsed = urlparse(local_host)
+        port = parsed.port or 80
+        try:
+            with socket.create_connection((parsed.hostname, port), timeout=1.5):
+                checks.append(Check("F1", "F", "PASS",
+                                    f"env: BURNLESS_LOCAL_API=llamacpp, {local_host} (TCP reachable)"))
+        except OSError as e:
+            checks.append(Check("F1", "F", "WARN",
+                                f"env: BURNLESS_LOCAL_API=llamacpp mas {local_host} inalcancavel ({e})",
+                                "unsetar BURNLESS_LOCAL_API ou corrigir BURNLESS_LOCAL_HOST / subir o servidor llamacpp"))
+    else:
+        local_host = os.environ.get("BURNLESS_OLLAMA_HOST", "http://localhost:11434")
+        try:
+            with urllib.request.urlopen(local_host.rstrip("/") + "/api/tags", timeout=2) as r:
+                ok = getattr(r, "status", 200) == 200
+        except Exception as e:
+            ok = False
+        if ok:
+            checks.append(Check("F1", "F", "PASS", f"env: ollama reachable at {local_host}"))
+        else:
+            checks.append(Check("F1", "F", "WARN",
+                                f"env: BURNLESS_LOCAL_API=ollama (default) mas {local_host}/api/tags nao respondeu",
+                                "confirme que o ollama esta rodando, ou setar BURNLESS_OLLAMA_HOST"))
+
+
+# ── Band G: Jobs Agendados ──────────────────────────────────────────────────────
+
+def _check_g(checks: list[Check], cwd: Path | None = None) -> None:
+    from datetime import datetime, timezone
+    from . import paths as paths_mod
+    from . import config as config_mod
+
+    bl_root = paths_mod.find_root(start=cwd)
+    if bl_root is None:
+        return
+
+    cfg_path = bl_root / "config.yaml"
+    if not cfg_path.exists():
+        return
+
+    try:
+        cfg = config_mod.load(cfg_path)
+    except Exception:
+        return
+
+    jobs = cfg.get("scheduled_jobs", [])
+    if not jobs:
+        return
+
+    for i, job in enumerate(jobs, start=1):
+        try:
+            name = job.get("name")
+            path_str = job.get("path")
+            period_hours = job.get("period_hours")
+
+            if not all([name, path_str, period_hours is not None]):
+                checks.append(Check(f"G{i}", "G", "WARN",
+                                    f"scheduled_jobs[{i}] malformado: faltam chaves (name={name}, path={path_str}, period_hours={period_hours})"))
+                continue
+
+            path = Path(path_str).expanduser()
+
+            if not path.exists():
+                checks.append(Check(f"G{i}", "G", "FAIL",
+                                    f"job '{name}': path nao existe ({path_str}) — nunca rodou ou path errado"))
+                continue
+
+            mtime_ts = path.stat().st_mtime
+            now_ts = datetime.now(timezone.utc).timestamp()
+            age_hours = (now_ts - mtime_ts) / 3600
+
+            limit_hours = 2 * period_hours
+            if age_hours > limit_hours:
+                checks.append(Check(f"G{i}", "G", "FAIL",
+                                    f"job '{name}': ultimo sucesso ha {age_hours:.1f}h (periodo esperado {period_hours}h, limite {limit_hours}h)",
+                                    f"verificar cron/launchd do job '{name}'"))
+            else:
+                checks.append(Check(f"G{i}", "G", "PASS",
+                                    f"job '{name}': ultimo sucesso ha {age_hours:.1f}h (dentro do periodo de {period_hours}h)"))
+        except Exception as e:
+            checks.append(Check(f"G{i}", "G", "WARN",
+                                f"scheduled_jobs[{i}] erro: {e}"))
 
 
 # ── Renderers ─────────────────────────────────────────────────────────────────
