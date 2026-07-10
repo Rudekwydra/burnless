@@ -2,8 +2,10 @@
 from __future__ import annotations
 import json
 import os
+import socket
 import subprocess
 import urllib.request
+from urllib.parse import urlparse
 
 from .compression import _strip_gemma_channels
 
@@ -66,6 +68,25 @@ def is_ollama_tools_agent(cfg: dict) -> bool:
     return (cfg.get("provider") == "ollama-local") and bool(cfg.get("tools"))
 
 
+def _is_local_reachable(api_mode: str, local_host: str, timeout: float = 1.5) -> bool:
+    """Probe reachability BEFORE dispatch. GET /api/tags for ollama (has a real
+    health endpoint); TCP-connect only for llamacpp (OpenAI-compat servers have
+    no standardized health route)."""
+    if api_mode == "llamacpp":
+        parsed = urlparse(local_host)
+        port = parsed.port or 80
+        try:
+            with socket.create_connection((parsed.hostname, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+    try:
+        with urllib.request.urlopen(local_host.rstrip("/") + "/api/tags", timeout=timeout) as r:
+            return getattr(r, "status", 200) == 200
+    except Exception:
+        return False
+
+
 def run_ollama_tools(
     model: str,
     prompt: str,
@@ -80,6 +101,40 @@ def run_ollama_tools(
     """Run the agentic tool-calling loop against a local ollama model; return worker envelope dict."""
     effective_cwd = cwd or os.getcwd()
     effective_system = system_prompt or _DEFAULT_SYSTEM
+
+    api_mode = os.environ.get("BURNLESS_LOCAL_API", "ollama").lower()
+    local_host = (
+        os.environ.get("BURNLESS_LOCAL_HOST", "http://localhost:11435")
+        if api_mode == "llamacpp" else host
+    )
+
+    def _early_err(reason: str) -> dict:
+        return {
+            "status": "ERR",
+            "summary": reason,
+            "files_touched": [],
+            "validated": [],
+            "evidence": [f"model: {model}", f"cwd: {effective_cwd}"],
+            "issues": [reason],
+            "next": "",
+        }
+
+    max_kb = float(os.environ.get("BURNLESS_BRONZE_LOCAL_MAX_SPEC_KB", "6"))
+    prompt_kb = len(prompt.encode("utf-8")) / 1024
+    if prompt_kb > max_kb:
+        return _early_err(
+            f"spec de {prompt_kb:.1f}KB acima do limite bronze local ({max_kb:.0f}KB) — "
+            "recusa educada, evita HTTP 500/OOM sob carga observado em producao. "
+            'override pronto pra copiar: burnless do --tier silver "<mesma tarefa>" '
+            "(ou aumente BURNLESS_BRONZE_LOCAL_MAX_SPEC_KB)."
+        )
+
+    if not _is_local_reachable(api_mode, local_host):
+        return _early_err(
+            f"servidor local inalcancavel em {local_host} (BURNLESS_LOCAL_API={api_mode}) — "
+            "probe de saude falhou antes do dispatch, nao vale a pena tentar. "
+            'override pronto pra copiar: burnless do --tier silver "<mesma tarefa>".'
+        )
 
     def _ler_arquivo(caminho: str) -> str:
         try:
