@@ -618,8 +618,9 @@ def main(argv: list[str]) -> int:
         "fixture": str(FIXTURE.relative_to(ROOT)),
         "llm_calls": 0,
         "restore_latency": second,
+        # token_economy ja carrega .token_economy_sweep aninhado — nao duplicar no top-level
+        # (duplicata identica confundia diff de quem revisava os numeros do launch).
         "token_economy": tokens,
-        "token_economy_sweep": tokens["token_economy_sweep"],
         "stability": {"stable": stable, "deltas": deltas, "run1": first, "run2": second},
     }
 
