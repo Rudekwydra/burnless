@@ -156,3 +156,43 @@ def format_rejection(v: SpecValidation, project_root: Path, lang: str = "pt-BR")
         f"{bullets}\n"
         "   Override: --allow-relative-paths  or  validation.require_absolute_paths: false\n"
     )
+
+
+_CMD_SUBSTITUTION_RE = re.compile(r"`|\$\(")
+
+
+def find_verify_command_substitution(text: str) -> list[str]:
+    """Lines inside the fenced ## Verify block that contain a literal backtick
+    or $(...) — command-substitution that breaks /bin/sh execution unpredictably
+    (known reincident footgun). Returns the offending lines verbatim."""
+    from .delegation_parse import extract_verify_block
+    cmds = extract_verify_block(text)
+    return [c for c in cmds if _CMD_SUBSTITUTION_RE.search(c)]
+
+
+def should_block_verify_command_substitution(text: str) -> bool:
+    """True when dispatch must be blocked: the ## Verify block has a line with
+    a backtick or $(...) — always blocks, no config toggle (this is never
+    intentional in a Verify line; real command-substitution needs a script file)."""
+    return bool(find_verify_command_substitution(text))
+
+
+def format_command_substitution_rejection(offending: list[str], lang: str = "pt-BR") -> str:
+    bullets = "\n".join(f"    {line}" for line in offending)
+    if lang.startswith("pt"):
+        return (
+            "\n[BLOCK] burnless: bloco ## Verify usa backtick ou $(...) (command-substitution).\n"
+            "   O runner executa cada linha via /bin/sh -c e isso quebra de forma imprevisivel.\n"
+            "   Linhas problematicas:\n"
+            f"{bullets}\n"
+            "   Use greps de 1 linha, sem command-substitution. Logica pesada vai pra um script\n"
+            "   .py chamado por uma unica linha do Verify (ex: python3 script.py).\n"
+        )
+    return (
+        "\n[BLOCK] burnless: ## Verify block uses a backtick or $(...) (command substitution).\n"
+        "   The runner executes each line via /bin/sh -c and this breaks unpredictably.\n"
+        "   Offending lines:\n"
+        f"{bullets}\n"
+        "   Use single-line greps, no command substitution. Move heavy logic into a .py\n"
+        "   script invoked by a single Verify line (e.g. python3 script.py).\n"
+    )

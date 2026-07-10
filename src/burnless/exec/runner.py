@@ -432,6 +432,9 @@ def _preflight_verify_block(verify_cmds, *, cwd, timeout=30):
         "unbound variable",
         "jq: error",
     )
+    _SAFE_PHRASES = (
+        "no syntax errors detected",
+    )
     complaints = []
     for cmd in verify_cmds:
         try:
@@ -441,7 +444,12 @@ def _preflight_verify_block(verify_cmds, *, cwd, timeout=30):
         except subprocess.TimeoutExpired:
             continue
         out = (r.stdout or "") + (r.stderr or "")
-        malformed = r.returncode in (126, 127) or any(s in out for s in _CRASH_SIGS)
+        out_lower = out.lower()
+        if any(phrase in out_lower for phrase in _SAFE_PHRASES):
+            continue
+        malformed = r.returncode in (126, 127) or (
+            r.returncode != 0 and any(s in out for s in _CRASH_SIGS)
+        )
         if malformed:
             complaints.append(f"{cmd} (rc={r.returncode}): {out.strip()[:200]}")
     return complaints

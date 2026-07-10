@@ -207,6 +207,16 @@ def cmd_delegate(args: argparse.Namespace, cfg_override: dict | None = None) -> 
         if _spec_validator.should_block_unfenced_verify(text, _enforce_fence, _allow_unfenced):
             return 6
 
+    _cmd_subst_offending = _spec_validator.find_verify_command_substitution(text)
+    if _cmd_subst_offending:
+        print(
+            _spec_validator.format_command_substitution_rejection(
+                _cmd_subst_offending, cfg.get("language", "pt-BR")
+            ),
+            file=sys.stderr,
+        )
+        return 6
+
     is_blocked, natural_tier, matched_kw, policy_source = _hardcore_blocked(cfg, text, tier_override, args)
     if is_blocked:
         lang = cfg.get("language", "pt-BR")
