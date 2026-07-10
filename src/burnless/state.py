@@ -35,12 +35,54 @@ def load(path: Path) -> dict:
 
 def save(path: Path, state: dict) -> None:
     import os
+    import sys
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[burnless] state save failed for {path}: {e}", file=sys.stderr)
+        raise RuntimeError(f"state save failed: {e}") from e
     os.replace(tmp, path)
+
+
+def save_locked(path: Path, state: dict) -> None:
+    """Atomically save state under a process-wide file lock, merging with current disk state."""
+    import os
+    import sys
+    lock_path = path.with_name("state.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import fcntl
+        with open(lock_path, "a") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                current = load(path)
+                current.update(state)
+                save(path, current)
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+    except ImportError:
+        # Windows: spin-lock via O_CREAT | O_EXCL
+        acquired = False
+        for _ in range(150):
+            try:
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                acquired = True
+                break
+            except FileExistsError:
+                time.sleep(0.02)
+        if not acquired:
+            raise RuntimeError(f"Could not acquire state lock: {lock_path}")
+        try:
+            current = load(path)
+            current.update(state)
+            save(path, current)
+        finally:
+            lock_path.unlink(missing_ok=True)
 
 
 def next_delegation_id(state: dict) -> str:
