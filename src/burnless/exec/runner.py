@@ -1172,7 +1172,10 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
     state["next"] = capsule.next or None
     # Increment turn counter for savings footer tracking
     state["turn_counter"] = int(state.get("turn_counter", 0) or 0) + 1
-    state_mod.save(p["state"], state)
+    try:
+        state_mod.save_locked(p["state"], state)
+    except RuntimeError as e:
+        print(f"[burnless] ERR state persist failed for {did}: {e}", file=sys.stderr)
     _emit_audit_record(root.parent, did, summary, capsule_path, log_path, cfg)
 
     # Short output — details via `burnless read/log/capsule/metrics`
