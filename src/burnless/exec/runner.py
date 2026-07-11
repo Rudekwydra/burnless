@@ -1189,6 +1189,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         st["last_capsule_mode"] = "faithful"
         st["next"] = capsule.next or None
         st["turn_counter"] = int(st.get("turn_counter", 0) or 0) + 1
+        st["last_status"] = f"{summary.get('status', '?')}:{did}"
 
     try:
         state = state_mod.update_locked(p["state"], _persist_state)

@@ -162,21 +162,32 @@ def check_run_integrity(did: str, project_root) -> list[str]:
 
 
 def scan_orphans(project_root, limit: int = 50) -> list[str]:
-    """Return dXXX ids with a delegation md but no capsule json, newest first, capped at limit."""
+    """Return dXXX ids with a delegation md but no capsule json, newest first, capped at limit.
+    Ignores: delegations without a log file (never ran), and logs modified < 900s ago (possibly running)."""
     try:
+        import time
         root = Path(project_root)
         deleg_dir = root / ".burnless" / "delegations"
         capsule_dir = root / ".burnless" / "capsules"
+        logs_dir = root / ".burnless" / "logs"
 
         if not deleg_dir.exists():
             return []
 
+        now = time.time()
         mds = sorted(deleg_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
         orphans = []
         for md in mds:
             did = md.stem
             capsule = capsule_dir / f"{did}.json"
+            log_file = logs_dir / f"{did}.log"
+
             if not capsule.exists():
+                # Only count as orphan if log exists and is not hot (> 900s old)
+                if not log_file.exists():
+                    continue  # Never ran, not an orphan
+                if (now - log_file.stat().st_mtime) < 900:
+                    continue  # Hot run, skip
                 orphans.append(did)
             if len(orphans) >= limit:
                 break
