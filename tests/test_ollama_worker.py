@@ -70,6 +70,7 @@ def test_run_ollama_tools_writes_file(tmp_path, monkeypatch):
             })
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr("burnless.ollama_worker._is_local_reachable", lambda *a, **k: True)
     env = run_ollama_tools("test-model", "write the file", cwd=str(tmp_path))
     assert env["status"] == "OK"
     assert target.exists()
@@ -148,6 +149,7 @@ def test_run_ollama_tools_generic_done_with_file_synthesizes_summary(tmp_path, m
         return _MockResponse({"message": {"role": "assistant", "content": "done"}})
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr("burnless.ollama_worker._is_local_reachable", lambda *a, **k: True)
     env = run_ollama_tools("test-model", "write the file", cwd=str(tmp_path))
     assert env["status"] == "OK"
     assert str(target) in env["files_touched"]
@@ -211,6 +213,7 @@ def test_run_ollama_tools_llamacpp_branch_handles_tool_calls(tmp_path, monkeypat
 
     monkeypatch.setenv("BURNLESS_LOCAL_API", "llamacpp")
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr("burnless.ollama_worker._is_local_reachable", lambda *a, **k: True)
     env = run_ollama_tools("test-model", "write the file", cwd=str(tmp_path))
     assert env["status"] == "OK"
     assert target.exists()

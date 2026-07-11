@@ -104,12 +104,6 @@ transcript = str(payload.get("transcript_path") or "").strip() or None
 if not cwd:
     sys.exit(0)
 
-root = _resolve_root(cwd, transcript)
-if not root:
-    sys.exit(0)
-
-_log_pilot_event(root, sid, pid, source or "startup", cwd, transcript)
-
 pointer_file = Path(os.environ.get("POINTER_FILE", ""))
 if pointer_file.exists():
     try:
@@ -161,24 +155,32 @@ if pointer_file.exists():
                     # checkpoint from the latest project checkpoint so the
                     # living doc evolves across rollovers.
                     if sid:
-                        try:
-                            subprocess.run(
-                                _burnless_cmd(
-                                    "epoch", "inherit",
-                                    "--root", root,
-                                    "--host", "claude",
-                                    "--new-session-id", sid,
-                                    "--process-instance-id", pid or sid,
-                                ),
-                                capture_output=True,
-                                text=True,
-                                check=False,
-                            )
-                        except Exception:
-                            pass
+                        root_for_inherit = _resolve_root(cwd, transcript)
+                        if root_for_inherit:
+                            try:
+                                subprocess.run(
+                                    _burnless_cmd(
+                                        "epoch", "inherit",
+                                        "--root", root_for_inherit,
+                                        "--host", "claude",
+                                        "--new-session-id", sid,
+                                        "--process-instance-id", pid or sid,
+                                    ),
+                                    capture_output=True,
+                                    text=True,
+                                    check=False,
+                                )
+                            except Exception:
+                                pass
                     sys.exit(0)
     except Exception:
         pass
+
+root = _resolve_root(cwd, transcript)
+if not root:
+    sys.exit(0)
+
+_log_pilot_event(root, sid, pid, source or "startup", cwd, transcript)
 
 if source not in {"", "startup", "direct"}:
     sys.exit(0)
