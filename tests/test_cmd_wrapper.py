@@ -41,7 +41,12 @@ def test_under_threshold_prints_raw(capsys, tmp_path):
     assert rc == 0
 
 
-def test_over_threshold_saves_raw(capsys, tmp_path):
+def test_over_threshold_saves_raw(capsys, tmp_path, monkeypatch):
+    # Never dispatch a real bronze delegation in the suite: stub the envelope.
+    monkeypatch.setattr(
+        "burnless.cmd_wrapper._capsule_via_haiku",
+        lambda command, raw_path, project_root: {"summary": "stub-envelope"},
+    )
     rc = run_and_capsule("echo hello", threshold=1, project_root=tmp_path)
     captured = capsys.readouterr()
     cache_dir = tmp_path / ".burnless" / "cache" / "raw"
