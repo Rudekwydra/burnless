@@ -115,3 +115,43 @@ async def test_mcp_delegate_infers_kind_hint(mock_burnless_project: Path) -> Non
     assert "thought" in markdown.lower() or "execution" in markdown.lower()
     # The kind should be "thought" due to high keyword density
     assert "- **Report kind:** thought" in markdown or "thought" in markdown
+
+
+def test_autofixed_spec_still_hits_verify_gates() -> None:
+    """Autofixed spec (relative→absolute path) must still pass through unfenced_verify gate.
+
+    Regression test: gate (a) autofix success must not short-circuit gates (b) and (c).
+    A spec with autofixable relative path + unfenced Verify should fail at gate (b),
+    not pass early from gate (a).
+    """
+    from burnless import spec_validator as sv
+    from pathlib import Path
+
+    # Use actual project path
+    project_root = Path("/Users/roberto/antigravity/burnless")
+
+    # Construct spec with relative path that can be autofixed + unfenced Verify
+    # "tests/conftest.py" is autofixable (has real file reference), unfenced Verify should block
+    spec = (
+        "Edit tests/conftest.py to add a new fixture.\n\n"
+        "## Verify\n"
+        "Manual verification text without code fence"
+    )
+
+    cfg = {
+        "validation": {
+            "require_absolute_paths": True,
+            "enforce_verify_fence": True
+        },
+        "language": "pt-BR"
+    }
+
+    result = sv.evaluate_spec_gates(spec, cfg, project_root)
+
+    # Must fail at gate (b) unfenced_verify, not pass at gate (a) autofix
+    assert result.ok is False
+    assert result.reason == "unfenced_verify"
+    # Autofix should have been applied to text, even though gate (b) blocked
+    assert "/Users/roberto/antigravity/burnless/tests/conftest.py" in result.text
+    # Autofix notice should be present in result
+    assert result.autofix_notice != ""

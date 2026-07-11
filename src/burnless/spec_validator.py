@@ -227,6 +227,8 @@ def evaluate_spec_gates(
     When ok=True and autofix was applied, autofix_notice is set.
     When ok=False, reason and message identify which gate failed.
     """
+    autofix_notice = ""
+
     # (a) Relative paths gate
     if not allow_relative_paths and cfg.get("validation", {}).get("require_absolute_paths", True):
         sv = validate_spec_paths(text)
@@ -235,11 +237,7 @@ def evaluate_spec_gates(
             if rewritten and validate_spec_paths(fixed_text).ok:
                 text = fixed_text
                 lang = cfg.get("language", "pt-BR")
-                return SpecGateResult(
-                    ok=True,
-                    text=text,
-                    autofix_notice=format_autofix_notice(rewritten, project_root, lang)
-                )
+                autofix_notice = format_autofix_notice(rewritten, project_root, lang)
             else:
                 lang = cfg.get("language", "pt-BR")
                 return SpecGateResult(
@@ -257,7 +255,8 @@ def evaluate_spec_gates(
             ok=False,
             text=text,
             reason="unfenced_verify",
-            message=format_verify_warning(lang)
+            message=format_verify_warning(lang),
+            autofix_notice=autofix_notice
         )
 
     # (c) Command substitution gate
@@ -268,7 +267,8 @@ def evaluate_spec_gates(
             ok=False,
             text=text,
             reason="verify_command_substitution",
-            message=format_command_substitution_rejection(_cmd_subst_offending, lang)
+            message=format_command_substitution_rejection(_cmd_subst_offending, lang),
+            autofix_notice=autofix_notice
         )
 
-    return SpecGateResult(ok=True, text=text)
+    return SpecGateResult(ok=True, text=text, autofix_notice=autofix_notice)
