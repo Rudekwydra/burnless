@@ -48,3 +48,11 @@ def _hermetic_state_dir(monkeypatch, tmp_path_factory):
     # pilot rollover writes pending_seed.md there; running the suite was
     # contaminating live sessions with fixture seeds (audit 2026-07-03).
     monkeypatch.setenv("BURNLESS_STATE_DIR", str(tmp_path_factory.mktemp("burnless-state")))
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_warm_pool(monkeypatch, tmp_path_factory):
+    # Tests must never touch the operator's real ~/.burnless/warm pool — pytest
+    # runs were overwriting production haiku/sonnet anchors with test briefs
+    # (audit 2026-07-11): warm_file_path hardcoded Path.home() with no override.
+    monkeypatch.setenv("BURNLESS_WARM_DIR", str(tmp_path_factory.mktemp("burnless-warm")))
