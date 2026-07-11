@@ -4,7 +4,7 @@ A multi-tier LLM orchestration layer with capsule-based session state, prefix-ca
 
 > **AI assistants and reviewers:** [`llms.txt`](llms.txt) has the technical briefing in compact form.
 
-> **Note on this project's history (2026-05-08).** Burnless was first published to PyPI on 2026-05-03 with documentation that overclaimed the project's novelty and savings. Specifically: an analogy to TCP/IP suggested architectural equivalence (it isn't); a "16× cheaper" figure was a personal-workload anecdote presented as a universal claim; and the assertion that prefix cache is shared across models was technically wrong — Anthropic's prefix cache is keyed per model, not shared. These claims were collaboratively written with Claude (visible in the `Co-Authored-By:` trailers in `git log`) under what I now recognize as RLHF-induced enthusiasm rather than calibrated assessment. Receipts: `git log --pretty=fuller` shows the inflation period (2026-05-03 to 2026-05-05) and the 2026-05-08 recalibration. This release (0.7.3) is the corrected version. History is left intact — no rewrites, no cover. The architecture below is one defensible implementation choice, not a foundational protocol breakthrough.
+> **Note on this project's history (2026-05-08).** Burnless was first published to PyPI on 2026-05-03 with documentation that overclaimed the project's novelty and savings. Specifically: an analogy to TCP/IP suggested architectural equivalence (it isn't); a "16× cheaper" figure was a personal-workload anecdote presented as a universal claim; and the assertion that prefix cache is shared across models was technically wrong — Anthropic's prefix cache is keyed per model, not shared. These claims were collaboratively written with Claude (visible in the `Co-Authored-By:` trailers in `git log`) under what I now recognize as RLHF-induced enthusiasm rather than calibrated assessment. Receipts: `git log --pretty=fuller` shows the inflation period (2026-05-03 to 2026-05-05) and the 2026-05-08 recalibration. The correction shipped in 0.7.3 and every release since keeps the same discipline. History is left intact — no rewrites, no cover. The architecture below is one defensible implementation choice, not a foundational protocol breakthrough.
 
 ## What it is
 
@@ -116,7 +116,7 @@ Manifests live at `~/.burnless/plugins/NAME.json`. Reference: [`PLUGIN_PROTOCOL.
 pip install burnless
 cd <your-project>
 burnless setup        # detects CLIs/keys, writes .burnless/config.yaml
-burnless              # interactive shell
+burnless do --tier silver "your first task"
 ```
 
 Python 3.10+. Tiers map to whatever CLIs you configure — mix providers freely.
@@ -214,7 +214,7 @@ Capsule format v2: `burnless:v2:<session_id>:<key_id>:<base64_ciphertext>`. The 
 ## CLI
 
 ```bash
-burnless                     # interactive shell (Maestro)
+burnless do --tier silver "<task>"   # delegate + run in one step
 burnless plan "<objective>"  # write plan to .burnless/maestro.md
 burnless delegate "<task>"   # create delegation, route to a tier
 burnless run d001            # execute (ephemeral progress panel by default)
@@ -234,7 +234,7 @@ Any chat-based assistant can use Burnless as its execution boundary:
 
 The assistant plans and delegates; Workers execute via your configured tiers. Tool access is governed by `allowedTools` in `.burnless/config.yaml`, not by the assistant's discretion.
 
-> **Honest caveat:** the protocol layer (capsules, delegation, plugins, audit) is stable. The interactive `burnless` chat shell still changes between minor versions. If something feels rough, that's where contributions are most welcome.
+> **Honest caveat:** the protocol layer (capsules, delegation, plugins, audit) is stable. The interactive chat shell was removed in v0.9 — Burnless is driven from your assistant or plain shell via `do`/`delegate`/`run`. Rough edges live mostly in the host-integration glue (hooks, slash commands); that's where contributions are most welcome.
 
 ### Engagement modes — `off` / `on`
 
@@ -297,10 +297,10 @@ What works today:
 - ✅ Heartbeat UI (live phase + idle state, doesn't pollute persisted summary)
 - ✅ Reference benchmark (Anthropic SDK, because their cache pricing is published and easy to reproduce)
 - ✅ PyPI release: `pip install burnless`
+- ✅ Maestro adapters: Anthropic / OpenAI / Gemini / OpenRouter (`maestro_adapter` in config)
 
 In progress:
 
-- ⚠️ Maestro adapters: OpenAI / Gemini / OpenRouter (in-process Maestro is Anthropic-only today; configured Worker CLIs work for any provider already)
 - ⚠️ Keepalive mode: idle-TTL-gap mitigation (>1h idle blows the cache)
 - ⚠️ Lazy context loading: Workers start pure, context loaded per-task
 - ⚠️ Privacy modes: `redact`, `audit`, `opaque`, `burnkey` are planned, not yet implemented
