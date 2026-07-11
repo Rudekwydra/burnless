@@ -17,6 +17,7 @@ from mcp.types import Tool, TextContent
 from . import paths, state as state_mod
 from . import delegations, routing, live_runner, config as config_mod, metrics as metrics_mod
 from . import audit_graph, retrieve as retrieve_mod, events as events_mod
+from . import spec_validator, report_kind
 from .agents import resolve_command
 
 
@@ -100,9 +101,13 @@ async def handle_delegate(text: str, tier: Optional[str] = None, project_root: O
 
     try:
         cfg = _get_config(burnless_root)
+        gate = spec_validator.evaluate_spec_gates(text, cfg, burnless_root.parent)
+        if not gate.ok:
+            return {"error": "spec_gate", "reason": gate.reason, "hint": gate.message}
+        text = gate.text
+
         state_path = burnless_root / "state.json"
         did = state_mod.alloc_delegation_id(state_path)
-        st = state_mod.load(state_path)
 
         routed_tier = tier
         matched_kw = None
@@ -125,7 +130,7 @@ async def handle_delegate(text: str, tier: Optional[str] = None, project_root: O
             goal="Task delegation",
             task=text,
             success="Deliver JSON output with status, files, validated, evidence",
-            kind_hint="execution",
+            kind_hint=report_kind.infer_kind_hint(text),
             agent_name=agent_name,
             tier=routed_tier,
             routed_by=routed_by,
@@ -133,8 +138,6 @@ async def handle_delegate(text: str, tier: Optional[str] = None, project_root: O
 
         deleg_path = burnless_root / "delegations" / f"{did}.md"
         delegations.write_delegation(deleg_path, md_content)
-
-        state_mod.save(state_path, st)
 
         return {
             "id": did,
