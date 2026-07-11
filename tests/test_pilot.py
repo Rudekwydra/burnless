@@ -262,7 +262,7 @@ pilot:
     class FakeProc:
         pid = 4321
 
-    def fake_run(argv, cwd=None, env=None, on_spawn=None):
+    def fake_run(argv, cwd=None, env=None, on_spawn=None, **kwargs):
         run_calls.append({"argv": list(argv), "env": dict(env or {})})
         if on_spawn is not None:
             on_spawn(FakeProc())
@@ -323,7 +323,7 @@ pilot:
     class FakeProc:
         pid = 5678
 
-    def fake_run(argv, cwd=None, env=None, on_spawn=None):
+    def fake_run(argv, cwd=None, env=None, on_spawn=None, **kwargs):
         run_calls.append({"argv": list(argv), "env": dict(env or {})})
         if on_spawn is not None:
             on_spawn(FakeProc())

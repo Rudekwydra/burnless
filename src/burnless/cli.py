@@ -48,6 +48,7 @@ from .pilot import summarize_session_log as pilot_summarize_session_log
 from .pilot import monitor_rollover_loop as pilot_monitor_rollover_loop
 from .pilot import resolve_host_adapter as pilot_resolve_host_adapter
 from .pilot import run_pilot as pilot_run
+from .pilot import hud as hud_mod
 from .prompt_context import (_with_runtime_context, _build_cacheable_runtime_prefix, _TELEGRAPHIC_OUTPUT_HINT, _QTP_F_FIXED_SUFFIX)
 
 from .delegation_parse import (
@@ -2643,6 +2644,8 @@ def _run_pilot_cycle(
         }
         if initial_input_bytes is not None:
             pilot_kwargs["input_bytes"] = initial_input_bytes
+        if str(pilot_cfg.get("hud", "title")) == "title":
+            pilot_kwargs["title_provider"] = lambda: hud_mod.hud_title(project_root)
         rc = pilot_run(argv, **pilot_kwargs)
     finally:
         if stop_event is not None:
