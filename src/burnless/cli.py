@@ -21,6 +21,7 @@ from . import paths as paths_mod
 from . import routing as routing_mod
 from . import agents as agents_mod
 from . import delegations as deleg_mod
+from . import pure_ask as pure_ask_mod
 from . import compression as compression_mod
 from . import lifetime as lifetime_mod
 from . import claude_integration
@@ -1294,6 +1295,38 @@ def cmd_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ask(args: argparse.Namespace) -> int:
+    root = paths_mod.require_root()
+    p = paths_mod.paths_for(root)
+    cfg = config_mod.load(p["config"])
+    prompt = args.text if args.text else sys.stdin.read()
+    if not prompt or not prompt.strip():
+        print("burnless ask: empty prompt", file=sys.stderr)
+        return 1
+    try:
+        rc, stdout, stderr = pure_ask_mod.run_ask(
+            args.tier,
+            prompt,
+            cfg,
+            system=args.system,
+            output_format=args.output_format,
+            timeout=args.timeout,
+            model=getattr(args, "model", None),
+            max_budget_usd=getattr(args, "max_budget_usd", None),
+        )
+    except ValueError as exc:
+        print(f"burnless ask: {exc}", file=sys.stderr)
+        return 1
+    except subprocess.TimeoutExpired:
+        print(f"burnless ask: timed out after {args.timeout}s", file=sys.stderr)
+        return 1
+    if rc != 0:
+        print(stderr, file=sys.stderr)
+        return rc
+    print(stdout.strip())
+    return 0
+
+
 def cmd_epoch(args: argparse.Namespace) -> int:
     import sys as _sys
     _explicit = getattr(args, "root", None)
@@ -2102,6 +2135,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--explain", action="store_true", help="show full scored route decision + escalation policy")
     sp.add_argument("--tier", choices=["diamond", "gold", "silver", "bronze"], help="test routing a requested-tier upgrade against the natural route")
     sp.set_defaults(func=cmd_route)
+
+    sp = sub.add_parser("ask", help="pure LLM completion — no tools, no CLAUDE.md, no agency (text in, text out). NOT do/delegate/run.")
+    sp.add_argument("text", nargs="?", default=None, help="prompt (reads stdin if omitted)")
+    sp.add_argument("--tier", choices=["diamond", "gold", "silver", "bronze"], default="silver", help="which tier's model to use")
+    sp.add_argument("--model", default=None, help="model string explicit (bypasses tier/config.yaml resolution, ex: claude-opus-4-8)")
+    sp.add_argument("--system", default=None, help="override the default pure-completion system prompt")
+    sp.add_argument("--output-format", choices=["text", "json"], default="text")
+    sp.add_argument("--timeout", type=int, default=120)
+    sp.add_argument("--max-budget-usd", type=float, default=None, help="hard per-call spend ceiling in USD (forwarded to claude -p)")
+    sp.set_defaults(func=cmd_ask)
 
     sp = sub.add_parser("setup", help="detect CLIs/keys and write a sensible config")
     sp.add_argument("--project", help="project name (default: current dir name)")
