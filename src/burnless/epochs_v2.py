@@ -312,6 +312,122 @@ def preserve_guard(prev_md: str, new_md: str, contract_ages: dict | None = None,
     return new_md
 
 
+def _exchange_mentions(nucleus: str, exchange: str) -> bool:
+    """Deterministic check: does the exchange plausibly reference this thread?
+
+    Transducer semantics: the rewriter may only change entries the current
+    exchange touches. A thread may evaporate ONLY if the exchange mentions it —
+    measured as >=50% of the nucleus' significant tokens (alnum, len>=4,
+    case-insensitive exact match) appearing in the exchange. Zero LLM calls.
+    """
+    if not exchange:
+        return False
+    nucleus_tokens = {t for t in re.findall(r"\w+", nucleus.lower()) if len(t) >= 4}
+    if not nucleus_tokens:
+        return False
+    exchange_tokens = {t for t in re.findall(r"\w+", exchange.lower()) if len(t) >= 4}
+    hits = len(nucleus_tokens & exchange_tokens)
+    return hits * 2 >= len(nucleus_tokens)
+
+
+def preserve_open_threads(prev_md: str, new_md: str, exchange: str = "") -> str:
+    """Prevent open-Thread evaporation during LLM rewrite (P10/4).
+
+    For EVERY thread in prev's 'Threads abertas' section:
+    - Extract nucleus (core text) by stripping trust-prefix and trailing tags
+    - If nucleus (exact substring) does NOT appear anywhere in new_md, the
+      thread evaporated. It is reinjected UNLESS the current exchange mentions
+      it (see _exchange_mentions) — a thread the exchange never touched cannot
+      be dropped; a thread the exchange discusses may be closed by the rewriter.
+    - Threads resolved into 'Decisões' or demoted to 'Recuperáveis' verbatim
+      still carry the nucleus, so those paths are never blocked either way.
+    - Ignore nuclei < 12 chars (avoid false positives on trivial lines)
+    - If new_md lacks '## Threads abertas' section, create it in canonical position (2nd)
+
+    Returns reconstructed doc with evaporated threads preserved.
+    """
+    prev_parsed = parse_living_v3(prev_md)
+    new_parsed = parse_living_v3(new_md)
+
+    prev_threads = prev_parsed.get('Threads abertas', [])
+    evaporated = []
+
+    for thread_line in prev_threads:
+        thread_line_clean = thread_line.lstrip('- ').strip()
+        if not thread_line_clean:
+            continue
+
+        nucleus = _TRUST_PREFIX_RE.sub('', thread_line_clean)
+        while True:
+            m = _TRAILING_TAG_RE.search(nucleus)
+            if not m:
+                break
+            nucleus = nucleus[:m.start()]
+        nucleus = nucleus.strip()
+
+        if len(nucleus) < 12:
+            continue
+
+        if nucleus not in new_md and not _exchange_mentions(nucleus, exchange):
+            evaporated.append(thread_line_clean)
+
+    if not evaporated:
+        return new_md
+
+    if '## Threads abertas' not in new_md:
+        new_md = _inject_missing_threads_section(new_md, evaporated)
+    else:
+        threads_section_marker = new_md.find('## Threads abertas')
+        if threads_section_marker != -1:
+            eol = new_md.find('\n', threads_section_marker)
+            if eol != -1:
+                insert_pos = eol + 1
+                next_section_pos = -1
+                for section in SECTIONS_V3:
+                    if section != 'Threads abertas':
+                        marker = new_md.find(f'## {section}', insert_pos)
+                        if marker != -1 and (next_section_pos == -1 or marker < next_section_pos):
+                            next_section_pos = marker
+
+                if next_section_pos == -1:
+                    for line in evaporated:
+                        new_md += f'- {line}\n'
+                else:
+                    evaporated_text = '\n'.join(f'- {line}' for line in evaporated) + '\n'
+                    new_md = new_md[:next_section_pos] + evaporated_text + new_md[next_section_pos:]
+
+    return new_md
+
+
+def _inject_missing_threads_section(new_md: str, threads: list[str]) -> str:
+    """Create '## Threads abertas' section in canonical position (2nd) with given threads."""
+    threads_section = '\n## Threads abertas\n'
+    for line in threads:
+        threads_section += f'- {line}\n'
+    threads_section += '\n'
+
+    foco_marker = new_md.find('## Foco atual')
+    if foco_marker == -1:
+        return new_md + threads_section
+
+    next_section_after_foco = -1
+    eol_foco = new_md.find('\n', foco_marker)
+    if eol_foco == -1:
+        return new_md + threads_section
+
+    for section in SECTIONS_V3:
+        if section != 'Foco atual':
+            marker = new_md.find(f'## {section}', eol_foco + 1)
+            if marker != -1:
+                next_section_after_foco = marker
+                break
+
+    if next_section_after_foco == -1:
+        return new_md + threads_section
+
+    return new_md[:next_section_after_foco] + threads_section + new_md[next_section_after_foco:]
+
+
 def enforce_budget(md: str, budget_tokens: int = 2500, contract_ages: dict | None = None, turn: int = 0, max_age: int = 15) -> str:
     estimated_tokens = len(md) // 4
     if estimated_tokens <= budget_tokens:
@@ -501,6 +617,7 @@ Sem pensamento/debate/markdown extra — apenas as 8 seções.
 - Deletion: o que sair por idade/irrelevância vira pointer em 'Recuperáveis' (dNNN + dica de comando), nunca é apagado cru — exceto Refs triviais.
 - Slot-routing: roteie cada fato pela SEMÂNTICA — tarefa ainda aberta → 'Threads abertas'; decisão fechada → 'Decisões'; comando/teste verificado → 'Última validação'. Não deixe tarefa aberta cair só em 'Decisões'.
 - Evidence-retrieval: 'Recuperáveis' guarda só dNNN + dica de comando + `chat:CURTO·tN`, nunca conteúdo cru.
+- Plano-futuro: intenção declarada e ainda não executada ("na volta faço X", "próximo passo Y", "fase N pendente") é Thread ABERTA — entregar o design/spec/commit de uma etapa NÃO fecha a thread da etapa seguinte. 'Foco atual' NUNCA vira "tudo completo" enquanto existir thread aberta; nesse caso 'Foco atual' aponta a próxima ação pendente.
 
 ## Regra VERBATIM (crítica)
 - Você é um TRANSDUTOR, não um redator. NUNCA reescreva, parafraseie, resuma ou traduza o texto de uma entrada existente.
@@ -739,6 +856,7 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
 
             ages = update_contract_ages(prev_ages, new_md, turn)
             new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)
+            new_md = preserve_open_threads(prev_md, new_md, exchange)
             if eff_version >= 3:
                 new_md = enforce_budget_v3(
                     new_md,

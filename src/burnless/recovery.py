@@ -1176,6 +1176,15 @@ def compact_pending(
                 "generation": snapshot_generation,
             }
 
+        from .epochs_v2 import preserve_open_threads
+        pending_text = "\n".join(
+            (r.get("user_text") or "") + "\n" + (r.get("assistant_text") or "")
+            for r in pending
+        )
+        candidate = preserve_open_threads(
+            checkpoint.get("living_md") or "", candidate, pending_text
+        )
+
         if not _refresh_compaction_lease(
             root_path,
             host=host,
