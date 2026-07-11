@@ -67,3 +67,19 @@ def test_run_once_uses_iso_cwd(tmp_path, monkeypatch):
 
     _agents._run_once(agent_cfg, "hello", cwd=tmp_path)
     assert captured_cwd.get("cwd") == "/tmp/iso_marker"
+
+
+def test_warm_pool_env_override(monkeypatch, tmp_path):
+    """BURNLESS_WARM_DIR must redirect the pool — hermetic-test guarantee."""
+    from burnless.warm_session import warm_file_path, list_warm_files
+    monkeypatch.setenv("BURNLESS_WARM_DIR", str(tmp_path))
+    p = warm_file_path("claude-fable-5")
+    assert str(p).startswith(str(tmp_path))
+    assert list_warm_files() == []
+
+
+def test_warm_pool_default_is_home(monkeypatch):
+    from pathlib import Path
+    from burnless.warm_session import warm_file_path
+    monkeypatch.delenv("BURNLESS_WARM_DIR", raising=False)
+    assert str(warm_file_path("claude-fable-5")).startswith(str(Path.home()))

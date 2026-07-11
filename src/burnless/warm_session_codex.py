@@ -35,6 +35,14 @@ ISO_CWD_ROOT_NAME = "iso-cwd-codex"  # ~/.burnless/iso-cwd-codex/<uuid>/
 DEFAULT_MODEL = config.DEFAULT_PROVIDER_MODELS["codex"]
 
 
+def _pool_dir() -> Path:
+    """Warm pool base dir. BURNLESS_WARM_DIR overrides $HOME for hermetic tests."""
+    override = os.environ.get("BURNLESS_WARM_DIR")
+    if override:
+        return Path(override) / PROVIDER
+    return Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER
+
+
 def warm_file_path(model: str, burnless_root: Path | None = None) -> Path:
     """Per-(provider, model) global pool location.
 
@@ -44,12 +52,12 @@ def warm_file_path(model: str, burnless_root: Path | None = None) -> Path:
     keep their own caches; no prune-by-drift.
     """
     safe_model = model.replace("/", "_").strip()
-    return Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER / f"{safe_model}.json"
+    return _pool_dir() / f"{safe_model}.json"
 
 
 def list_warm_files() -> list[Path]:
     """Return all existing warm session files for this provider."""
-    base = Path.home() / ".burnless" / WARM_SUBDIR / PROVIDER
+    base = _pool_dir()
     if not base.is_dir():
         return []
     return sorted(base.glob("*.json"))
