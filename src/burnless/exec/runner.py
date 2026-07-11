@@ -80,6 +80,9 @@ class RunOpts:
     # disk-patch-then-restore approach could leak the override permanently
     # on crash/SIGKILL, or race with a parallel run reading the same file).
     worker_overrides: dict | None = None
+    maestro: bool = False
+    no_maestro: bool = False
+    no_cache_worker: bool = False
 
 
 def _load_anthropic_key() -> str | None:
