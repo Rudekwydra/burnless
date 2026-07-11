@@ -838,7 +838,10 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         else:
             # v0.8: no envelope is fine. Status from exit code; body = last line of stdout.
             _status = "OK" if result["returncode"] == 0 else "ERR"
-            _stdout_lines = (result.get("stdout") or "").strip().splitlines()
+            _raw_stdout = result.get("stdout") or ""
+            if isinstance(_raw_stdout, bytes):
+                _raw_stdout = _raw_stdout.decode("utf-8", errors="replace")
+            _stdout_lines = _raw_stdout.strip().splitlines()
             _stdout_tail = _stdout_lines[-1] if _stdout_lines else ""
             _summary = (_stdout_tail[:200] or "Worker finished.").strip()
             _issue = "" if result["returncode"] == 0 else f"returncode={result['returncode']}"
@@ -1053,7 +1056,10 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                 else:
                     # v0.8: no envelope is fine. Status from exit code.
                     _r_status = "OK" if _r_rc == 0 else "ERR"
-                    _r_lines = (_retry_res.get("stdout") or "").strip().splitlines()
+                    _r_raw_stdout = _retry_res.get("stdout") or ""
+                    if isinstance(_r_raw_stdout, bytes):
+                        _r_raw_stdout = _r_raw_stdout.decode("utf-8", errors="replace")
+                    _r_lines = _r_raw_stdout.strip().splitlines()
                     _r_summary = ((_r_lines[-1] if _r_lines else "")[:200] or "Worker finished (retry).").strip()
                     _r_issue = "" if _r_rc == 0 else f"returncode={_r_rc}"
                 _r_sum = normalize_worker_envelope({
