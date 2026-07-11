@@ -165,7 +165,17 @@ def write_log(path: Path, run_result: dict) -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def _json_safe(obj):
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 def write_summary(path: Path, summary: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
+        json.dump(_json_safe(summary), f, indent=2, ensure_ascii=False)
