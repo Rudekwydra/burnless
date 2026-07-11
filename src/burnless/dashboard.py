@@ -13,7 +13,6 @@ def render_status(state: dict, m: dict) -> str:
     nxt = state.get("next") or "—"
     project = state.get("project") or "Project"
     bt = fmt_int(int(m.get("burnless_tokens", 0)))
-    avoided = m.get("token_burn_avoided_percent", 0)
     lines = [
         "Burnless active",
         "",
@@ -22,7 +21,6 @@ def render_status(state: dict, m: dict) -> str:
         f"Next:    {nxt}",
         "",
         f"{bt} burnless tokens",
-        f"Token Burn avoided: {avoided}%",
     ]
     return "\n".join(lines)
 

@@ -9,8 +9,14 @@ def _make_dirs(root):
 
 
 def test_missing_capsule_warns(tmp_path):
+    import os
+    import time
     _make_dirs(tmp_path)
     (tmp_path / ".burnless" / "delegations" / "d999.md").write_text("# Delegation d999")
+    (tmp_path / ".burnless" / "logs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".burnless" / "logs" / "d999.log").write_text("log")
+    old_time = time.time() - 2000
+    os.utime(tmp_path / ".burnless" / "logs" / "d999.log", (old_time, old_time))
     warns = check_run_integrity("d999", tmp_path)
     assert any("capsule" in w.lower() for w in warns), warns
     assert "d999" in scan_orphans(tmp_path)
