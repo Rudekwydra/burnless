@@ -693,85 +693,93 @@ def _epochs_version(root) -> int:
 
 def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], str | None] | None = None, *, version: int | None = None) -> Path:
     try:
+        from . import recovery as recovery_mod
         root = Path(root)
         lp = living_path(root, chat_id)
         sp = state_path(root, chat_id)
+        lock_path = sp.with_name(sp.name + ".lock")
 
-        prev_md = lp.read_text(encoding='utf-8') if lp.exists() else ""
+        with recovery_mod._exclusive_lock(lock_path):
+            prev_md = lp.read_text(encoding='utf-8') if lp.exists() else ""
 
-        if is_noop(prev_md, exchange):
+            if is_noop(prev_md, exchange):
+                lp.parent.mkdir(parents=True, exist_ok=True)
+                if not lp.exists():
+                    lp.write_text("", encoding='utf-8')
+                push_ring(root, chat_id, exchange)
+                return lp
+
+            prev_state = {}
+            if sp.exists():
+                try:
+                    prev_state = json.loads(sp.read_text(encoding='utf-8'))
+                except Exception:
+                    pass
+
+            turn = prev_state.get('turn', 0) + 1
+            prev_ages = prev_state.get('contract_ages', {})
+
+            if rewriter is None:
+                rewriter = living_rewriter(root)
+
+            eff_version = version if version is not None else _epochs_version(root)
+
+            if eff_version >= 3:
+                prompt = living_rewrite_prompt_v3(prev_md, exchange)
+            else:
+                prompt = living_rewrite_prompt(prev_md, exchange)
+            new_md = rewriter(prompt)
+
+            if not new_md or not new_md.strip():
+                lp.parent.mkdir(parents=True, exist_ok=True)
+                if not lp.exists():
+                    lp.write_text("", encoding='utf-8')
+                push_ring(root, chat_id, exchange)
+                return lp
+
+            ages = update_contract_ages(prev_ages, new_md, turn)
+            new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)
+            if eff_version >= 3:
+                new_md = enforce_budget_v3(
+                    new_md,
+                    contract_ages=ages,
+                    turn=turn,
+                    root=root,
+                    event_context={"chat_id": chat_id},
+                )
+            else:
+                new_md = enforce_budget(new_md, contract_ages=ages, turn=turn)
+            ages = update_contract_ages(ages, new_md, turn)
+
             lp.parent.mkdir(parents=True, exist_ok=True)
-            if not lp.exists():
-                lp.write_text("", encoding='utf-8')
-            push_ring(root, chat_id, exchange)
-            return lp
 
-        prev_state = {}
-        if sp.exists():
+            tmp = tempfile.NamedTemporaryFile(mode='w', dir=lp.parent, delete=False, encoding='utf-8')
             try:
-                prev_state = json.loads(sp.read_text(encoding='utf-8'))
+                tmp.write(new_md)
+                tmp.close()
+                os.replace(tmp.name, lp)
             except Exception:
-                pass
+                try:
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
+                raise
 
-        turn = prev_state.get('turn', 0) + 1
-        prev_ages = prev_state.get('contract_ages', {})
+            harvested = harvest_state(new_md)
+            harvested['turn'] = turn
+            harvested['contract_ages'] = ages
+            recovery_mod._atomic_json_write(sp, harvested)
 
-        if rewriter is None:
-            rewriter = living_rewriter(root)
-
-        eff_version = version if version is not None else _epochs_version(root)
-
-        if eff_version >= 3:
-            prompt = living_rewrite_prompt_v3(prev_md, exchange)
-        else:
-            prompt = living_rewrite_prompt(prev_md, exchange)
-        new_md = rewriter(prompt)
-
-        if not new_md or not new_md.strip():
-            lp.parent.mkdir(parents=True, exist_ok=True)
-            if not lp.exists():
-                lp.write_text("", encoding='utf-8')
             push_ring(root, chat_id, exchange)
+
             return lp
 
-        ages = update_contract_ages(prev_ages, new_md, turn)
-        new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)
-        if eff_version >= 3:
-            new_md = enforce_budget_v3(
-                new_md,
-                contract_ages=ages,
-                turn=turn,
-                root=root,
-                event_context={"chat_id": chat_id},
-            )
-        else:
-            new_md = enforce_budget(new_md, contract_ages=ages, turn=turn)
-        ages = update_contract_ages(ages, new_md, turn)
-
-        lp.parent.mkdir(parents=True, exist_ok=True)
-
-        tmp = tempfile.NamedTemporaryFile(mode='w', dir=lp.parent, delete=False, encoding='utf-8')
+    except Exception as exc:
         try:
-            tmp.write(new_md)
-            tmp.close()
-            os.replace(tmp.name, lp)
+            from . import recovery as recovery_mod
+            recovery_mod.record_hook_error(root, hook="apply_capture", host="claude", error=f"{type(exc).__name__}: {exc}")
         except Exception:
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                pass
-            raise
-
-        harvested = harvest_state(new_md)
-        harvested['turn'] = turn
-        harvested['contract_ages'] = ages
-        sp.write_text(json.dumps(harvested, ensure_ascii=False, indent=2), encoding='utf-8')
-
-        push_ring(root, chat_id, exchange)
-
-        return lp
-
-    except Exception:
+            pass
         root = Path(root)
         lp = living_path(root, chat_id)
         lp.parent.mkdir(parents=True, exist_ok=True)
