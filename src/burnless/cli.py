@@ -321,6 +321,9 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
         cold_cache=getattr(args, "cold_cache", False),
         verbose=getattr(args, "verbose", False),
         worker_overrides=getattr(args, "worker_overrides", None),
+        maestro=getattr(args, "maestro", False),
+        no_maestro=getattr(args, "no_maestro", False),
+        no_cache_worker=getattr(args, "no_cache_worker", False),
     ))
 
 
