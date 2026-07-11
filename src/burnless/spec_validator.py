@@ -8,6 +8,7 @@ so cmd_delegate can reject the spec before a worker is launched.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -196,3 +197,78 @@ def format_command_substitution_rejection(offending: list[str], lang: str = "pt-
         "   Use single-line greps, no command substitution. Move heavy logic into a .py\n"
         "   script invoked by a single Verify line (e.g. python3 script.py).\n"
     )
+
+
+@dataclasses.dataclass
+class SpecGateResult:
+    ok: bool
+    text: str
+    reason: str = ""
+    message: str = ""
+    autofix_notice: str = ""
+
+
+def evaluate_spec_gates(
+    text: str,
+    cfg: dict,
+    project_root,
+    *,
+    allow_relative_paths: bool = False,
+    allow_unfenced_verify: bool = False
+) -> SpecGateResult:
+    """Centralized spec-gate evaluation reproducing CLI sequence exactly.
+
+    Gates (in order):
+    1. Relative paths: validate, try autofix, fail if unfixable
+    2. Unfenced verify: block if ## Verify present but no fenced block
+    3. Command substitution: block if ## Verify has backtick or $(...)
+
+    Returns SpecGateResult with ok=True if all gates pass, False if blocked.
+    When ok=True and autofix was applied, autofix_notice is set.
+    When ok=False, reason and message identify which gate failed.
+    """
+    # (a) Relative paths gate
+    if not allow_relative_paths and cfg.get("validation", {}).get("require_absolute_paths", True):
+        sv = validate_spec_paths(text)
+        if not sv.ok:
+            fixed_text, rewritten = autofix_relative_paths(text, project_root)
+            if rewritten and validate_spec_paths(fixed_text).ok:
+                text = fixed_text
+                lang = cfg.get("language", "pt-BR")
+                return SpecGateResult(
+                    ok=True,
+                    text=text,
+                    autofix_notice=format_autofix_notice(rewritten, project_root, lang)
+                )
+            else:
+                lang = cfg.get("language", "pt-BR")
+                return SpecGateResult(
+                    ok=False,
+                    text=text,
+                    reason="relative_paths",
+                    message=format_rejection(sv, project_root, lang)
+                )
+
+    # (b) Unfenced verify gate
+    _enforce_fence = cfg.get("validation", {}).get("enforce_verify_fence", True)
+    if should_block_unfenced_verify(text, _enforce_fence, allow_unfenced_verify):
+        lang = cfg.get("language", "pt-BR")
+        return SpecGateResult(
+            ok=False,
+            text=text,
+            reason="unfenced_verify",
+            message=format_verify_warning(lang)
+        )
+
+    # (c) Command substitution gate
+    _cmd_subst_offending = find_verify_command_substitution(text)
+    if _cmd_subst_offending:
+        lang = cfg.get("language", "pt-BR")
+        return SpecGateResult(
+            ok=False,
+            text=text,
+            reason="verify_command_substitution",
+            message=format_command_substitution_rejection(_cmd_subst_offending, lang)
+        )
+
+    return SpecGateResult(ok=True, text=text)

@@ -183,40 +183,28 @@ def cmd_delegate(args: argparse.Namespace, cfg_override: dict | None = None) -> 
     metrics = metrics_mod.load(p["metrics"])
     text = args.text
     tier_override = args.tier
-    allow_rel = getattr(args, "allow_relative_paths", False)
-    require_abs = cfg.get("validation", {}).get("require_absolute_paths", True)
-    if not allow_rel and require_abs:
-        from . import spec_validator
-        sv = spec_validator.validate_spec_paths(text)
-        if not sv.ok:
-            lang = cfg.get("language", "pt-BR")
-            fixed_text, rewritten = spec_validator.autofix_relative_paths(text, root.parent)
-            if rewritten and spec_validator.validate_spec_paths(fixed_text).ok:
-                text = fixed_text
-                print(spec_validator.format_autofix_notice(rewritten, root.parent, lang), file=sys.stderr)
-            else:
-                print(spec_validator.format_rejection(sv, root.parent, lang), file=sys.stderr)
-                return 6
 
     from . import spec_validator as _spec_validator
     if _spec_validator.uses_deprecated_validation_heading(text):
         print(_spec_validator.format_validation_alias_warning(cfg.get("language", "pt-BR")), file=sys.stderr)
     if _spec_validator.verify_block_is_silent_noop(text):
         print(_spec_validator.format_verify_warning(cfg.get("language", "pt-BR")), file=sys.stderr)
-        _enforce_fence = cfg.get("validation", {}).get("enforce_verify_fence", True)
-        _allow_unfenced = getattr(args, "allow_unfenced_verify", False)
-        if _spec_validator.should_block_unfenced_verify(text, _enforce_fence, _allow_unfenced):
-            return 6
 
-    _cmd_subst_offending = _spec_validator.find_verify_command_substitution(text)
-    if _cmd_subst_offending:
-        print(
-            _spec_validator.format_command_substitution_rejection(
-                _cmd_subst_offending, cfg.get("language", "pt-BR")
-            ),
-            file=sys.stderr,
-        )
+    allow_rel = getattr(args, "allow_relative_paths", False)
+    allow_unfenced = getattr(args, "allow_unfenced_verify", False)
+    gate = _spec_validator.evaluate_spec_gates(
+        text,
+        cfg,
+        root.parent,
+        allow_relative_paths=allow_rel,
+        allow_unfenced_verify=allow_unfenced
+    )
+    if gate.autofix_notice:
+        print(gate.autofix_notice, file=sys.stderr)
+    if not gate.ok:
+        print(gate.message, file=sys.stderr)
         return 6
+    text = gate.text
 
     is_blocked, natural_tier, matched_kw, policy_source = _hardcore_blocked(cfg, text, tier_override, args)
     if is_blocked:
