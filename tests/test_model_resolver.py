@@ -77,3 +77,15 @@ def test_resolve_fallback_model_none():
     assert resolve_fallback_model("gold") is None
     cfg = {"agents": {"gold": {}}}
     assert resolve_fallback_model("gold", cfg) is None
+
+
+def test_normalize_model_fable_alias():
+    """fable short alias must map to the full model id — otherwise the warm
+    pool splits the diamond cache across two anchor files (one per spelling)."""
+    from burnless.config import normalize_model
+    assert normalize_model("fable") == "claude-fable-5"
+
+
+def test_warm_file_path_fable_aliases_converge():
+    from burnless.warm_session import warm_file_path
+    assert warm_file_path("fable") == warm_file_path("claude-fable-5")
