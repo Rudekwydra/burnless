@@ -8,7 +8,9 @@ A multi-tier LLM orchestration layer with capsule-based session state, prefix-ca
 
 ## What it is
 
-Burnless is a small Python framework that sits between your AI assistant (or your own code) and the model providers. It does three concrete things:
+Burnless is a **protocol specification with a reference implementation in Python**. The contracts — worker envelope JSON, capsule format, tier semantics, audit gates, plugin hooks — are written down in [`PROTOCOL.md`](PROTOCOL.md) and are independent of this codebase; the `burnless` CLI is one implementation of them. (Protocol in the LSP sense — a specified interface others can implement — not a claim of TCP/IP-scale foundations; see the note above.) A second independent implementation and a conformance suite are the v1.0 bar, not a shipped fact.
+
+The reference implementation sits between your AI assistant (or your own code) and the model providers. It does three concrete things:
 
 1. **Routes tasks to a model tier** (`gold` / `silver` / `bronze`). Tiers are commands, not hardcoded models — any provider via any CLI. They start from a shipped default and are changed per-chat or globally via `burnless menu` / `burnless models set` (projects don't carry their own tier map).
 2. **Stores session state as compact capsules on disk** (`.burnless/`) instead of replaying the full transcript on every turn, and keeps the system-prompt prefix byte-identical so the provider's prompt cache stays warm.
