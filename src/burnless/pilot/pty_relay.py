@@ -10,8 +10,9 @@ import sys
 import termios
 import struct
 import fcntl
+import time
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 def _set_raw(fd: int):
@@ -33,6 +34,8 @@ def run_pilot(
     capture: bool = False,
     input_bytes: bytes | None = None,
     on_spawn=None,
+    title_provider: Callable[[], str] | None = None,
+    title_interval_s: float = 5.0,
 ) -> int | tuple[int, str]:
     if capture:
         proc = subprocess.run(argv, cwd=cwd, env=env, input=input_bytes, capture_output=True)
@@ -64,6 +67,18 @@ def run_pilot(
             except Exception:
                 pass
 
+        last_title_emit = time.monotonic()
+        if title_provider is not None and not os.isatty(stdout_fd):
+            title_provider = None  # never leak OSC bytes into piped output
+        if title_provider is not None:
+            try:
+                from . import hud as hud_mod
+                title_bytes = hud_mod.osc_title(title_provider())
+                with contextlib.suppress(Exception):
+                    os.write(stdout_fd, title_bytes)
+            except Exception:
+                pass
+
         def _forward_winch(*_args):
             with contextlib.suppress(Exception):
                 rows_cols = struct.pack("hhhh", 0, 0, 0, 0)
@@ -82,6 +97,19 @@ def run_pilot(
             if os.isatty(stdin_fd):
                 rlist.append(stdin_fd)
             ready, _, _ = select.select(rlist, [], [], 0.1)
+
+            if title_provider is not None:
+                now = time.monotonic()
+                if now - last_title_emit >= title_interval_s:
+                    try:
+                        from . import hud as hud_mod
+                        title_bytes = hud_mod.osc_title(title_provider())
+                        with contextlib.suppress(Exception):
+                            os.write(stdout_fd, title_bytes)
+                    except Exception:
+                        title_provider = None
+                    last_title_emit = now
+
             if stdin_fd in ready:
                 try:
                     data = os.read(stdin_fd, 4096)
