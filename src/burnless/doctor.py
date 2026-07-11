@@ -20,6 +20,7 @@ re-collects every check so the returned list + summary reflect the fixed state.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import stat
 import subprocess
@@ -38,6 +39,7 @@ _BAND_NAMES = {
     "E": "Chains",
     "F": "Ambiente",
     "G": "Jobs Agendados",
+    "H": "Delegação",
 }
 
 # Safe remediation order. mkdir/copy before wiring (hooks point at the copied
@@ -88,6 +90,7 @@ def _collect(*, home: Path, cwd: Path | None) -> list[Check]:
     _check_e(checks, cwd=cwd)
     _check_f(checks)
     _check_g(checks, cwd=cwd)
+    _check_h(checks, home=home)
     return checks
 
 
@@ -475,7 +478,7 @@ def _check_d(checks: list[Check]) -> None:
 
     # D2: mcp_server --check (subprocess, timeout 5s, fail-open to WARN)
     def _fix_mcp() -> None:  # fail-open registration
-        subprocess.run(["claude", "mcp", "add", "burnless"],
+        subprocess.run(["claude", "mcp", "add", "burnless", "--", sys.executable, "-m", "burnless.mcp_server"],
                        capture_output=True, text=True)
 
     try:
@@ -652,6 +655,112 @@ def _check_g(checks: list[Check], cwd: Path | None = None) -> None:
         except Exception as e:
             checks.append(Check(f"G{i}", "G", "WARN",
                                 f"scheduled_jobs[{i}] erro: {e}"))
+
+
+# ── Band H: Delegação (subsistema de delegação/hook-guard) ─────────────────────
+
+def _check_h(checks: list[Check], home: Path | None = None) -> None:
+    if home is None:
+        home = Path.home()
+
+    # H1: jq present if delegation_filter wired
+    settings_path = home / ".claude" / "settings.json"
+    filter_wired = False
+    try:
+        if settings_path.exists():
+            settings_text = settings_path.read_text(encoding="utf-8")
+            filter_wired = "delegation_filter.sh" in settings_text
+    except Exception:
+        checks.append(Check("H1", "H", "WARN",
+                            "settings.json unreadable — skipped",
+                            "check ~/.claude/settings.json permissions"))
+        filter_wired = False
+
+    if filter_wired:
+        jq_path = shutil.which("jq")
+        if jq_path:
+            checks.append(Check("H1", "H", "PASS", f"jq found: {jq_path} (delegation_filter wired)"))
+        else:
+            checks.append(Check("H1", "H", "FAIL",
+                                "delegation_filter.sh wired but jq not in PATH",
+                                "brew install jq"))
+    else:
+        checks.append(Check("H1", "H", "PASS", "delegation_filter not wired — jq not required"))
+
+    # H2: hook scripts exist and are executable
+    def _expand_path_with_home(path_str: str, home_dir: Path) -> Path:
+        """Expand ~ in path_str using provided home_dir, not the system HOME."""
+        if path_str.startswith("~"):
+            return home_dir / path_str[2:] if len(path_str) > 1 else home_dir
+        return Path(path_str)
+
+    hook_scripts: list[Path] = []
+    try:
+        if settings_path.exists():
+            import json as json_mod
+            settings = json_mod.loads(settings_path.read_text(encoding="utf-8"))
+            hooks = settings.get("hooks", {})
+            for _hook_name, hook_list in hooks.items():
+                if isinstance(hook_list, list):
+                    for hook_config in hook_list:
+                        if isinstance(hook_config, dict):
+                            hook_cmds = hook_config.get("hooks", [])
+                            if isinstance(hook_cmds, list):
+                                for cmd in hook_cmds:
+                                    if isinstance(cmd, dict):
+                                        cmd_str = cmd.get("command", "")
+                                        for part in cmd_str.split():
+                                            if part.endswith(".sh"):
+                                                p = _expand_path_with_home(part, home)
+                                                if p.is_absolute():
+                                                    hook_scripts.append(p)
+    except Exception as e:
+        checks.append(Check("H2", "H", "WARN", f"error scanning hooks: {e}"))
+        hook_scripts = []
+
+    if hook_scripts:
+        missing = []
+        for script in hook_scripts:
+            if not script.exists():
+                missing.append(script)
+
+        if missing:
+            names = ", ".join(str(p) for p in missing[:2])
+            more = f" (+{len(missing) - 2} more)" if len(missing) > 2 else ""
+            checks.append(Check("H2", "H", "FAIL",
+                                f"hook scripts missing: {names}{more}",
+                                "create the missing scripts or fix settings.json"))
+        else:
+            checks.append(Check("H2", "H", "PASS", f"{len(hook_scripts)} hook script(s) exist"))
+    else:
+        checks.append(Check("H2", "H", "PASS", "no hook scripts configured"))
+
+    # H3: global metrics directories writable
+    try:
+        dirs_to_check = [
+            home / ".burnless",
+            home / ".burnless" / "state",
+        ]
+        unwritable = []
+        for d in dirs_to_check:
+            if d.exists():
+                if not os.access(d, os.W_OK):
+                    unwritable.append(d)
+            else:
+                parent = d.parent
+                if parent.exists() and not os.access(parent, os.W_OK):
+                    unwritable.append(d)
+
+        if unwritable:
+            names = ", ".join(str(p) for p in unwritable[:2])
+            more = f" (+{len(unwritable) - 2} more)" if len(unwritable) > 2 else ""
+            checks.append(Check("H3", "H", "WARN",
+                                f"metrics dirs not writable: {names}{more}",
+                                "check directory permissions (telemetry will fail silently)"))
+        else:
+            checks.append(Check("H3", "H", "PASS", "global metrics directories writable"))
+    except Exception as e:
+        checks.append(Check("H3", "H", "WARN", f"error checking metrics dirs: {e}"))
 
 
 # ── Renderers ─────────────────────────────────────────────────────────────────
