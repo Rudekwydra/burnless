@@ -190,6 +190,27 @@ def render_footer_v2(metrics: TurnMetrics, *, did: str, tier: str, worker_model:
     )
 
 
+def render_praise(metrics: TurnMetrics, threshold: float) -> str:
+    """Metric-gated praise line. Returns "" unless the compression ratio crosses threshold.
+
+    Fires rarely by design: only when original/compressed >= threshold (e.g. 1000).
+    The sentence always carries the measured number — praise anchored in fact.
+    """
+    if not threshold or threshold <= 0:
+        return ""
+    if metrics.compressed_tokens <= 0 or metrics.original_tokens <= 0:
+        return ""
+    ratio = metrics.original_tokens / metrics.compressed_tokens
+    if ratio < threshold:
+        return ""
+    orig_fmt = format_tokens(metrics.original_tokens)
+    comp_fmt = format_tokens(metrics.compressed_tokens)
+    return (
+        f"🏆 {ratio:.0f}× — {orig_fmt} tok brutos viraram {comp_fmt} de contexto. "
+        f"Spec apertada pagou."
+    )
+
+
 def log_turn_metrics(metrics: TurnMetrics, burnless_root: Path | None = None) -> None:
     """Append turn metrics to ~/.burnless/turns.jsonl."""
 

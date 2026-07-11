@@ -146,6 +146,9 @@ DEFAULT_CONFIG: dict = {
         # fallback instead of a generic 300s value that overrides per-tier defaults.
         # Users can still override explicitly via display.stale_timeout_seconds or
         # display.tier_stale_timeout_seconds.<tier> in their config.yaml.
+        # praise_threshold intentionally absent from DEFAULT_CONFIG (feature OFF).
+        # Set display.praise_threshold (e.g. 1000) to print a rare praise line in the
+        # savings footer when compression ratio crosses it. Number always shown.
     },
     "retry": {
         "max_attempts": 1,        # automatic retries before escalating to maestro

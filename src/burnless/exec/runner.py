@@ -1259,6 +1259,13 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                     metrics_obj, did=did, tier=tier, worker_model=worker_model
                 )
                 print(footer_text)
+                praise_threshold = cfg.get("display", {}).get("praise_threshold")
+                if praise_threshold:
+                    praise_text = savings_footer_mod.render_praise(
+                        metrics_obj, float(praise_threshold)
+                    )
+                    if praise_text:
+                        print(praise_text)
                 savings_footer_mod.log_turn_metrics(metrics_obj, burnless_root=root)
             except Exception as e:
                 if verbose:

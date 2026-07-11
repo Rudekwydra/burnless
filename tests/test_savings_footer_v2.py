@@ -4,6 +4,7 @@ import pytest
 from burnless.savings_footer import (
     pricing_family_for_model,
     render_footer_v2,
+    render_praise,
     TurnMetrics,
 )
 
@@ -164,3 +165,33 @@ class TestRenderFooterV2ZeroCompressed:
         assert "1k" in output
         assert "0 no contexto" in output
         assert "×" not in output, "Should not have ratio when compressed=0"
+
+
+class TestRenderPraise:
+    """Metric-gated praise: fires only above threshold, always carries the number."""
+
+    def _metrics(self, original, compressed):
+        return TurnMetrics(
+            turn_num=1,
+            original_tokens=original,
+            compressed_tokens=compressed,
+            saved_tokens=max(0, original - compressed),
+            saved_pct=0.0,
+            real_usd=0.0,
+            burnless_usd=0.0,
+            saved_usd=0.0,
+        )
+
+    def test_below_threshold_is_silent(self):
+        assert render_praise(self._metrics(500, 100), 1000) == ""
+
+    def test_above_threshold_fires_with_number(self):
+        out = render_praise(self._metrics(130000, 100), 1000)
+        assert "1300" in out
+        assert "🏆" in out
+
+    def test_zero_compressed_is_silent(self):
+        assert render_praise(self._metrics(130000, 0), 1000) == ""
+
+    def test_zero_threshold_is_silent(self):
+        assert render_praise(self._metrics(130000, 100), 0) == ""
