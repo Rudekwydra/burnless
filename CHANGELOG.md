@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-07-11
+
+First PyPI release of the v0.9 line (PyPI was at 0.7.4). Highlights since 0.8.0: v1-scope hardening (CLI-driven usage; interactive chat shell removed), single faithful compression mode, rolling memory (epoch hooks, `/clear`-survivable context), engagement modes `off`/`on`, maestro adapters for OpenAI/Gemini/OpenRouter, warm pool with hermetic test isolation, `## Verify` fail-closed gate. Suite: 1222 tests green.
+
 ### Added
 
 - **`burnless epoch export` + published `burnless-epoch-export/v1` contract.**
