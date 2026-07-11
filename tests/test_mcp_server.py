@@ -127,10 +127,13 @@ async def test_run_delegation_not_found(mock_burnless_project: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_sync(mock_burnless_project: Path) -> None:
+async def test_run_sync(monkeypatch, mock_burnless_project: Path) -> None:
     deleg_result = await handle_delegate(text="implementa X", project_root=str(mock_burnless_project.parent))
     assert "id" in deleg_result
     deleg_id = deleg_result["id"]
+
+    # Never spawn a real worker in the suite: stub the execution, keep the flow.
+    monkeypatch.setattr("burnless.cli.execute_delegation", lambda opts, root=None: 0)
 
     result = await handle_run(id=deleg_id, background=False, project_root=str(mock_burnless_project.parent))
     assert "error" not in result or result.get("error") in ["worker_failed", "delegation_not_found"]
