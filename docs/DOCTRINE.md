@@ -205,7 +205,7 @@ Haiku and local Gemma workers emit tool-call markup (`<antml>...</<tool>`) insid
 ---
 
 ### Rule 5: Output schema explicit (JSON with example + declared fields) [MENTAL ONLY — not enforced in code]
-Worker output that is empty or has declared fields set to empty arrays/null passes as `OK` even when it should fail. The schema-verify gate (d667, 2026-06-13) detects this false-OK and demotes the delegation to PART.
+Worker output that is empty or has declared fields set to empty arrays/null passes as `OK` even when it should fail. No code gate detects this false-OK — the spec author must encode the schema assertion inside `## Verify`.
 
 ✅ Correct:
 ```
@@ -233,9 +233,9 @@ Output: JSON with bugs.
 ## Verify
 test -f file.py
 ```
-→ Worker returns `{"bugs": []}` or `{"bugs": null}` → JSON is valid, but schema gate catches it → PART.
+→ Worker returns `{"bugs": []}` or `{"bugs": null}` → JSON is valid and passes as OK — nothing catches this unless `## Verify` asserts the fields.
 
-**Pre-flight check:** Spec must include example JSON with non-empty arrays/objects. Gate asserts declared fields are populated.
+**Author check:** spec must include example JSON with non-empty arrays/objects, and `## Verify` must assert the declared fields are populated.
 
 ---
 
@@ -248,11 +248,9 @@ tier_model_overrides:
   diamond: anthropic:opus  # interim, until Fable available
 ```
 
-Then, pre-flight runs `tier_health.py` → 1-token probe on each tier → if tier fails, `[BLOCK]` and suggest alternate tier.
-
 ❌ Wrong: Diamond tier unavailable → silently fall back to gemma-local → worker never sees external file paths → OOM or timeout.
 
-**Pre-flight check:** Health probe module; if tier unavailable, return `False` and block dispatch (not silent fallback).
+**Author check:** confirm the tier's provider/model is reachable (config + `burnless status`/provider stats) before dispatch — there is no automatic health probe; do not rely on silent fallback.
 
 ---
 
@@ -265,7 +263,7 @@ When you write a spec for `burnless do`, run this checklist:
 3. **Absolute paths**: Does every path start with `/`? (Project root = `/Users/roberto/antigravity/...`)
 4. **Tier + file size**: Is a large file edit assigned to silver/gold, not bronze?
 5. **Output schema**: Does the spec give an example JSON with non-empty declared fields?
-6. **Tier health**: Is the requested tier available (checked via health probe)?
+6. **Tier health**: Is the requested tier available? (check manually — config + provider status)
 
 If all six pass → `burnless do --tier T "..."`  
 If any fails → re-spec or reword until all six pass.
