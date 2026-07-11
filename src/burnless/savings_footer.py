@@ -16,7 +16,36 @@ try:
 except ImportError:
     tiktoken = None
 
-from .pricing import rate as P
+from .pricing import rate as P, MODEL_PRICES
+
+
+def pricing_family_for_model(model_name: str) -> str:
+    """Map model name to pricing family.
+
+    Handles claude-*, gpt-*, hf.co/*, ollama, gemma, qwen, llama, etc.
+    Returns one of: haiku, sonnet, opus, fable, gemma.
+    Falls back to sonnet if family not in MODEL_PRICES.
+    """
+    if not model_name:
+    	return "sonnet"
+
+    m = model_name.lower()
+
+    # Direct family names
+    for family in ("haiku", "sonnet", "opus", "fable"):
+    	if family in m:
+    		return family if family in MODEL_PRICES else "sonnet"
+
+    # Local/open-source inference: hf.co/, ollama, gemma, qwen, llama
+    if any(prefix in m for prefix in ("hf.co/", "ollama", "gemma", "qwen", "llama")):
+    	return "gemma"  # Local, $0 cost
+
+    # gpt / codex fallback to sonnet pricing
+    if "gpt" in m or "codex" in m:
+    	return "gpt" if "gpt" in MODEL_PRICES else "sonnet"
+
+    # Unknown: default to sonnet
+    return "sonnet"
 
 
 @dataclass
@@ -105,14 +134,16 @@ def metrics_from_savings(savings: dict, model: str, turn_num: int) -> "TurnMetri
     )
 
 
+def format_tokens(count: int) -> str:
+    """Format token count: 1000+ → Xk, else literal."""
+    if count >= 1000:
+        return f"{count // 1000}k"
+    else:
+        return str(count)
+
+
 def render_footer(metrics: TurnMetrics) -> str:
     """Render single-line footer: 'Real: 50k tokens ($2.50) | Burnless: 12k tokens ($0.60) | Saved: 38k (76%)'"""
-    def format_tokens(count: int) -> str:
-        if count >= 1000:
-            return f"{count // 1000}k"
-        else:
-            return str(count)
-
     real_tokens_str = format_tokens(metrics.original_tokens)
     burnless_tokens_str = format_tokens(metrics.compressed_tokens)
     saved_tokens_str = format_tokens(metrics.saved_tokens)
@@ -121,6 +152,41 @@ def render_footer(metrics: TurnMetrics) -> str:
         f"Real: {real_tokens_str} tokens (${metrics.real_usd:.3f}) | "
         f"Burnless: {burnless_tokens_str} tokens (${metrics.burnless_usd:.3f}) | "
         f"Saved: {saved_tokens_str} ({metrics.saved_pct:.0f}%)"
+    )
+
+
+def render_footer_v2(metrics: TurnMetrics, *, did: str, tier: str, worker_model: str) -> str:
+    """Render honest footer: worker tokens → context tokens, input avoided, worker family & cost.
+
+    Example: ⚡ d123 silver·haiku · worker 252k tok brutos → 254 no contexto (992×) · input evitado est. $0.76
+    Local worker: · input evitado worker local $0
+    """
+    family = pricing_family_for_model(worker_model)
+    rate_in = P(family, "input")
+
+    orig_fmt = format_tokens(metrics.original_tokens)
+    comp_fmt = format_tokens(metrics.compressed_tokens)
+
+    # Ratio: original / compressed, rounded to integer
+    if metrics.compressed_tokens > 0:
+        ratio = metrics.original_tokens / metrics.compressed_tokens
+        ratio_fmt = f"({ratio:.0f}×)"
+    else:
+        ratio_fmt = ""
+
+    # Cost: original_tokens × input rate of worker's family
+    avoided_cost = metrics.original_tokens * rate_in
+
+    # Format cost: "est. $X.XX" for pricing families, "worker local $0" for gemma
+    if family == "gemma":
+        cost_part = "input evitado worker local $0"
+    else:
+        cost_part = f"input evitado est. ${avoided_cost:.2f}"
+
+    return (
+        f"⚡ {did} {tier}·{family} · "
+        f"worker {orig_fmt} tok brutos → {comp_fmt} no contexto {ratio_fmt} · "
+        f"{cost_part}"
     )
 
 

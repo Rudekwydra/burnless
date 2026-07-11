@@ -1249,14 +1249,15 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         if cfg.get("display", {}).get("display_savings_footer", False):
             try:
                 turn_num = int(state.get("turn_counter", 1) or 1)
-                # Map tier to pricing family (e.g., gold → opus, silver → sonnet, bronze → haiku)
-                tier_to_family = {"gold": "opus", "silver": "sonnet", "bronze": "haiku"}
-                pricing_model = tier_to_family.get(tier, "opus")
+                # Get worker model from tier config (e.g., "haiku", "gpt-5.5", "hf.co/unsloth/...")
+                worker_model = agent_cfg.get("name", "opus")
                 metrics_obj = savings_footer_mod.metrics_from_savings(
-                    savings, pricing_model, turn_num
+                    savings, worker_model, turn_num
                 )
-                footer_text = savings_footer_mod.render_footer(metrics_obj)
-                print(f"⚡ {footer_text}")
+                footer_text = savings_footer_mod.render_footer_v2(
+                    metrics_obj, did=did, tier=tier, worker_model=worker_model
+                )
+                print(footer_text)
                 savings_footer_mod.log_turn_metrics(metrics_obj, burnless_root=root)
             except Exception as e:
                 if verbose:
