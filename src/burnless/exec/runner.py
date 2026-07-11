@@ -1180,14 +1180,15 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
 
     # State carries only the capsule pointer + the next step from the capsule.
     # Raw logs and the agent's verbose stdout never reach state.json.
-    state["last_delegation"] = did
-    state["last_capsule"] = did
-    state["last_capsule_mode"] = "faithful"
-    state["next"] = capsule.next or None
-    # Increment turn counter for savings footer tracking
-    state["turn_counter"] = int(state.get("turn_counter", 0) or 0) + 1
+    def _persist_state(st: dict) -> None:
+        st["last_delegation"] = did
+        st["last_capsule"] = did
+        st["last_capsule_mode"] = "faithful"
+        st["next"] = capsule.next or None
+        st["turn_counter"] = int(st.get("turn_counter", 0) or 0) + 1
+
     try:
-        state_mod.save_locked(p["state"], state)
+        state = state_mod.update_locked(p["state"], _persist_state)
     except RuntimeError as e:
         print(f"[burnless] ERR state persist failed for {did}: {e}", file=sys.stderr)
     _emit_audit_record(root.parent, did, summary, capsule_path, log_path, cfg)
