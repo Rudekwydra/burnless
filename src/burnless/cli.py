@@ -1397,9 +1397,9 @@ def cmd_epoch(args: argparse.Namespace) -> int:
                 break
             level += 1
         if getattr(args, "emit_chain", False):
-            # Newest-first: seed.md alimenta o carry-forward, truncado pelo topo
-            # no clear-resume. Topo = ultimo checkpoint vivo (ler novo -> velho).
-            print("> ordem: mais NOVO primeiro (topo = ultimo checkpoint vivo)\n")
+            # Newest-first: seed.md feeds the carry-forward, truncated at top on clear-resume.
+            # Top = latest live checkpoint (read new -> old).
+            print("> order: newest first (top = latest live checkpoint)\n")
             for f in reversed(epochs_mod.active_chain(root_path, chat_id)):
                 print(f"# {f.name}\n")
                 print(f.read_text(encoding='utf-8'))
@@ -1562,9 +1562,9 @@ def cmd_epoch(args: argparse.Namespace) -> int:
                 cwd=getattr(args, "cwd", None),
             )
             if claimed is None:
-                # fresh_inherit: claim_handoff já chamou inherit_checkpoint
-                # internamente (nunca deixa a janela nova vazia). Continua o
-                # fluxo normal com o novo checkpoint recém-herdado.
+                # fresh_inherit: claim_handoff already called inherit_checkpoint
+                # internally (never leaves the new window empty). Continue normal
+                # flow with the newly inherited checkpoint.
                 host_session_id = new_session_id
             else:
                 host_session_id = str(claimed.get("host_session_id") or host_session_id)
@@ -1594,7 +1594,7 @@ def cmd_epoch(args: argparse.Namespace) -> int:
             print("")
             return 0
         try:
-            # Memoria eterna: bootstrap the new session's checkpoint from the
+            # Eternal memory: bootstrap the new session's checkpoint from the
             # one just served, so compaction evolves the living doc across
             # rollovers instead of restarting it. Idempotent; never blocks
             # the restore output.

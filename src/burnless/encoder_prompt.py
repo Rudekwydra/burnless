@@ -1,5 +1,5 @@
 """Encoder/Decoder Haiku system prompt — injected via UserPromptSubmit hook
-when 3-layer pipeline is active. Camada 1 (Haiku no IDE) é stateless por design:
+when 3-layer pipeline is active. Layer 1 (Haiku in the IDE) is stateless by design:
 ignore history, each turn fresh."""
 
 ENCODER_DECODER_SYSTEM_PROMPT = """[BURNLESS PIPELINE ACTIVE — Haiku encoder/decoder role]

@@ -710,8 +710,8 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
             return parts, "", None  # structural cold — silent (gemini/ollama)
         _ws = importlib.import_module(_cmode.warm_module)
 
-        # Defesa contra provider mismatch: validar que o módulo importado é do provider correto.
-        # Se PROVIDER constante não bate, cair para COLD silenciosamente.
+        # Defense against provider mismatch: validate that the imported module is for the correct provider.
+        # If PROVIDER constant does not match, fall back to COLD silently.
         _ws_provider = getattr(_ws, "PROVIDER", None)
         if _ws_provider is not None and _ws_provider != provider:
             return parts, "", None
@@ -723,14 +723,14 @@ def _inject_warm_fork_args(parts: list[str], cwd: Path | None) -> tuple[list[str
                 _ws.init(burnless_root, model=model)
                 extra = fn(burnless_root, model)
             except Exception:
-                # Warm pool auto-init failed: cair para COLD silenciosamente
-                # (não logar para primeira tentativa não dar output ruim).
+                # Warm pool auto-init failed: fall back to COLD silently
+                # (do not log on first attempt to avoid bad output).
                 extra = []
     except Exception:
-        # Warm_session module unavailable: cair para COLD silenciosamente.
+        # Warm_session module unavailable: fall back to COLD silently.
         return parts, "", None
     if not extra:
-        # Sem warm args após init: retornar COLD com parts deduplicadas.
+        # No warm args after init: return COLD with deduplicated parts.
         return _dedup_valueless_flags(parts), "", None
 
     prefix_fn = getattr(_ws, "warm_prefix", None)

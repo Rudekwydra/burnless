@@ -37,9 +37,9 @@ _BAND_NAMES = {
     "C": "Claude Code",
     "D": "MCP",
     "E": "Chains",
-    "F": "Ambiente",
-    "G": "Jobs Agendados",
-    "H": "Delegação",
+    "F": "Environment",
+    "G": "Scheduled Jobs",
+    "H": "Delegation",
 }
 
 # Safe remediation order. mkdir/copy before wiring (hooks point at the copied
@@ -554,12 +554,12 @@ def _check_e(checks: list[Check], cwd: Path | None = None) -> None:
                 "E1",
                 "E",
                 "WARN",
-                "adoção ambígua detectada (2+ chains mortas elegíveis na mesma reivindicação)",
-                "revise .burnless/owner_loop.jsonl para conferir qual chain foi adotada",
+                "ambiguous adoption detected (2+ dead chains eligible for same claim)",
+                "review .burnless/owner_loop.jsonl to verify which chain was adopted",
             )
         )
     else:
-        checks.append(Check("E1", "E", "PASS", f"{len(chains)} chain(s) — nenhuma adoção ambígua recente"))
+        checks.append(Check("E1", "E", "PASS", f"{len(chains)} chain(s) — no recent ambiguous adoption"))
 
 
 # ── Band F: Ambiente (local server reachability) ───────────────────────────────
@@ -581,8 +581,8 @@ def _check_f(checks: list[Check]) -> None:
                                     f"env: BURNLESS_LOCAL_API=llamacpp, {local_host} (TCP reachable)"))
         except OSError as e:
             checks.append(Check("F1", "F", "WARN",
-                                f"env: BURNLESS_LOCAL_API=llamacpp mas {local_host} inalcancavel ({e})",
-                                "unsetar BURNLESS_LOCAL_API ou corrigir BURNLESS_LOCAL_HOST / subir o servidor llamacpp"))
+                                f"env: BURNLESS_LOCAL_API=llamacpp but {local_host} unreachable ({e})",
+                                "unset BURNLESS_LOCAL_API or fix BURNLESS_LOCAL_HOST / start the llamacpp server"))
     else:
         local_host = os.environ.get("BURNLESS_OLLAMA_HOST", "http://localhost:11434")
         try:
@@ -594,8 +594,8 @@ def _check_f(checks: list[Check]) -> None:
             checks.append(Check("F1", "F", "PASS", f"env: ollama reachable at {local_host}"))
         else:
             checks.append(Check("F1", "F", "WARN",
-                                f"env: BURNLESS_LOCAL_API=ollama (default) mas {local_host}/api/tags nao respondeu",
-                                "confirme que o ollama esta rodando, ou setar BURNLESS_OLLAMA_HOST"))
+                                f"env: BURNLESS_LOCAL_API=ollama (default) but {local_host}/api/tags did not respond",
+                                "confirm ollama is running, or set BURNLESS_OLLAMA_HOST"))
 
 
 # ── Band G: Jobs Agendados ──────────────────────────────────────────────────────
@@ -630,14 +630,14 @@ def _check_g(checks: list[Check], cwd: Path | None = None) -> None:
 
             if not all([name, path_str, period_hours is not None]):
                 checks.append(Check(f"G{i}", "G", "WARN",
-                                    f"scheduled_jobs[{i}] malformado: faltam chaves (name={name}, path={path_str}, period_hours={period_hours})"))
+                                    f"scheduled_jobs[{i}] malformed: missing keys (name={name}, path={path_str}, period_hours={period_hours})"))
                 continue
 
             path = Path(path_str).expanduser()
 
             if not path.exists():
                 checks.append(Check(f"G{i}", "G", "FAIL",
-                                    f"job '{name}': path nao existe ({path_str}) — nunca rodou ou path errado"))
+                                    f"job '{name}': path does not exist ({path_str}) — never ran or path incorrect"))
                 continue
 
             mtime_ts = path.stat().st_mtime
@@ -647,17 +647,17 @@ def _check_g(checks: list[Check], cwd: Path | None = None) -> None:
             limit_hours = 2 * period_hours
             if age_hours > limit_hours:
                 checks.append(Check(f"G{i}", "G", "FAIL",
-                                    f"job '{name}': ultimo sucesso ha {age_hours:.1f}h (periodo esperado {period_hours}h, limite {limit_hours}h)",
-                                    f"verificar cron/launchd do job '{name}'"))
+                                    f"job '{name}': last success {age_hours:.1f}h ago (expected period {period_hours}h, limit {limit_hours}h)",
+                                    f"check cron/launchd for job '{name}'"))
             else:
                 checks.append(Check(f"G{i}", "G", "PASS",
-                                    f"job '{name}': ultimo sucesso ha {age_hours:.1f}h (dentro do periodo de {period_hours}h)"))
+                                    f"job '{name}': last success {age_hours:.1f}h ago (within period of {period_hours}h)"))
         except Exception as e:
             checks.append(Check(f"G{i}", "G", "WARN",
-                                f"scheduled_jobs[{i}] erro: {e}"))
+                                f"scheduled_jobs[{i}] error: {e}"))
 
 
-# ── Band H: Delegação (subsistema de delegação/hook-guard) ─────────────────────
+# ── Band H: Delegation (delegation subsystem / hook-guard) ─────────────────────
 
 def _check_h(checks: list[Check], home: Path | None = None) -> None:
     if home is None:
