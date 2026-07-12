@@ -167,6 +167,10 @@ def test_dense_restore_has_untruncated_manifest(tmp_path):
 
 def test_small_payload_served_whole_with_manifest(tmp_path):
     root = tmp_path / ".burnless"
+    root.mkdir(parents=True, exist_ok=True)
+    # Explicit en_markers: false to ensure PT markers
+    config_file = root / "config.yaml"
+    config_file.write_text("format:\n  en_markers: false\n", encoding="utf-8")
     env = {
         "schema": 1,
         "host": "claude",

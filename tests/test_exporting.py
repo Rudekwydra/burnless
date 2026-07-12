@@ -77,6 +77,10 @@ def _parse_export(path):
 
 
 def test_export_writes_front_matter_and_verbatim_living_md(project):
+    # Explicit en_markers: false to ensure PT markers are preserved verbatim
+    burnless_dir = project / ".burnless"
+    config_file = burnless_dir / "config.yaml"
+    config_file.write_text("format:\n  en_markers: false\n", encoding="utf-8")
     payload = _checkpoint(project, REAL_LIVING_MD)
 
     result = exporting.export_epoch(project, host="claude", host_session_id=SID)

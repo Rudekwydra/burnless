@@ -116,6 +116,8 @@ Never pipe `do`/`run` through `tail`/`head` — it masks the exit code. Capture 
 
 Rolling memory runs in your **Claude CLI session** via hooks (no `burnless chat` — that was removed). The `Stop` hook summarizes each turn into `.burnless/epochs/<session>/` (consolidating every 10 slots) and the `SessionStart` hook re-injects the rolling summary — **including after `/clear`**, via the project-level `_rolling/seed.md` fallback (since `/clear` rotates the session id, the per-session chain is empty and the fallback carries state forward). Keeps the maestro's context Θ(N), not Θ(N²). Toggle: `burnless epoch on|off`.
 
+**On-disk format:** checkpoints and epoch exports use EN structural markers (`## Current focus`, `Q:`/`A:`, …) with `format_version: 2` by default; readers normalize back to the canonical internal keys, so consumers are format-agnostic. Set `format.en_markers: false` in `config.yaml` to keep PT markers on disk.
+
 ---
 
 ## Spec Authoring — Pre-Dispatch Checklist (6 Rules)

@@ -134,13 +134,16 @@ a
 
 
 def test_write_checkpoint_toggle_off_unchanged(tmp_path):
-    """Without EN toggle (or toggle=false), checkpoint is PT-only, no format_version."""
+    """With EN toggle explicitly false, checkpoint is PT-only, no format_version."""
     root = tmp_path / "project"
     root.mkdir()
     burnless_dir = root / ".burnless"
     burnless_dir.mkdir()
 
-    # No config file or explicit toggle=false
+    # Explicit toggle=false in config
+    config_file = burnless_dir / "config.yaml"
+    config_file.write_text("format:\n  en_markers: false\n", encoding="utf-8")
+
     pt_living_md = """## Foco atual
 - x
 
@@ -312,7 +315,7 @@ a
 
 
 def test_export_epoch_toggle_off_unchanged(tmp_path):
-    """Without EN toggle, export has PT markers."""
+    """With EN toggle explicitly false, export has PT markers."""
     from burnless.exporting import export_epoch
 
     root = tmp_path / "project"
@@ -320,7 +323,10 @@ def test_export_epoch_toggle_off_unchanged(tmp_path):
     burnless_dir = root / ".burnless"
     burnless_dir.mkdir()
 
-    # No config file or explicit toggle=false
+    # Explicit toggle=false in config
+    config_file = burnless_dir / "config.yaml"
+    config_file.write_text("format:\n  en_markers: false\n", encoding="utf-8")
+
     pt_living_md = """## Foco atual
 - x
 
