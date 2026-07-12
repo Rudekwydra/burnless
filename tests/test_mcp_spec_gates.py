@@ -69,7 +69,7 @@ async def test_mcp_delegate_blocks_unfenced_verify(mock_burnless_project: Path) 
     result = await handle_delegate(text=spec, project_root=str(mock_burnless_project.parent))
     assert result.get("error") == "spec_gate"
     assert result.get("reason") == "unfenced_verify"
-    assert "unfenced" in result.get("hint", "").lower() or "cercado" in result.get("hint", "").lower()
+    assert "fenced" in result.get("hint", "").lower() or "cercado" in result.get("hint", "").lower()
     # Verify no delegation was created
     deleg_dir = mock_burnless_project / "delegations"
     delegation_files = list(deleg_dir.glob("*.md"))
