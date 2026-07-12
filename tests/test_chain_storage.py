@@ -55,6 +55,9 @@ def test_journal_append_envelope_carries_chain_id(tmp_path):
         "process_instance_id": "proc-1",
         "cwd": "/tmp/proj",
         "exchange_id": "sha256:abc123",
+        "user_text": "test input",
+        "assistant_text": "test output",
+        "files": [],
     }
     record = recovery.journal_append(root, envelope)
 
