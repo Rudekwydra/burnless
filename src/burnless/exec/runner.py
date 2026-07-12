@@ -1256,13 +1256,13 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
                     savings, worker_model, turn_num
                 )
                 footer_text = savings_footer_mod.render_footer_v2(
-                    metrics_obj, did=did, tier=tier, worker_model=worker_model
+                    metrics_obj, did=did, tier=tier, worker_model=worker_model, lang=cfg.get("language", "pt-BR")
                 )
                 print(footer_text)
                 praise_threshold = cfg.get("display", {}).get("praise_threshold")
                 if praise_threshold:
                     praise_text = savings_footer_mod.render_praise(
-                        metrics_obj, float(praise_threshold)
+                        metrics_obj, float(praise_threshold), lang=cfg.get("language", "pt-BR")
                     )
                     if praise_text:
                         print(praise_text)

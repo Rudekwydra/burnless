@@ -268,7 +268,7 @@ When you write a spec for `burnless do`, run this checklist:
 If all six pass → `burnless do --tier T "..."`  
 If any fails → re-spec or reword until all six pass.
 
-**Note:** Gates 1-3 are deterministic (exit 6 / ABORT) and block at dispatch time, regardless of model state. Gates 4-6 are NOT implemented in code yet (tier_health unwired, no schema gate) — treat as mental checklist until wired.
+**Note:** Gates 1-3 are deterministic (exit 6 / ABORT) and block at dispatch time, regardless of model state. Gates 4-6 are the author's manual checklist — validate them yourself before dispatch; the code does not check them.
 
 **Verify checks must encode the COMPLETE correctness condition, not a proxy.** A proxy check passes
 plausible-but-wrong outputs as OK. Example (real, 2026-06-13): a task asked for "the first 3 `def`s";
