@@ -50,12 +50,13 @@ class TestRunOllamaToolsGuards:
     def test_server_unreachable(self):
         """Server unreachable should return ERR without attempting request."""
         small_prompt = "short prompt"
-        result = run_ollama_tools(
-            "test-model", small_prompt, cwd="/tmp", host="http://localhost:19999"
-        )
-        assert result["status"] == "ERR"
-        assert "inalcancavel" in result["summary"]
-        assert result["files_touched"] == []
+        with patch.dict(os.environ, {"BURNLESS_LOCAL_API": "ollama"}):
+            result = run_ollama_tools(
+                "test-model", small_prompt, cwd="/tmp", host="http://localhost:19999"
+            )
+            assert result["status"] == "ERR"
+            assert "inalcancavel" in result["summary"]
+            assert result["files_touched"] == []
 
     def test_server_unreachable_llamacpp_mode(self):
         """Llamacpp mode with unreachable server should return ERR."""
