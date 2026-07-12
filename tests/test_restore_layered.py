@@ -253,7 +253,7 @@ def test_restore_owner_event_reports_layering(tmp_path):
 
     import json
 
-    log_path = root / ".burnless" / "owner_loop.jsonl"
+    log_path = root / "owner_loop.jsonl"
     events = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     served = [e for e in events if e.get("event") == "restore_served"]
     assert served, "restore_served event missing"

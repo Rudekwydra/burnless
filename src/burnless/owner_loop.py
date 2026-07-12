@@ -12,7 +12,7 @@ def log_owner_event(root, event: dict) -> None:
     """Append JSON-encoded event to .burnless/owner_loop.jsonl. Never raises."""
     try:
         root_path = Path(root) if isinstance(root, str) else root
-        log_dir = root_path / ".burnless"
+        log_dir = root_path if root_path.name == ".burnless" else root_path / ".burnless"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "owner_loop.jsonl"
         with open(log_file, 'a', encoding='utf-8') as f:
