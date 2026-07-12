@@ -27,7 +27,7 @@ _MAX_DECISION_TEXT_CHARS = 280
 _MIN_TOKEN_LEN = 3
 _TOKEN_RE = re.compile(r"[a-z0-9_./+-]+", re.IGNORECASE)
 _SECTION_RE = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-_RETRYABLE_PROVIDER_ERROR_RE = re.compile(r"\b(?:5\d\d|timeout|timed out)\b", re.IGNORECASE)
+_RETRYABLE_PROVIDER_ERROR_RE = re.compile(r"(?:(?:HTTP|status[_\s]?code|error)\s+5\d\d|5\d\d\s+(?:Server Error|Internal|Bad Gateway|Service Unavailable|Gateway Timeout|overloaded)|\btimeout\b|\btimed out\b)", re.IGNORECASE)
 _SUPPORTED_PROVIDER_IDS = {"anthropic", "openai", "openrouter", "gemini", "ollama-local"}
 _DECISION_PATTERNS = (
     re.compile(r"\b(?:DECISION|DECIDED|DECIDIMOS|DECIS[AÃ]O)\s*:\s*([^\n]{8,280})", re.IGNORECASE),

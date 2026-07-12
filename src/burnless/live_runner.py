@@ -21,7 +21,7 @@ from . import liveness as liveness_mod
 _OVERFLOW_PATTERNS = (
     re.compile(r"prompt is too long", re.IGNORECASE),
     re.compile(r"context_length_exceeded", re.IGNORECASE),
-    re.compile(r"max_tokens", re.IGNORECASE),
+    re.compile(r"(?:max_tokens\s+(?:exceeded|limit)|exceeds\s+max_tokens|maximum\s+context\s+length)", re.IGNORECASE),
 )
 _OVERFLOW_TIER_ORDER = ("bronze", "silver", "gold", "diamond")
 _OVERFLOW_HISTORY_TURNS = 5

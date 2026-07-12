@@ -857,6 +857,13 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
             new_md = rewriter(prompt)
 
             if not new_md or not new_md.strip():
+                try:
+                    recovery_mod.record_hook_error(
+                        root, hook="living_rewriter_empty", host="claude",
+                        error="encoder returned empty; previous doc kept"
+                    )
+                except Exception:
+                    pass
                 lp.parent.mkdir(parents=True, exist_ok=True)
                 if not lp.exists():
                     lp.write_text("", encoding='utf-8')
@@ -1027,7 +1034,15 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                 out = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
 
             return out if out else None
-        except Exception:
+        except Exception as exc:
+            try:
+                from . import recovery as recovery_inner
+                recovery_inner.record_hook_error(
+                    project_root, hook="living_rewriter_exception", host="claude",
+                    error=f"{type(exc).__name__}: {str(exc)[:300]}"
+                )
+            except Exception:
+                pass
             return None
 
     return _rewrite
