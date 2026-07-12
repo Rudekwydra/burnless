@@ -1,0 +1,144 @@
+{
+  "results": [
+    {
+      "fixture": "feature_thread",
+      "encoder": "fake",
+      "must_remember_hits": 4,
+      "must_remember_total": 4,
+      "must_remember_lost": [],
+      "must_forget_leaks": 0,
+      "must_forget_total": 2,
+      "must_forget_leaked": [],
+      "must_reach_found": 0,
+      "must_reach_total": 0,
+      "must_reach_missing": [],
+      "last_exchange_verbatim": false,
+      "budget_ok": true,
+      "compact_calls": 8,
+      "failures": 0,
+      "mean_s": 0.0,
+      "p95_s": 0.0,
+      "max_s": 0.0
+    },
+    {
+      "fixture": "feature_thread",
+      "encoder": "gemma",
+      "must_remember_hits": 1,
+      "must_remember_total": 4,
+      "must_remember_lost": [
+        "implementar refresh autom\u00e1tico de token OAuth no servi\u00e7o de auth",
+        "armazenar refresh tokens no keychain do sistema operacional",
+        "/src/app/auth/token_refresh.py"
+      ],
+      "must_forget_leaks": 0,
+      "must_forget_total": 2,
+      "must_forget_leaked": [],
+      "must_reach_found": 0,
+      "must_reach_total": 0,
+      "must_reach_missing": [],
+      "last_exchange_verbatim": false,
+      "budget_ok": true,
+      "compact_calls": 14,
+      "failures": 0,
+      "mean_s": 0.003,
+      "p95_s": 0.011,
+      "max_s": 0.011
+    },
+    {
+      "fixture": "feature_thread",
+      "encoder": "haiku",
+      "must_remember_hits": 2,
+      "must_remember_total": 4,
+      "must_remember_lost": [
+        "implementar refresh autom\u00e1tico de token OAuth no servi\u00e7o de auth",
+        "armazenar refresh tokens no keychain do sistema operacional"
+      ],
+      "must_forget_leaks": 2,
+      "must_forget_total": 2,
+      "must_forget_leaked": [
+        "texto puro no sqlite",
+        "flakiness do teste de login"
+      ],
+      "must_reach_found": 0,
+      "must_reach_total": 0,
+      "must_reach_missing": [],
+      "last_exchange_verbatim": false,
+      "budget_ok": true,
+      "compact_calls": 9,
+      "failures": 0,
+      "mean_s": 42.066,
+      "p95_s": 60.034,
+      "max_s": 60.034
+    },
+    {
+      "fixture": "refactor_dense",
+      "encoder": "fake",
+      "must_remember_hits": 3,
+      "must_remember_total": 3,
+      "must_remember_lost": [],
+      "must_forget_leaks": 0,
+      "must_forget_total": 1,
+      "must_forget_leaked": [],
+      "must_reach_found": 1,
+      "must_reach_total": 1,
+      "must_reach_missing": [],
+      "last_exchange_verbatim": false,
+      "budget_ok": true,
+      "compact_calls": 6,
+      "failures": 0,
+      "mean_s": 0.0,
+      "p95_s": 0.0,
+      "max_s": 0.0
+    },
+    {
+      "fixture": "refactor_dense",
+      "encoder": "gemma",
+      "must_remember_hits": 0,
+      "must_remember_total": 3,
+      "must_remember_lost": [
+        "extrair o pipeline de ingest\u00e3o para o pacote ingest/",
+        "publicar o sink novo como ingest/sink.py",
+        "migrar o consumidor de relat\u00f3rio di\u00e1rio para o contrato novo"
+      ],
+      "must_forget_leaks": 0,
+      "must_forget_total": 1,
+      "must_forget_leaked": [],
+      "must_reach_found": 0,
+      "must_reach_total": 1,
+      "must_reach_missing": [
+        "/src/pipeline/ingest/parser.py"
+      ],
+      "last_exchange_verbatim": false,
+      "budget_ok": true,
+      "compact_calls": 10,
+      "failures": 0,
+      "mean_s": 0.002,
+      "p95_s": 0.002,
+      "max_s": 0.002
+    },
+    {
+      "fixture": "refactor_dense",
+      "encoder": "haiku",
+      "must_remember_hits": 0,
+      "must_remember_total": 3,
+      "must_remember_lost": [
+        "extrair o pipeline de ingest\u00e3o para o pacote ingest/",
+        "publicar o sink novo como ingest/sink.py",
+        "migrar o consumidor de relat\u00f3rio di\u00e1rio para o contrato novo"
+      ],
+      "must_forget_leaks": 0,
+      "must_forget_total": 1,
+      "must_forget_leaked": [],
+      "must_reach_found": 1,
+      "must_reach_total": 1,
+      "must_reach_missing": [],
+      "last_exchange_verbatim": false,
+      "budget_ok": true,
+      "compact_calls": 7,
+      "failures": 0,
+      "mean_s": 43.983,
+      "p95_s": 60.037,
+      "max_s": 60.037
+    }
+  ]
+}
