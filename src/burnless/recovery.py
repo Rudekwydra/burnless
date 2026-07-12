@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import owner_loop
+from .markers import EXCHANGE_MARKER_LINES
 
 SESSION_ROOT_NAME = "sessions"
 ROLLING_ROOT_NAME = "_rolling"
@@ -1061,7 +1062,7 @@ def _validate_candidate(
 
     for raw_line in candidate.split("\n"):
         line = raw_line.strip()
-        if line in ("PERGUNTA:", "RESPOSTA:") or line.startswith("RESPOSTA"):
+        if line in EXCHANGE_MARKER_LINES or line.startswith("RESPOSTA"):
             return False, "chat_completion_markers"
 
     if "Aguardando a próxima instrução" in candidate:
