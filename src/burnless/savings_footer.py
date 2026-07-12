@@ -17,6 +17,7 @@ except ImportError:
     tiktoken = None
 
 from .pricing import rate as P, MODEL_PRICES
+from . import i18n as i18n_mod
 
 
 def pricing_family_for_model(model_name: str) -> str:
@@ -155,7 +156,7 @@ def render_footer(metrics: TurnMetrics) -> str:
     )
 
 
-def render_footer_v2(metrics: TurnMetrics, *, did: str, tier: str, worker_model: str) -> str:
+def render_footer_v2(metrics: TurnMetrics, *, did: str, tier: str, worker_model: str, lang: str = "pt-BR") -> str:
     """Render honest footer: worker tokens → context tokens, input avoided, worker family & cost.
 
     Example: ⚡ d123 silver·haiku · worker 252k tok brutos → 254 no contexto (992×) · input evitado est. $0.76
@@ -179,18 +180,19 @@ def render_footer_v2(metrics: TurnMetrics, *, did: str, tier: str, worker_model:
 
     # Format cost: "est. $X.XX" for pricing families, "worker local $0" for gemma
     if family == "gemma":
-        cost_part = "input evitado worker local $0"
+        cost_part = i18n_mod.msg("footer_input_avoided_local", lang)
     else:
-        cost_part = f"input evitado est. ${avoided_cost:.2f}"
+        cost_part = i18n_mod.msg("footer_input_avoided_est", lang, avoided_cost=avoided_cost)
+
+    footer_template = i18n_mod.msg("footer_worker_tokens", lang, orig_fmt=orig_fmt, comp_fmt=comp_fmt, ratio_fmt=ratio_fmt, cost_part=cost_part)
 
     return (
         f"⚡ {did} {tier}·{family} · "
-        f"worker {orig_fmt} tok brutos → {comp_fmt} no contexto {ratio_fmt} · "
-        f"{cost_part}"
+        f"{footer_template}"
     )
 
 
-def render_praise(metrics: TurnMetrics, threshold: float) -> str:
+def render_praise(metrics: TurnMetrics, threshold: float, lang: str = "pt-BR") -> str:
     """Metric-gated praise line. Returns "" unless the compression ratio crosses threshold.
 
     Fires rarely by design: only when original/compressed >= threshold (e.g. 1000).
@@ -205,10 +207,7 @@ def render_praise(metrics: TurnMetrics, threshold: float) -> str:
         return ""
     orig_fmt = format_tokens(metrics.original_tokens)
     comp_fmt = format_tokens(metrics.compressed_tokens)
-    return (
-        f"🏆 {ratio:.0f}× — {orig_fmt} tok brutos viraram {comp_fmt} de contexto. "
-        f"Spec apertada pagou."
-    )
+    return i18n_mod.msg("praise_tokens_compressed", lang, ratio=ratio, orig_fmt=orig_fmt, comp_fmt=comp_fmt)
 
 
 def log_turn_metrics(metrics: TurnMetrics, burnless_root: Path | None = None) -> None:
