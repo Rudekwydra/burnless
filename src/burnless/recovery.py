@@ -2006,13 +2006,13 @@ def _restore_lang(root_path: Path) -> str:
 
 
 def _format_en_markers(root_path: Path) -> bool:
-    """Read format.en_markers toggle from config (default False)."""
+    """Read format.en_markers toggle from config (default True)."""
     try:
         from . import config as config_mod
 
         cfg = config_mod.load(_project_root(root_path) / ".burnless" / "config.yaml")
         fmt = cfg.get("format") or {} if isinstance(cfg, dict) else {}
-        return bool(fmt.get("en_markers", False))
+        return bool(fmt.get("en_markers", True))
     except Exception:
         return False
 
