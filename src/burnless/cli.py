@@ -1513,10 +1513,9 @@ def cmd_epoch(args: argparse.Namespace) -> int:
 
         root = getattr(args, "root", None) or root_path
         result = exporting.backfill_epoch_index(root)
-        index_path = (Path(root) / "epochs" / "INDEX.md" if isinstance(root, (str, Path)) else Path(root) / "epochs" / "INDEX.md")
         added = result.get("added", 0)
         total = result.get("total", 0)
-        print(f"epoch index: added {added} (total {total}) → {index_path}")
+        print(f"epoch index: added {added} (total {total}) → {result.get('index_path', '')}")
         return 0
 
     elif epoch_cmd == "handoff-write":
