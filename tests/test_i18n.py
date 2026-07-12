@@ -61,6 +61,28 @@ class TestMsgResolution:
         assert "blocked" in result
         assert "brutos" not in result
 
+    def test_msg_restore_pointer_rule_pt_br(self):
+        """msg() for restore pointer rule in Portuguese."""
+        result = msg("restore_pointer_rule", "pt-BR")
+        assert "PONTEIROS" in result
+        assert "Read/grep" in result
+
+    def test_msg_restore_pointer_rule_en(self):
+        """msg() for restore pointer rule in English."""
+        result = msg("restore_pointer_rule", "en")
+        assert "POINTERS" in result
+        assert "Read/grep" in result
+
+    def test_msg_restore_handoff_header_pt_br(self):
+        """msg() for restore handoff header in Portuguese."""
+        result = msg("restore_handoff_header", "pt-BR")
+        assert result.startswith("## Handoff da")
+
+    def test_msg_restore_handoff_header_en(self):
+        """msg() for restore handoff header in English."""
+        result = msg("restore_handoff_header", "en")
+        assert result.startswith("## Handoff from")
+
 
 class TestRenderFooterV2WithLang:
     """Test render_footer_v2 respects lang parameter."""

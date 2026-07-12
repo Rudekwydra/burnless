@@ -1983,10 +1983,18 @@ def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> str | None:
         return None
 
 
-_RESTORE_POINTER_RULE = (
-    "regra: Refs e Recuperáveis são PONTEIROS — use Read/grep sob demanda; "
-    "não releia arquivos já conhecidos sem motivo."
-)
+def _restore_lang(root_path: Path) -> str:
+    try:
+        from . import config as config_mod
+
+        cfg = config_mod.load(_project_root(root_path) / ".burnless" / "config.yaml")
+        return str(cfg.get("language", "en")) if isinstance(cfg, dict) else "en"
+    except Exception:
+        import os as _os
+
+        return _os.environ.get("BURNLESS_LANG", "en")
+
+
 _MANIFEST_HEADER = "## Manifesto (leia sob demanda, não tudo)"
 _PENDING_HEADER = "## Trocas ainda não consolidadas"
 _LIVING_TRUNCATED_MARKER = "[living_md truncado — leia o checkpoint completo no Manifesto]"
@@ -2089,6 +2097,7 @@ def _assemble_restore_layers(
     pending: list[dict[str, Any]],
     max_chars: int,
     handoff: str | None = None,
+    handoff_header: str | None = None,
 ) -> tuple[str, int, int]:
     """Priority-layered restore assembly (A1). Used when the naive full render
     exceeds the budget. Never truncates the MIDDLE of anything; instead it
@@ -2240,7 +2249,7 @@ def _assemble_restore_layers(
 
     parts = [header]
     if handoff:
-        parts += ["", "## Handoff da sessão anterior (escrito pelo próprio modelo, pré-clear)", handoff]
+        parts += ["", handoff_header or "## Handoff", handoff]
     if priority_block:
         parts += ["", priority_block]
     if decisoes_block:
@@ -2320,6 +2329,10 @@ def render_restore(
     if not living_md.strip() and not pending and applied_through <= 0 and journal_head <= 0:
         return None
 
+    from . import i18n
+
+    lang = _restore_lang(root_path)
+    handoff_header = i18n.msg("restore_handoff_header", lang)
     header_parts = [
         _RESTORE_PREFIX,
         f"host={host}",
@@ -2330,7 +2343,7 @@ def render_restore(
         f"applied_through={applied_through}",
         f"journal_head={journal_head}",
         f"pending_count={len(pending)}",
-        _RESTORE_POINTER_RULE,
+        i18n.msg("restore_pointer_rule", lang),
     ]
     header = "\n".join(header_parts)
 
@@ -2352,7 +2365,7 @@ def render_restore(
     pending_sorted = sorted(pending, key=lambda r: int(r.get("seq") or 0))
     full_parts = [header]
     if live_handoff:
-        full_parts += ["", "## Handoff da sessão anterior (escrito pelo próprio modelo, pré-clear)", live_handoff]
+        full_parts += ["", handoff_header, live_handoff]
     if living_md.strip():
         full_parts += ["", living_md.rstrip()]
     if pending_sorted:
@@ -2371,7 +2384,7 @@ def render_restore(
         # Over budget: priority-layered assembly (A1) — demote, never cut the middle.
         truncated = True
         context, pending_whole, pending_summarized = _assemble_restore_layers(
-            header, manifest, living_md, pending_sorted, max_chars, live_handoff
+            header, manifest, living_md, pending_sorted, max_chars, live_handoff, handoff_header
         )
 
     owner_loop.log_owner_event(
