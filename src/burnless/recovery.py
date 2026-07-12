@@ -2063,6 +2063,9 @@ def _render_manifest(
     export_path = _latest_export_path(root_path)
     if export_path is not None:
         lines.append(i18n.msg("restore_manifest_exports", lang, path=export_path))
+    index_path = root_path / "epochs" / "INDEX.md"
+    if index_path.exists():
+        lines.append(i18n.msg("restore_manifest_epoch_index", lang, path=str(index_path)))
     lines.append(i18n.msg("restore_manifest_refs", lang))
     return "\n".join(lines)
 

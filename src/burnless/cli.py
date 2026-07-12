@@ -1508,6 +1508,17 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         print(json.dumps(result, ensure_ascii=False))
         return 0
 
+    elif epoch_cmd == "index":
+        from . import exporting
+
+        root = getattr(args, "root", None) or root_path
+        result = exporting.backfill_epoch_index(root)
+        index_path = (Path(root) / "epochs" / "INDEX.md" if isinstance(root, (str, Path)) else Path(root) / "epochs" / "INDEX.md")
+        added = result.get("added", 0)
+        total = result.get("total", 0)
+        print(f"epoch index: added {added} (total {total}) → {index_path}")
+        return 0
+
     elif epoch_cmd == "handoff-write":
         root = getattr(args, "root", None) or root_path
         host = getattr(args, "host", "claude")
@@ -2378,6 +2389,8 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="compact-pending")
     esp = epoch_sub.add_parser("export", parents=[epoch_core], help="export consolidated living_md as a neutral artifact under .burnless/exports/")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="export")
+    esp = epoch_sub.add_parser("index", parents=[epoch_common], help="backfill per-project epoch INDEX.md from exports")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="index")
     esp = epoch_sub.add_parser("handoff-write", parents=[epoch_core], help="write a clear handoff record")
     esp.add_argument("--claimed-by", default=None, dest="claimed_by", help="pre-claim by session id, when applicable")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-write")

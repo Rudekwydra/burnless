@@ -45,6 +45,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "pt-BR": "- exports da sessão anterior: {path}",
         "en": "- exports from previous session: {path}",
     },
+    "restore_manifest_epoch_index": {
+        "pt-BR": "- índice de epochs (TOC persistente): {path}",
+        "en": "- epoch index (persistent TOC): {path}",
+    },
     "restore_manifest_refs": {
         "pt-BR": "- Refs do documento vivo: já no formato `path#Lx-y — why [seq N]` — leia só o que a tarefa atual pedir",
         "en": "- Living-doc Refs: already in `path#Lx-y — why [seq N]` format — read only what the current task needs",
