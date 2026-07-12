@@ -106,7 +106,7 @@ def backfill_epoch_index(root, host: str = "", host_session_id: str = "") -> dic
         root_path = recovery._root_path(root)
         exports_dir = root_path / EXPORTS_DIRNAME
         if not exports_dir.exists():
-            return {"status": "indexed", "added": 0, "total": 0}
+            return {"status": "indexed", "added": 0, "total": 0, "index_path": str(root_path / "epochs" / "INDEX.md")}
 
         index_path = root_path / "epochs" / "INDEX.md"
         before_entries = 0
@@ -151,9 +151,9 @@ def backfill_epoch_index(root, host: str = "", host_session_id: str = "") -> dic
             after_entries = sum(1 for line in content.splitlines() if line.startswith("- "))
 
         added = max(0, after_entries - before_entries)
-        return {"status": "indexed", "added": added, "total": len(exports)}
+        return {"status": "indexed", "added": added, "total": len(exports), "index_path": str(index_path)}
     except Exception:
-        return {"status": "indexed", "added": 0, "total": 0}
+        return {"status": "indexed", "added": 0, "total": 0, "index_path": ""}
 
 
 def _atomic_write(path: Path, content: str) -> None:

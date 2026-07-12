@@ -144,6 +144,9 @@ More content"""
     assert result["status"] == "indexed"
     assert result["added"] == 2
     assert result["total"] == 2
+    assert "index_path" in result
+    assert result["index_path"].endswith("epochs/INDEX.md")
+    assert Path(result["index_path"]).exists()
 
     index_path = burnless_dir / "epochs" / "INDEX.md"
     assert index_path.exists()
