@@ -692,8 +692,36 @@ def run_with_live_panel(
                 minimal_spinner.stop()
             raise
 
+        def _process_drained_event(stream: str, line: str) -> None:
+            nonlocal saw_stream_json
+            if stream == "stdout":
+                stdout_parts.append(line)
+            else:
+                stderr_parts.append(line)
+            clean = line.rstrip("\n")
+            translated: str | None = None
+            if clean and stream == "stdout":
+                translated = _translate_stream_json(clean, consolidated_text, session_holder)
+                if translated is not None:
+                    saw_stream_json = True
+            if translated is not None:
+                log.write(f"{translated}\n")
+            else:
+                log.write(f"[{stream}] {line}")
+            log.flush()
+
+        # Re-join pump threads with longer timeout to allow final flushes.
         for thread in threads:
-            thread.join(timeout=0.2)
+            thread.join(timeout=2.0)
+
+        # Drain remaining events from the queue (pump threads may have buffered them).
+        # Process each drained event the same way as the main loop.
+        while not events.empty():
+            try:
+                stream, line = events.get_nowait()
+                _process_drained_event(stream, line)
+            except queue.Empty:
+                break
 
         ended = datetime.now(timezone.utc)
         returncode = proc.returncode
@@ -1033,6 +1061,20 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
                 log_path=log_path,
             )
             last_render = now
+
+    # Drain remaining events (raw log only, no translation in _continue_after_interrupt).
+    while not events.empty():
+        try:
+            stream, line = events.get_nowait()
+            if stream == "stdout":
+                stdout_parts.append(line)
+            else:
+                stderr_parts.append(line)
+            log.write(f"[{stream}] {line}")
+            log.flush()
+        except queue.Empty:
+            break
+
     ended = datetime.now(timezone.utc)
     log.write(
         "\n--- END ---\n"
