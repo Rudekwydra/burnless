@@ -208,3 +208,71 @@ def test_structure_gate_toggle_off():
         assert living.exists()
         living_content = living.read_text(encoding='utf-8')
         assert living_content == "---\n**Observação:** lixo meta sem seção alguma.", "gate disabled, junk should be accepted"
+
+
+def test_living_rewriter_empty_logs_hook_error(monkeypatch):
+    """Test that apply_capture with rewriter returning None (non-trivial) logs hook_error."""
+    with tempfile.TemporaryDirectory() as tmp_root:
+        tmp_root = Path(tmp_root)
+        tmp_hook_log = Path(tempfile.mkdtemp()) / "hook_errors.log"
+
+        try:
+            from burnless import recovery as recovery_mod
+            monkeypatch.setattr(recovery_mod, "_hook_error_log_path", lambda root: tmp_hook_log)
+
+            chat_id = "rewriter_empty_test"
+
+            living = living_path(tmp_root, chat_id)
+            living.parent.mkdir(parents=True, exist_ok=True)
+            living.write_text("# Anterior\n- old content", encoding='utf-8')
+
+            exchange = f"user: check /Users/roberto/file.py\nassistant: found\n" + "x" * 250
+
+            def none_rewriter(prompt: str) -> str | None:
+                return None
+
+            result = apply_capture(tmp_root, chat_id, exchange, rewriter=none_rewriter)
+
+            assert living.exists()
+            assert "old content" in living.read_text(encoding='utf-8'), "previous doc should be preserved"
+
+            assert tmp_hook_log.exists(), f"hook_errors.log not found"
+            log_content = tmp_hook_log.read_text(encoding='utf-8')
+            assert "living_rewriter_empty" in log_content, f"'living_rewriter_empty' not in {log_content}"
+        finally:
+            import shutil
+            shutil.rmtree(tmp_hook_log.parent, ignore_errors=True)
+
+
+def test_living_rewriter_empty_noop_no_hook_error(monkeypatch):
+    """Test that trivial exchange with rewriter returning None does NOT log hook_error."""
+    with tempfile.TemporaryDirectory() as tmp_root:
+        tmp_root = Path(tmp_root)
+        tmp_hook_log = Path(tempfile.mkdtemp()) / "hook_errors.log"
+
+        try:
+            from burnless import recovery as recovery_mod
+            monkeypatch.setattr(recovery_mod, "_hook_error_log_path", lambda root: tmp_hook_log)
+
+            chat_id = "rewriter_noop_test"
+
+            living = living_path(tmp_root, chat_id)
+            living.parent.mkdir(parents=True, exist_ok=True)
+            living.write_text("# Anterior\n- old content", encoding='utf-8')
+
+            exchange = "ok"  # trivial — triggers is_noop
+
+            def none_rewriter(prompt: str) -> str | None:
+                return None
+
+            result = apply_capture(tmp_root, chat_id, exchange, rewriter=none_rewriter)
+
+            assert living.exists()
+            assert "old content" in living.read_text(encoding='utf-8'), "previous doc should be preserved"
+
+            if tmp_hook_log.exists():
+                log_content = tmp_hook_log.read_text(encoding='utf-8')
+                assert "living_rewriter_empty" not in log_content, f"'living_rewriter_empty' should NOT be in log for noop exchange"
+        finally:
+            import shutil
+            shutil.rmtree(tmp_hook_log.parent, ignore_errors=True)
