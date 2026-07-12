@@ -808,6 +808,15 @@ def _epochs_version(root) -> int:
         return 2
 
 
+def _compact_structure_gate_enabled(root: Path) -> bool:
+    try:
+        from . import config, paths
+        cfg = config.load(paths.paths_for(Path(root) / ".burnless")["config"])
+        return cfg.get("epochs", {}).get("compact_structure_gate", True)
+    except Exception:
+        return True
+
+
 def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], str | None] | None = None, *, version: int | None = None) -> Path:
     try:
         from . import recovery as recovery_mod
@@ -853,6 +862,23 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
                     lp.write_text("", encoding='utf-8')
                 push_ring(root, chat_id, exchange)
                 return lp
+
+            if eff_version >= 3 and _compact_structure_gate_enabled(root):
+                parsed_gate = parse_living_v3(new_md)
+                if not any(parsed_gate.get(s) for s in SECTIONS_V3):
+                    try:
+                        from . import recovery as recovery_mod2
+                        recovery_mod2.record_hook_error(
+                            root, hook="apply_capture_structure_reject", host="claude",
+                            error=f"encoder output has zero v3 sections ({len(new_md)}B); previous doc kept",
+                        )
+                    except Exception:
+                        pass
+                    lp.parent.mkdir(parents=True, exist_ok=True)
+                    if not lp.exists():
+                        lp.write_text("", encoding='utf-8')
+                    push_ring(root, chat_id, exchange)
+                    return lp
 
             ages = update_contract_ages(prev_ages, new_md, turn)
             new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)

@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-from burnless.epochs_v2 import apply_capture, living_path, state_path
+from burnless.epochs_v2 import apply_capture, living_path, state_path, _rebuild_md_v3, SECTIONS_V3
 
 
 def test_state_json_atomic_and_valid():
@@ -107,3 +107,104 @@ def test_rewriter_exception_preserves_living_and_logs(monkeypatch):
         finally:
             import shutil
             shutil.rmtree(tmp_hook_log.parent, ignore_errors=True)
+
+
+def test_structure_gate_rejects_unstructured_output(monkeypatch):
+    """Test that gate rejects encoder output with zero v3 sections."""
+    with tempfile.TemporaryDirectory() as tmp_root:
+        tmp_root = Path(tmp_root)
+        tmp_hook_log = Path(tempfile.mkdtemp()) / "hook_errors.log"
+
+        try:
+            from burnless import recovery as recovery_mod
+
+            monkeypatch.setattr(recovery_mod, "_hook_error_log_path", lambda root: tmp_hook_log)
+
+            chat_id = "gate_test_1"
+
+            living = living_path(tmp_root, chat_id)
+            living.parent.mkdir(parents=True, exist_ok=True)
+
+            valid_parsed = {s: ["- test"] if s == "Foco atual" else [] for s in SECTIONS_V3}
+            valid_doc = _rebuild_md_v3(valid_parsed)
+            living.write_text(valid_doc, encoding='utf-8')
+
+            exchange = f"user: check /Users/roberto/test.py\nassistant: found\n" + "x" * 250
+
+            def junk_rewriter(prompt: str) -> str:
+                return "---\n**Observação:** lixo meta sem seção alguma."
+
+            result = apply_capture(tmp_root, chat_id, exchange, rewriter=junk_rewriter, version=3)
+
+            assert living.exists()
+            living_content = living.read_text(encoding='utf-8')
+            assert "Foco atual" in living_content, "living doc should still have v3 sections"
+            assert "test" in living_content, "previous doc should be preserved"
+
+        finally:
+            import shutil
+            shutil.rmtree(tmp_hook_log.parent, ignore_errors=True)
+
+
+def test_structure_gate_rejects_on_empty_prev():
+    """Test that gate creates empty doc when prev doesn't exist and encoder returns junk."""
+    with tempfile.TemporaryDirectory() as tmp_root:
+        tmp_root = Path(tmp_root)
+        chat_id = "gate_test_2"
+        exchange = f"user: check /Users/roberto/test.py\nassistant: found\n" + "x" * 250
+
+        def junk_rewriter(prompt: str) -> str:
+            return "---\n**Observação:** lixo meta sem seção alguma."
+
+        result = apply_capture(tmp_root, chat_id, exchange, rewriter=junk_rewriter, version=3)
+
+        living = living_path(tmp_root, chat_id)
+        assert living.exists()
+        living_content = living.read_text(encoding='utf-8')
+        assert living_content == "", "empty prev + junk should result in empty living"
+
+
+def test_structure_gate_accepts_valid_v3():
+    """Test that gate accepts valid v3 output."""
+    with tempfile.TemporaryDirectory() as tmp_root:
+        tmp_root = Path(tmp_root)
+        chat_id = "gate_test_3"
+        exchange = f"user: check /Users/roberto/test.py\nassistant: found\n" + "x" * 250
+
+        def valid_rewriter(prompt: str) -> str:
+            parsed = {s: [] for s in SECTIONS_V3}
+            parsed["Foco atual"] = ["- fresh insight"]
+            return _rebuild_md_v3(parsed)
+
+        result = apply_capture(tmp_root, chat_id, exchange, rewriter=valid_rewriter, version=3)
+
+        living = living_path(tmp_root, chat_id)
+        assert living.exists()
+        living_content = living.read_text(encoding='utf-8')
+        assert "Foco atual" in living_content
+        assert "fresh insight" in living_content
+
+
+def test_structure_gate_toggle_off():
+    """Test that gate can be disabled via config."""
+    with tempfile.TemporaryDirectory() as tmp_root:
+        tmp_root = Path(tmp_root)
+        chat_id = "gate_test_4"
+
+        burnless_dir = tmp_root / ".burnless"
+        burnless_dir.mkdir(parents=True, exist_ok=True)
+
+        config_file = burnless_dir / "config.yaml"
+        config_file.write_text("epochs:\n  compact_structure_gate: false\n", encoding='utf-8')
+
+        exchange = f"user: check /Users/roberto/test.py\nassistant: found\n" + "x" * 250
+
+        def junk_rewriter(prompt: str) -> str:
+            return "---\n**Observação:** lixo meta sem seção alguma."
+
+        result = apply_capture(tmp_root, chat_id, exchange, rewriter=junk_rewriter, version=3)
+
+        living = living_path(tmp_root, chat_id)
+        assert living.exists()
+        living_content = living.read_text(encoding='utf-8')
+        assert living_content == "---\n**Observação:** lixo meta sem seção alguma.", "gate disabled, junk should be accepted"
