@@ -11,7 +11,7 @@ DEFAULT_LOCAL_MODEL = "hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL"
 
 DEFAULT_CONFIG: dict = {
     "project_name": "Project",
-    "language": "pt-BR",
+    "language": "en",
     "mode": "local_first",
     "agents": {
         # Tiers are quality/cost bands, not vendors. Map any provider/CLI here:
