@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..usage_meter import claude_usage_delta
+from ..usage_meter import claude_project_dir
 from .core import ContextUsage
 
 
@@ -15,6 +15,38 @@ def _normalize_path(value: str | Path | None) -> Path | None:
         return Path(value).expanduser().resolve()
     except Exception:
         return None
+
+
+def _last_assistant_usage_tokens(transcript_path: Path) -> int | None:
+    """Scan a Claude JSONL transcript and return the last assistant record's usage sum."""
+    if not transcript_path.exists():
+        return None
+    last_usage = None
+    try:
+        with transcript_path.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("type") != "assistant":
+                    continue
+                message = rec.get("message") or {}
+                usage = message.get("usage")
+                if isinstance(usage, dict):
+                    last_usage = usage
+    except OSError:
+        return None
+    if last_usage is None:
+        return None
+    return (
+        int(last_usage.get("input_tokens") or 0)
+        + int(last_usage.get("cache_read_input_tokens") or 0)
+        + int(last_usage.get("cache_creation_input_tokens") or 0)
+    )
 
 
 def _estimated_claude_limit(_cwd: Path | None) -> int:
@@ -48,34 +80,9 @@ def _claude_context_usage_from_transcript(root: Path, run_id: str) -> "ContextUs
     if not transcript_ref:
         return None
     transcript_path = Path(transcript_ref)
-    if not transcript_path.exists():
+    current = _last_assistant_usage_tokens(transcript_path)
+    if current is None:
         return None
-    last_usage = None
-    try:
-        with transcript_path.open("r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if rec.get("type") != "assistant":
-                    continue
-                message = rec.get("message") or {}
-                usage = message.get("usage")
-                if isinstance(usage, dict):
-                    last_usage = usage
-    except OSError:
-        return None
-    if last_usage is None:
-        return None
-    current = (
-        int(last_usage.get("input_tokens") or 0)
-        + int(last_usage.get("cache_read_input_tokens") or 0)
-        + int(last_usage.get("cache_creation_input_tokens") or 0)
-    )
     return ContextUsage(current=current, limit=_estimated_claude_limit(root), confidence="exact")
 
 
@@ -90,11 +97,19 @@ def claude_context_usage(
         if exact is not None:
             return exact
     project = _normalize_path(cwd)
-    delta = claude_usage_delta(cwd=project)
-    if delta.calls <= 0:
-        return ContextUsage(current=None, limit=None, confidence="unknown")
-    current = max(0, int(delta.cold_baseline_input_tokens))
-    return ContextUsage(current=current, limit=_estimated_claude_limit(project), confidence="estimated")
+    try:
+        project_dir = claude_project_dir(cwd=project)
+        if project_dir.exists():
+            jsonl_files = list(project_dir.glob("*.jsonl"))
+            if jsonl_files:
+                jsonl_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                newest = jsonl_files[0]
+                current = _last_assistant_usage_tokens(newest)
+                if current is not None:
+                    return ContextUsage(current=current, limit=_estimated_claude_limit(project), confidence="estimated")
+    except OSError:
+        pass
+    return ContextUsage(current=None, limit=None, confidence="unknown")
 
 
 def _iter_codex_logs() -> list[Path]:
