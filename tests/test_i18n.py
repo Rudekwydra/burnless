@@ -83,6 +83,56 @@ class TestMsgResolution:
         result = msg("restore_handoff_header", "en")
         assert result.startswith("## Handoff from")
 
+    def test_msg_restore_manifest_checkpoint_pt_br(self):
+        """msg() for restore manifest checkpoint in Portuguese."""
+        result = msg("restore_manifest_checkpoint", "pt-BR", path="/checkpoint")
+        assert "checkpoint completo" in result
+        assert "/checkpoint" in result
+
+    def test_msg_restore_manifest_checkpoint_en(self):
+        """msg() for restore manifest checkpoint in English."""
+        result = msg("restore_manifest_checkpoint", "en", path="/checkpoint")
+        assert "full checkpoint" in result
+        assert "/checkpoint" in result
+
+    def test_msg_restore_manifest_exports_pt_br(self):
+        """msg() for restore manifest exports in Portuguese."""
+        result = msg("restore_manifest_exports", "pt-BR", path="/exports")
+        assert "exports da sessão anterior" in result
+        assert "/exports" in result
+
+    def test_msg_restore_manifest_exports_en(self):
+        """msg() for restore manifest exports in English."""
+        result = msg("restore_manifest_exports", "en", path="/exports")
+        assert "exports from previous session" in result
+        assert "/exports" in result
+
+    def test_msg_restore_manifest_refs_pt_br(self):
+        """msg() for restore manifest refs in Portuguese."""
+        result = msg("restore_manifest_refs", "pt-BR")
+        assert "Refs do documento vivo" in result
+        assert "leia só o que a tarefa atual pedir" in result
+        assert "`path#Lx-y — why [seq N]`" in result
+
+    def test_msg_restore_manifest_refs_en(self):
+        """msg() for restore manifest refs in English."""
+        result = msg("restore_manifest_refs", "en")
+        assert "Living-doc Refs" in result
+        assert "read only what the current task needs" in result
+        assert "`path#Lx-y — why [seq N]`" in result
+
+    def test_msg_restore_pending_old_header_pt_br(self):
+        """msg() for restore pending old header in Portuguese."""
+        result = msg("restore_pending_old_header", "pt-BR")
+        assert "Trocas antigas" in result
+        assert "resumo de 1 linha" in result
+
+    def test_msg_restore_pending_old_header_en(self):
+        """msg() for restore pending old header in English."""
+        result = msg("restore_pending_old_header", "en")
+        assert "Older exchanges" in result
+        assert "1-line summary" in result
+
 
 class TestRenderFooterV2WithLang:
     """Test render_footer_v2 respects lang parameter."""

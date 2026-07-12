@@ -2031,17 +2031,17 @@ def _render_manifest(
     It is the map for the model to self-serve the rest of the memory on
     demand instead of pasting everything into context.
     """
+    from . import i18n
+
+    lang = _restore_lang(root_path)
     lines = [_MANIFEST_HEADER]
     if checkpoint_path is not None:
-        lines.append(f"- checkpoint completo: {checkpoint_path}")
+        lines.append(i18n.msg("restore_manifest_checkpoint", lang, path=checkpoint_path))
     lines.append(f"- journal: {journal_dir} (head={journal_head}, applied={applied_through})")
     export_path = _latest_export_path(root_path)
     if export_path is not None:
-        lines.append(f"- exports da sessão anterior: {export_path}")
-    lines.append(
-        "- Refs do documento vivo: já no formato `path#Lx-y — why [seq N]` — "
-        "leia só o que a tarefa atual pedir"
-    )
+        lines.append(i18n.msg("restore_manifest_exports", lang, path=export_path))
+    lines.append(i18n.msg("restore_manifest_refs", lang))
     return "\n".join(lines)
 
 
@@ -2098,6 +2098,7 @@ def _assemble_restore_layers(
     max_chars: int,
     handoff: str | None = None,
     handoff_header: str | None = None,
+    lang: str = "en",
 ) -> tuple[str, int, int]:
     """Priority-layered restore assembly (A1). Used when the naive full render
     exceeds the budget. Never truncates the MIDDLE of anything; instead it
@@ -2257,9 +2258,11 @@ def _assemble_restore_layers(
     if rest_block:
         parts += ["", rest_block]
     if pending_sorted:
+        from . import i18n
+
         pending_lines: list[str] = ["", _PENDING_HEADER]
         if summaries:
-            pending_lines.append("Trocas antigas (resumo de 1 linha; conteúdo no journal — ver Manifesto):")
+            pending_lines.append(i18n.msg("restore_pending_old_header", lang))
             pending_lines.extend(line for _seq, line in summaries)
         for record in pending_sorted:
             if int(record.get("seq") or 0) in whole_seqs:
@@ -2384,7 +2387,7 @@ def render_restore(
         # Over budget: priority-layered assembly (A1) — demote, never cut the middle.
         truncated = True
         context, pending_whole, pending_summarized = _assemble_restore_layers(
-            header, manifest, living_md, pending_sorted, max_chars, live_handoff, handoff_header
+            header, manifest, living_md, pending_sorted, max_chars, live_handoff, handoff_header, lang
         )
 
     owner_loop.log_owner_event(

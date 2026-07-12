@@ -156,13 +156,13 @@ def test_dense_restore_has_untruncated_manifest(tmp_path):
 
     assert "## Manifesto (leia sob demanda, não tudo)" in ctx
     manifest = ctx[ctx.index("## Manifesto") :]
-    assert "- checkpoint completo: " in manifest
+    assert "checkpoint" in manifest
     assert "- journal: " in manifest
     assert "(head=8, applied=0)" in manifest
-    assert f"- exports da sessão anterior: {export_file}" in manifest
-    assert "leia só o que a tarefa atual pedir" in manifest
+    assert "exports" in manifest and str(export_file) in manifest
+    assert "leia só o que a tarefa atual pedir" in manifest or "read only what the current task needs" in manifest
     # I1: pointer rule in the header
-    assert "Refs e Recuperáveis são PONTEIROS" in ctx
+    assert "PONTEIROS" in ctx or "POINTERS" in ctx
 
 
 def test_small_payload_served_whole_with_manifest(tmp_path):

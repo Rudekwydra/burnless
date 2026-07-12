@@ -230,7 +230,7 @@ def _effective_budget_tokens(scenario: dict) -> int:
 def _manifest_paths(ctx: str) -> list[Path]:
     manifest = ctx[ctx.index("## Manifesto"):]
     paths = []
-    for m in re.finditer(r"- (?:checkpoint completo|exports da sessão anterior): (\S+)", manifest):
+    for m in re.finditer(r"- [^:\n]*(?:checkpoint|exports)[^:\n]*: (\S+)", manifest):
         paths.append(Path(m.group(1)))
     jm = re.search(r"- journal: (\S+) \(head=\d+, applied=\d+\)", manifest)
     if jm:
