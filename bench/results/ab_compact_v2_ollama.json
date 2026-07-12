@@ -1,0 +1,52 @@
+{
+  "results": [
+    {
+      "fixture": "feature_thread",
+      "encoder": "gemma",
+      "must_remember_hits": 2,
+      "must_remember_total": 4,
+      "must_remember_lost": [
+        "implementar refresh autom\u00e1tico de token OAuth no servi\u00e7o de auth",
+        "armazenar refresh tokens no keychain do sistema operacional"
+      ],
+      "must_forget_leaks": 1,
+      "must_forget_total": 2,
+      "must_forget_leaked": [
+        "flakiness do teste de login"
+      ],
+      "must_reach_found": 0,
+      "must_reach_total": 0,
+      "must_reach_missing": [],
+      "last_exchange_verbatim": true,
+      "budget_ok": true,
+      "compact_calls": 8,
+      "failures": 0,
+      "mean_s": 26.972,
+      "p95_s": 32.085,
+      "max_s": 32.085
+    },
+    {
+      "fixture": "refactor_dense",
+      "encoder": "gemma",
+      "must_remember_hits": 1,
+      "must_remember_total": 3,
+      "must_remember_lost": [
+        "extrair o pipeline de ingest\u00e3o para o pacote ingest/",
+        "migrar o consumidor de relat\u00f3rio di\u00e1rio para o contrato novo"
+      ],
+      "must_forget_leaks": 0,
+      "must_forget_total": 1,
+      "must_forget_leaked": [],
+      "must_reach_found": 1,
+      "must_reach_total": 1,
+      "must_reach_missing": [],
+      "last_exchange_verbatim": true,
+      "budget_ok": true,
+      "compact_calls": 6,
+      "failures": 0,
+      "mean_s": 42.83,
+      "p95_s": 69.914,
+      "max_s": 69.914
+    }
+  ]
+}
