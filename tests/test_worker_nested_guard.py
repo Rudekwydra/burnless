@@ -67,7 +67,7 @@ class TestWorkerNestedGuard:
 
         assert result == 7, f"Expected exit code 7, got {result}"
         captured = capsys.readouterr()
-        assert "re-delegacao bloqueada" in captured.err, f"Expected 're-delegacao bloqueada' in stderr, got: {captured.err}"
+        assert "BURNLESS_ALLOW_NESTED=1" in captured.err, f"Expected nested-guard message in stderr, got: {captured.err}"
 
     def test_do_blocked_in_worker_context(self, tmp_path, monkeypatch, capsys):
         """cmd_do returns 7 when BURNLESS_WORKER=1 and BURNLESS_ALLOW_NESTED not set."""
@@ -81,7 +81,7 @@ class TestWorkerNestedGuard:
 
         assert result == 7, f"Expected exit code 7, got {result}"
         captured = capsys.readouterr()
-        assert "re-delegacao bloqueada" in captured.err, f"Expected 're-delegacao bloqueada' in stderr, got: {captured.err}"
+        assert "BURNLESS_ALLOW_NESTED=1" in captured.err, f"Expected nested-guard message in stderr, got: {captured.err}"
 
     def test_optin_passes_gate_delegate(self, tmp_path, monkeypatch):
         """cmd_delegate with BURNLESS_ALLOW_NESTED=1 passes gate and hits require_root."""
