@@ -473,8 +473,9 @@ def extract_exchange(
     source: str | None = None,
 ) -> dict[str, Any]:
     path = Path(transcript_path)
+    transcript_found = path.exists()
     entries: list[dict[str, Any]] = []
-    if path.exists():
+    if transcript_found:
         with path.open("r", encoding="utf-8", errors="ignore") as f:
             for line_no, line in enumerate(f):
                 text = line.strip()
@@ -560,6 +561,8 @@ def extract_exchange(
         "assistant_text": assistant_text,
         "files": sorted(files),
         "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "transcript_found": transcript_found,
+        "empty": not (user_text.strip() or assistant_text.strip() or files),
     }
 
 
@@ -780,6 +783,21 @@ def journal_append(root, envelope: dict[str, Any]) -> dict[str, Any]:
     chain_id = resolve_or_create_chain(root_path, host=host, process_instance_id=process_instance_id, cwd=cwd)
     if not host_session_id:
         raise ValueError("host_session_id is required")
+
+    if not ((envelope.get("user_text") or "").strip() or (envelope.get("assistant_text") or "").strip() or envelope.get("files")):
+        owner_loop.log_owner_event(
+            root_path,
+            {
+                "phase": "recovery",
+                "event": "journal_skipped_empty",
+                "host": host,
+                "host_session_id": host_session_id,
+                "process_instance_id": process_instance_id,
+                "transcript_found": bool(envelope.get("transcript_found", True)),
+                "exchange_id": str(envelope.get("exchange_id") or ""),
+            },
+        )
+        return {"status": "skipped_empty", "reason": "empty_exchange", "transcript_found": bool(envelope.get("transcript_found", True))}
 
     journal_dir = _journal_dir(root_path, host, host_session_id)
     journal_dir.mkdir(parents=True, exist_ok=True)

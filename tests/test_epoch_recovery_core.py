@@ -1305,3 +1305,77 @@ def test_compact_pending_reads_require_seq_origem_from_config(tmp_path):
 
     assert result["status"] == "rejected"
     assert result["reason"] == "missing_seq_origem"
+
+
+def test_extract_exchange_missing_transcript_flags_empty(tmp_path):
+    from burnless import recovery
+
+    envelope = recovery.extract_exchange(
+        tmp_path / "nope.jsonl",
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        cwd="/tmp/app",
+        source="clear",
+    )
+
+    assert envelope["transcript_found"] is False
+    assert envelope["empty"] is True
+    assert envelope["user_text"] == ""
+    assert envelope["assistant_text"] == ""
+
+
+def test_journal_append_skips_empty_envelope(tmp_path):
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    root.mkdir(parents=True, exist_ok=True)
+
+    envelope = {
+        "schema": 1,
+        "host": "claude",
+        "host_session_id": "sid-1",
+        "process_instance_id": "proc-1",
+        "transcript_path": "/tmp/transcript.jsonl",
+        "exchange_id": "sha256:empty",
+        "user_text": "",
+        "assistant_text": "",
+        "files": [],
+    }
+
+    result = recovery.journal_append(root, envelope)
+
+    assert result["status"] == "skipped_empty"
+    assert result["reason"] == "empty_exchange"
+
+    journal_dir = root / "epochs" / "sessions" / "claude" / "sid-1" / "journal"
+    journal_files = list(journal_dir.glob("*.json")) if journal_dir.exists() else []
+    assert len(journal_files) == 0
+
+
+def test_journal_append_still_writes_non_empty(tmp_path):
+    from burnless import recovery
+
+    root = tmp_path / ".burnless"
+    root.mkdir(parents=True, exist_ok=True)
+
+    envelope = {
+        "schema": 1,
+        "host": "claude",
+        "host_session_id": "sid-1",
+        "process_instance_id": "proc-1",
+        "transcript_path": "/tmp/transcript.jsonl",
+        "exchange_id": "sha256:nonempty",
+        "user_text": "oi",
+        "assistant_text": "resposta",
+        "files": [],
+    }
+
+    result = recovery.journal_append(root, envelope)
+
+    assert result.get("status") != "skipped_empty"
+    assert result["seq"] == 1
+
+    journal_dir = root / "epochs" / "sessions" / "claude" / "sid-1" / "journal"
+    journal_files = sorted(journal_dir.glob("*.json"))
+    assert len(journal_files) == 1

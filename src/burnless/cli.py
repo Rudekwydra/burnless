@@ -1454,6 +1454,8 @@ def cmd_epoch(args: argparse.Namespace) -> int:
             cwd=getattr(args, "cwd", None),
             source=getattr(args, "source", None),
         )
+        if envelope.get("transcript_found") is False:
+            print(f"[warn] burnless epoch: transcript not found: {transcript}", file=_sys.stderr)
         print(json.dumps(envelope, ensure_ascii=False))
         return 0
 
