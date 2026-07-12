@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from datetime import datetime, timezone
+from .state import _exclusive_lock
 
 DEFAULT_METRICS: dict = {
     "burnless_tokens": 0,
@@ -60,6 +61,10 @@ VALID_SOURCES = set(DEFAULT_METRICS["by_source"].keys())
 # Conservative: real tokenization may be slightly under for PT-BR.
 _CHARS_PER_TOKEN_PT = 3.5
 _CHARS_PER_TOKEN_EN = 4.0
+
+
+def _metrics_lock(metrics_path: Path):
+    return _exclusive_lock(metrics_path.parent / (metrics_path.name + ".lock"))
 
 
 def load(path: Path) -> dict:
@@ -127,26 +132,27 @@ def record(
     if amount < 0:
         raise ValueError("amount must be >= 0")
 
-    metrics = load(metrics_path)
-    metrics["burnless_tokens"] = int(metrics["burnless_tokens"]) + amount
-    metrics["by_source"][source] = int(metrics["by_source"].get(source, 0)) + amount
+    with _metrics_lock(metrics_path):
+        metrics = load(metrics_path)
+        metrics["burnless_tokens"] = int(metrics["burnless_tokens"]) + amount
+        metrics["by_source"][source] = int(metrics["by_source"].get(source, 0)) + amount
 
-    if source == "raw_logs_isolated":
-        metrics["dead_logs_isolated"] = int(metrics.get("dead_logs_isolated", 0)) + 1
-    elif source == "repeated_context_avoided":
-        metrics["repeated_briefings_avoided"] = (
-            int(metrics.get("repeated_briefings_avoided", 0)) + 1
+        if source == "raw_logs_isolated":
+            metrics["dead_logs_isolated"] = int(metrics.get("dead_logs_isolated", 0)) + 1
+        elif source == "repeated_context_avoided":
+            metrics["repeated_briefings_avoided"] = (
+                int(metrics.get("repeated_briefings_avoided", 0)) + 1
+            )
+        elif source == "expensive_model_avoided":
+            metrics["expensive_model_calls_avoided"] = (
+                int(metrics.get("expensive_model_calls_avoided", 0)) + 1
+            )
+
+        metrics["estimated_cost_avoided_usd"] = round(
+            (metrics["burnless_tokens"] / 1_000_000) * usd_per_million, 4
         )
-    elif source == "expensive_model_avoided":
-        metrics["expensive_model_calls_avoided"] = (
-            int(metrics.get("expensive_model_calls_avoided", 0)) + 1
-        )
 
-    metrics["estimated_cost_avoided_usd"] = round(
-        (metrics["burnless_tokens"] / 1_000_000) * usd_per_million, 4
-    )
-
-    save(metrics_path, metrics)
+        save(metrics_path, metrics)
 
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -191,25 +197,26 @@ def record_encoder_call(
     This is the floor — the actual Maestro naive-replay cost would also include
     repeated history bytes which capsules avoid entirely.
     """
-    metrics = load(metrics_path)
-    metrics["encoder_calls"] = int(metrics.get("encoder_calls", 0)) + 1
-    metrics["encoder_input_chars_seen"] = (
-        int(metrics.get("encoder_input_chars_seen", 0)) + max(raw_input_chars, 0)
-    )
-    metrics["encoder_capsule_output_tokens"] = (
-        int(metrics.get("encoder_capsule_output_tokens", 0)) + max(capsule_output_tokens, 0)
-    )
-    raw_estimate = max(int(raw_input_chars / chars_per_token), 0)
-    saved = max(raw_estimate - max(capsule_output_tokens, 0), 0)
-    if saved > 0:
-        metrics["burnless_tokens"] = int(metrics["burnless_tokens"]) + saved
-        metrics["by_source"]["capsule_compression"] = (
-            int(metrics["by_source"].get("capsule_compression", 0)) + saved
+    with _metrics_lock(metrics_path):
+        metrics = load(metrics_path)
+        metrics["encoder_calls"] = int(metrics.get("encoder_calls", 0)) + 1
+        metrics["encoder_input_chars_seen"] = (
+            int(metrics.get("encoder_input_chars_seen", 0)) + max(raw_input_chars, 0)
         )
-    metrics["estimated_cost_avoided_usd"] = round(
-        (metrics["burnless_tokens"] / 1_000_000) * 15.0, 4
-    )
-    save(metrics_path, metrics)
+        metrics["encoder_capsule_output_tokens"] = (
+            int(metrics.get("encoder_capsule_output_tokens", 0)) + max(capsule_output_tokens, 0)
+        )
+        raw_estimate = max(int(raw_input_chars / chars_per_token), 0)
+        saved = max(raw_estimate - max(capsule_output_tokens, 0), 0)
+        if saved > 0:
+            metrics["burnless_tokens"] = int(metrics["burnless_tokens"]) + saved
+            metrics["by_source"]["capsule_compression"] = (
+                int(metrics["by_source"].get("capsule_compression", 0)) + saved
+            )
+        metrics["estimated_cost_avoided_usd"] = round(
+            (metrics["burnless_tokens"] / 1_000_000) * 15.0, 4
+        )
+        save(metrics_path, metrics)
     if saved > 0:
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -248,26 +255,27 @@ def record_decoder_call(
     Haiku decoder call (cheaper per token). The avoided count here is the
     Maestro-equivalent output that didn't get billed at Sonnet rates.
     """
-    metrics = load(metrics_path)
-    metrics["decoder_calls"] = int(metrics.get("decoder_calls", 0)) + 1
-    metrics["decoder_capsule_input_tokens"] = (
-        int(metrics.get("decoder_capsule_input_tokens", 0)) + max(capsule_input_tokens, 0)
-    )
-    metrics["decoder_expanded_output_tokens"] = (
-        int(metrics.get("decoder_expanded_output_tokens", 0)) + max(expanded_output_tokens, 0)
-    )
-    avoided = max(
-        max(expanded_output_tokens, 0) - max(capsule_input_tokens, 0), 0
-    )
-    if avoided > 0:
-        metrics["burnless_tokens"] = int(metrics["burnless_tokens"]) + avoided
-        metrics["by_source"]["output_decompression_avoided"] = (
-            int(metrics["by_source"].get("output_decompression_avoided", 0)) + avoided
+    with _metrics_lock(metrics_path):
+        metrics = load(metrics_path)
+        metrics["decoder_calls"] = int(metrics.get("decoder_calls", 0)) + 1
+        metrics["decoder_capsule_input_tokens"] = (
+            int(metrics.get("decoder_capsule_input_tokens", 0)) + max(capsule_input_tokens, 0)
         )
-    metrics["estimated_cost_avoided_usd"] = round(
-        (metrics["burnless_tokens"] / 1_000_000) * 15.0, 4
-    )
-    save(metrics_path, metrics)
+        metrics["decoder_expanded_output_tokens"] = (
+            int(metrics.get("decoder_expanded_output_tokens", 0)) + max(expanded_output_tokens, 0)
+        )
+        avoided = max(
+            max(expanded_output_tokens, 0) - max(capsule_input_tokens, 0), 0
+        )
+        if avoided > 0:
+            metrics["burnless_tokens"] = int(metrics["burnless_tokens"]) + avoided
+            metrics["by_source"]["output_decompression_avoided"] = (
+                int(metrics["by_source"].get("output_decompression_avoided", 0)) + avoided
+            )
+        metrics["estimated_cost_avoided_usd"] = round(
+            (metrics["burnless_tokens"] / 1_000_000) * 15.0, 4
+        )
+        save(metrics_path, metrics)
     if avoided > 0:
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -302,34 +310,35 @@ def record_brain_call(
     repeated context would cost at full input price without caching):
         saved = cache_read_tokens (these would otherwise be billed at input rate)
     """
-    metrics = load(metrics_path)
-    # legacy persisted key name (kept for on-disk back-compat); represents the Maestro layer
-    metrics["brain_calls"] = int(metrics.get("brain_calls", 0)) + 1
-    metrics["brain_input_tokens"] = (
-        int(metrics.get("brain_input_tokens", 0)) + max(input_tokens, 0)
-    )
-    metrics["brain_output_tokens"] = (
-        int(metrics.get("brain_output_tokens", 0)) + max(output_tokens, 0)
-    )
-    metrics["brain_cache_read_tokens"] = (
-        int(metrics.get("brain_cache_read_tokens", 0)) + max(cache_read_tokens, 0)
-    )
-    metrics["brain_cache_creation_tokens"] = (
-        int(metrics.get("brain_cache_creation_tokens", 0)) + max(cache_creation_tokens, 0)
-    )
-    saved = max(cache_read_tokens, 0)
-    if saved > 0:
-        metrics["burnless_tokens"] = int(metrics["burnless_tokens"]) + saved
-        metrics["by_source"]["repeated_context_avoided"] = (
-            int(metrics["by_source"].get("repeated_context_avoided", 0)) + saved
+    with _metrics_lock(metrics_path):
+        metrics = load(metrics_path)
+        # legacy persisted key name (kept for on-disk back-compat); represents the Maestro layer
+        metrics["brain_calls"] = int(metrics.get("brain_calls", 0)) + 1
+        metrics["brain_input_tokens"] = (
+            int(metrics.get("brain_input_tokens", 0)) + max(input_tokens, 0)
         )
-        metrics["repeated_briefings_avoided"] = (
-            int(metrics.get("repeated_briefings_avoided", 0)) + 1
+        metrics["brain_output_tokens"] = (
+            int(metrics.get("brain_output_tokens", 0)) + max(output_tokens, 0)
         )
-    metrics["estimated_cost_avoided_usd"] = round(
-        (metrics["burnless_tokens"] / 1_000_000) * 15.0, 4
-    )
-    save(metrics_path, metrics)
+        metrics["brain_cache_read_tokens"] = (
+            int(metrics.get("brain_cache_read_tokens", 0)) + max(cache_read_tokens, 0)
+        )
+        metrics["brain_cache_creation_tokens"] = (
+            int(metrics.get("brain_cache_creation_tokens", 0)) + max(cache_creation_tokens, 0)
+        )
+        saved = max(cache_read_tokens, 0)
+        if saved > 0:
+            metrics["burnless_tokens"] = int(metrics["burnless_tokens"]) + saved
+            metrics["by_source"]["repeated_context_avoided"] = (
+                int(metrics["by_source"].get("repeated_context_avoided", 0)) + saved
+            )
+            metrics["repeated_briefings_avoided"] = (
+                int(metrics.get("repeated_briefings_avoided", 0)) + 1
+            )
+        metrics["estimated_cost_avoided_usd"] = round(
+            (metrics["burnless_tokens"] / 1_000_000) * 15.0, 4
+        )
+        save(metrics_path, metrics)
     if saved > 0:
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -421,22 +430,23 @@ def increment_keepalive_ping(
     cost_usd: float,
     cache_read_tokens: int,
 ) -> None:
-    metrics = load(path)
-    metrics["keepalive_pings_total"] = int(metrics.get("keepalive_pings_total", 0)) + 1
-    if status == "ok":
-        metrics["keepalive_pings_ok"] = int(metrics.get("keepalive_pings_ok", 0)) + 1
-    elif status == "miss":
-        metrics["keepalive_pings_miss"] = int(metrics.get("keepalive_pings_miss", 0)) + 1
-    else:
-        metrics["keepalive_pings_err"] = int(metrics.get("keepalive_pings_err", 0)) + 1
-    metrics["keepalive_cost_usd"] = round(
-        float(metrics.get("keepalive_cost_usd", 0.0)) + cost_usd, 6
-    )
-    by_source = metrics.setdefault("by_source", {})
-    by_source["keepalive_cache_renewed"] = (
-        int(by_source.get("keepalive_cache_renewed", 0)) + cache_read_tokens
-    )
-    save(path, metrics)
+    with _metrics_lock(path):
+        metrics = load(path)
+        metrics["keepalive_pings_total"] = int(metrics.get("keepalive_pings_total", 0)) + 1
+        if status == "ok":
+            metrics["keepalive_pings_ok"] = int(metrics.get("keepalive_pings_ok", 0)) + 1
+        elif status == "miss":
+            metrics["keepalive_pings_miss"] = int(metrics.get("keepalive_pings_miss", 0)) + 1
+        else:
+            metrics["keepalive_pings_err"] = int(metrics.get("keepalive_pings_err", 0)) + 1
+        metrics["keepalive_cost_usd"] = round(
+            float(metrics.get("keepalive_cost_usd", 0.0)) + cost_usd, 6
+        )
+        by_source = metrics.setdefault("by_source", {})
+        by_source["keepalive_cache_renewed"] = (
+            int(by_source.get("keepalive_cache_renewed", 0)) + cache_read_tokens
+        )
+        save(path, metrics)
 
 
 def bump_legacy_counter(metrics_path: Path, name: str, amount: int = 1) -> None:
@@ -444,17 +454,19 @@ def bump_legacy_counter(metrics_path: Path, name: str, amount: int = 1) -> None:
     allowed = {"legacy_run_calls", "legacy_compress_calls", "legacy_decompress_calls"}
     if name not in allowed:
         return
-    m = load(metrics_path)
-    m[name] = int(m.get(name, 0)) + int(amount)
-    save(metrics_path, m)
+    with _metrics_lock(metrics_path):
+        m = load(metrics_path)
+        m[name] = int(m.get(name, 0)) + int(amount)
+        save(metrics_path, m)
 
 
 def bump_ratio_observed(metrics_path: Path, ratio: float) -> None:
     """Accumulate observed compression ratio + count for averaging."""
-    m = load(metrics_path)
-    m["compression_ratio_observed_sum"] = float(m.get("compression_ratio_observed_sum", 0.0)) + float(ratio)
-    m["compression_ratio_observed_count"] = int(m.get("compression_ratio_observed_count", 0)) + 1
-    save(metrics_path, m)
+    with _metrics_lock(metrics_path):
+        m = load(metrics_path)
+        m["compression_ratio_observed_sum"] = float(m.get("compression_ratio_observed_sum", 0.0)) + float(ratio)
+        m["compression_ratio_observed_count"] = int(m.get("compression_ratio_observed_count", 0)) + 1
+        save(metrics_path, m)
 
 
 def _fresh() -> dict:

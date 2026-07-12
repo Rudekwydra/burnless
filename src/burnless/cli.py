@@ -174,6 +174,12 @@ def _hardcore_blocked(
 
 
 def cmd_delegate(args: argparse.Namespace, cfg_override: dict | None = None) -> int:
+    if os.environ.get("BURNLESS_WORKER") == "1" and os.environ.get("BURNLESS_ALLOW_NESTED") != "1":
+        print(
+            "burnless: worker context — re-delegacao bloqueada. Execute a task diretamente; opt-in explicito: BURNLESS_ALLOW_NESTED=1",
+            file=sys.stderr,
+        )
+        return 7
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     # cfg_override lets cmd_do render the delegation against the EFFECTIVE
@@ -1216,6 +1222,12 @@ def _worker_overrides_from_args(args) -> dict:
 
 def cmd_do(args: argparse.Namespace) -> int:
     """Atomic delegate + run in a single command. Equivalent to `burnless do "prompt"`."""
+    if os.environ.get("BURNLESS_WORKER") == "1" and os.environ.get("BURNLESS_ALLOW_NESTED") != "1":
+        print(
+            "burnless: worker context — re-delegacao bloqueada. Execute a task diretamente; opt-in explicito: BURNLESS_ALLOW_NESTED=1",
+            file=sys.stderr,
+        )
+        return 7
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
 

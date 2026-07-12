@@ -291,6 +291,21 @@ def _pid_is_dead(process_instance_id: str) -> bool:
     return False
 
 
+def _pid_is_dead_or_reused(process_instance_id: str, expected_proc_name: str) -> bool:
+    if _pid_is_dead(process_instance_id):
+        return True
+    expected = str(expected_proc_name or "").strip()
+    if not expected:
+        return False
+    os_pid = _extract_os_pid(process_instance_id)
+    if os_pid is None:
+        return False
+    current = _process_name_best_effort(str(os_pid))
+    if not current:
+        return False
+    return current != expected
+
+
 def _find_chain_id_by_pid(root: Path, host: str, process_instance_id: str) -> str | None:
     chains_root = _chains_root(root)
     if not chains_root.exists():
@@ -1492,7 +1507,7 @@ def claim_handoff(
                         continue
                 except Exception:
                     pass
-            if not _pid_is_dead(str(meta.get("pid") or "")):
+            if not _pid_is_dead_or_reused(str(meta.get("pid") or ""), str(meta.get("pid_proc_name") or "")):
                 continue
             chain_id = str(meta.get("chain_id") or meta_path.parent.name)
             candidates.append((last_seen, chain_id, meta))
@@ -1653,7 +1668,7 @@ def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
             continue
         if (now - last_seen_epoch) <= CHAIN_GC_TTL_SECONDS:
             continue
-        if not _pid_is_dead(str(meta.get("pid") or "")):
+        if not _pid_is_dead_or_reused(str(meta.get("pid") or ""), str(meta.get("pid_proc_name") or "")):
             continue
         chain_id = str(meta.get("chain_id") or chain_dir.name)
         handoff_path = chain_dir / CHAIN_HANDOFF_NAME
