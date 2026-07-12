@@ -83,10 +83,20 @@ def extract_entities(text: str) -> set[str]:
     return entities
 
 
+def _first_entity_in_text(text: str) -> str | None:
+    """Return the entity from extract_entities(text) whose first occurrence
+    in text has the smallest index (text.find). Tiebreak lexicographically.
+    """
+    ents = extract_entities(text)
+    if not ents:
+        return None
+    return min(ents, key=lambda e: (text.find(e), e))
+
+
 def contract_key(line: str) -> str:
     line = line.lstrip('- ').strip()
-    ents = extract_entities(line)
-    return next(iter(ents)) if ents else line
+    first = _first_entity_in_text(line)
+    return first if first else line
 
 
 def update_contract_ages(prev_ages: dict | None, new_md: str, turn: int) -> dict:
@@ -264,9 +274,8 @@ def preserve_guard(prev_md: str, new_md: str, contract_ages: dict | None = None,
     recovered = []
     for contract_line in prev_contracts:
         contract_line_clean = contract_line.lstrip('- ').strip()
-        first_entity = extract_entities(contract_line_clean)
-        if first_entity:
-            first_token = next(iter(first_entity))
+        first_token = _first_entity_in_text(contract_line_clean)
+        if first_token:
             if first_token not in new_md:
                 key = contract_key(contract_line_clean)
                 if contract_ages is None:
