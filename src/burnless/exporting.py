@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .markers import to_en_markers
+
 SCHEMA = "burnless-epoch-export/v1"
 EXPORTS_DIRNAME = "exports"
 DEFAULT_EXPORTS_KEEP = 30
@@ -129,7 +131,10 @@ def export_epoch(root, host: str, host_session_id: str) -> dict[str, Any]:
         exports_dir.mkdir(parents=True, exist_ok=True)
 
         target = exports_dir / f"epoch-{host}-{sid8}-{ts}.md"
-        _atomic_write(target, render_export(project, host, host_session_id, checkpoint, created))
+        content = render_export(project, host, host_session_id, checkpoint, created)
+        if recovery._format_en_markers(root_path):
+            content = to_en_markers(content)
+        _atomic_write(target, content)
         removed = _gc_exports(exports_dir, _exports_keep(root_path))
         return {"status": "exported", "path": str(target), "gc_removed": removed}
     except Exception as exc:

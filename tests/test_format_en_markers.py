@@ -249,3 +249,110 @@ def test_render_v3_sections_en():
     assert "## Decisions" in en_output
     assert "## Foco atual" not in en_output
     assert "## Decisões" not in en_output
+
+
+def test_export_epoch_en_toggle_on(tmp_path):
+    """With format.en_markers=true, export has EN markers."""
+    from burnless.exporting import export_epoch
+
+    root = tmp_path / "project"
+    root.mkdir()
+    burnless_dir = root / ".burnless"
+    burnless_dir.mkdir()
+
+    # Write config with EN toggle
+    config_file = burnless_dir / "config.yaml"
+    config_file.write_text("format:\n  en_markers: true\n", encoding="utf-8")
+
+    pt_living_md = """## Foco atual
+- x
+
+## Decisões
+- y
+
+PERGUNTA:
+q
+
+RESPOSTA:
+a
+"""
+
+    # First write a checkpoint
+    write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="test_session",
+        process_instance_id="test_proc",
+        living_md=pt_living_md,
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    # Export epoch
+    result = export_epoch(root, host="claude", host_session_id="test_session")
+
+    # Check export file exists and is non-empty
+    export_path = result.get("path")
+    assert export_path is not None
+    export_file = Path(export_path)
+    assert export_file.exists()
+    content = export_file.read_text(encoding="utf-8")
+    assert len(content) > 0
+
+    # Check EN markers
+    assert "## Current focus" in content
+    assert "## Decisions" in content
+    assert "Q:" in content
+    assert "A:" in content
+    # Check no PT markers
+    assert "## Foco atual" not in content
+    assert "## Decisões" not in content
+    assert "PERGUNTA:" not in content
+    assert "RESPOSTA:" not in content
+
+
+def test_export_epoch_toggle_off_unchanged(tmp_path):
+    """Without EN toggle, export has PT markers."""
+    from burnless.exporting import export_epoch
+
+    root = tmp_path / "project"
+    root.mkdir()
+    burnless_dir = root / ".burnless"
+    burnless_dir.mkdir()
+
+    # No config file or explicit toggle=false
+    pt_living_md = """## Foco atual
+- x
+
+## Decisões
+- y
+"""
+
+    # First write a checkpoint
+    write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="test_session",
+        process_instance_id="test_proc",
+        living_md=pt_living_md,
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    # Export epoch
+    result = export_epoch(root, host="claude", host_session_id="test_session")
+
+    # Check export file exists and is non-empty
+    export_path = result.get("path")
+    assert export_path is not None
+    export_file = Path(export_path)
+    assert export_file.exists()
+    content = export_file.read_text(encoding="utf-8")
+    assert len(content) > 0
+
+    # Check PT markers remain
+    assert "## Foco atual" in content
+    assert "## Decisões" in content
+    # Check no EN markers
+    assert "## Current focus" not in content
+    assert "## Decisions" not in content
