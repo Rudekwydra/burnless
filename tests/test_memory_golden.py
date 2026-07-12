@@ -119,7 +119,7 @@ def failing_rewriter(_prompt: str):  # encoder outage: compaction fails, fail-op
 class GoldenRun:
     """Drives the real pipeline for one scenario; keeps per-rollover results."""
 
-    def __init__(self, scenario: dict, project_root: Path, pid: str = "proc-golden", sid_prefix: str = "sid-golden", cwd: str = None):
+    def __init__(self, scenario: dict, project_root: Path, pid: str = "proc-golden", sid_prefix: str = "sid-golden", cwd: str = None, rewriter=None):
         self.scenario = scenario
         self.project = project_root
         self.root = project_root / ".burnless"
@@ -129,6 +129,7 @@ class GoldenRun:
         self.cwd = cwd or str(project_root)
         self.restores: list[dict] = []
         self.last_turns: list[dict] = []
+        self.rewriter = rewriter
         config = scenario.get("config")
         if config:
             self.root.mkdir(parents=True, exist_ok=True)
@@ -144,7 +145,7 @@ class GoldenRun:
         turn_no = 0
         for s_idx, session in enumerate(sessions):
             sid = f"{self.sid_prefix}-{s_idx + 1}"
-            rewriter = failing_rewriter if session.get("rewriter") == "fail" else fake_rewriter
+            rewriter = failing_rewriter if session.get("rewriter") == "fail" else (self.rewriter or fake_rewriter)
             turns = session["turns"]
             for t_idx, turn in enumerate(turns):
                 turn_no += 1
