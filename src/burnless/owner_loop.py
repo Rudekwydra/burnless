@@ -6,6 +6,7 @@ from pathlib import Path
 from .owner_cache import compute_base_fingerprint, write_refined_seed
 from .owner_validate import validate_owner_output
 from .epochs_v2 import living_rewrite_prompt_v3
+from .markers import to_pt_markers
 
 
 def log_owner_event(root, event: dict) -> None:
@@ -66,6 +67,8 @@ def refine_seed(
             if root:
                 log_owner_event(root, {"phase": "refine", "result": "empty"})
             return False
+
+        candidate = to_pt_markers(candidate)
 
         # 3. Validate output; bars hallucination
         safe = validate_owner_output(floor_md, candidate)

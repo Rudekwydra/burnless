@@ -47,3 +47,33 @@ def find_line_anchored(text: str, marker: str) -> int:
         return 0
     idx = text.find("\n" + marker)
     return idx + 1 if idx != -1 else -1
+
+
+SECTION_PT_TO_EN: dict[str, str] = {pt: en for pt, en in SECTION_PAIRS if en != pt}
+
+# Exchange marker pairs for whole-line write/read transforms.
+_EXCHANGE_PT_TO_EN: dict[str, str] = {"PERGUNTA:": "Q:", "RESPOSTA:": "A:"}
+_EXCHANGE_EN_TO_PT: dict[str, str] = {"Q:": "PERGUNTA:", "A:": "RESPOSTA:"}
+
+
+def _transform_lines(md: str, section_map: dict[str, str], exchange_map: dict[str, str]) -> str:
+    out = []
+    for line in md.split("\n"):
+        if line.startswith("## "):
+            name = line[3:].strip()
+            if name in section_map:
+                line = "## " + section_map[name]
+        elif line.strip() in exchange_map:
+            line = exchange_map[line.strip()]
+        out.append(line)
+    return "\n".join(out)
+
+
+def to_en_markers(md: str) -> str:
+    """Rewrite PT structural markers to EN (section headers + Q/A lines). Content untouched."""
+    return _transform_lines(md, SECTION_PT_TO_EN, _EXCHANGE_PT_TO_EN)
+
+
+def to_pt_markers(md: str) -> str:
+    """Inverse of to_en_markers — normalize EN structural markers back to PT canonical."""
+    return _transform_lines(md, SECTION_EN_TO_PT, _EXCHANGE_EN_TO_PT)
