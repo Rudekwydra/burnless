@@ -64,7 +64,7 @@ DEFAULT_CONFIG: dict = {
     # encoder/maestro entries OVERRIDE the preset. Omitting all three keys
     # keeps legacy behavior (default = "protocol").
     "preset": "protocol",          # "protocol" | "direct"
-    "encoder": {"model": None},    # L1: None→from preset; "passthrough"→no-op
+    "encoder": {"model": None, "fallback_model": None},    # L1: None→from preset; "passthrough"→no-op; fallback_model: Anthropic model when local fails (toggle-first: default OFF)
     "maestro": {"model": None},    # L2: None→from preset; "off"→short-circuit
     "routing": {
         "gold": [
