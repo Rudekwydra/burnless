@@ -854,6 +854,7 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
             turn = prev_state.get('turn', 0) + 1
             prev_ages = prev_state.get('contract_ages', {})
 
+            used_default_rewriter = rewriter is None
             if rewriter is None:
                 rewriter = living_rewriter(root)
 
@@ -882,19 +883,41 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
             if eff_version >= 3 and _compact_structure_gate_enabled(root):
                 parsed_gate = parse_living_v3(new_md)
                 if not any(parsed_gate.get(s) for s in SECTIONS_V3):
-                    try:
-                        from . import recovery as recovery_mod2
-                        recovery_mod2.record_hook_error(
-                            root, hook="apply_capture_structure_reject", host="claude",
-                            error=f"encoder output has zero v3 sections ({len(new_md)}B); previous doc kept",
-                        )
-                    except Exception:
-                        pass
-                    lp.parent.mkdir(parents=True, exist_ok=True)
-                    if not lp.exists():
-                        lp.write_text("", encoding='utf-8')
-                    push_ring(root, chat_id, exchange)
-                    return lp
+                    fallback_attempted = False
+                    if used_default_rewriter and enc.get("fallback_model"):
+                        fallback_model = enc.get("fallback_model")
+                        try:
+                            from . import recovery as recovery_mod2
+                            recovery_mod2.record_hook_error(
+                                root, hook="apply_capture_fallback_retry", host="claude",
+                                error=f"structure gate rejected ({len(new_md)}B zero sections); retrying with fallback {fallback_model}",
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            fallback_md = _claude_rewrite(prompt, fallback_model, cfg_timeout, root)
+                            if fallback_md:
+                                fallback_parsed = parse_living_v3(fallback_md)
+                                if any(fallback_parsed.get(s) for s in SECTIONS_V3):
+                                    new_md = fallback_md
+                                    fallback_attempted = True
+                        except Exception:
+                            pass
+
+                    if not fallback_attempted:
+                        try:
+                            from . import recovery as recovery_mod2
+                            recovery_mod2.record_hook_error(
+                                root, hook="apply_capture_structure_reject", host="claude",
+                                error=f"encoder output has zero v3 sections ({len(new_md)}B); previous doc kept",
+                            )
+                        except Exception:
+                            pass
+                        lp.parent.mkdir(parents=True, exist_ok=True)
+                        if not lp.exists():
+                            lp.write_text("", encoding='utf-8')
+                        push_ring(root, chat_id, exchange)
+                        return lp
 
             ages = update_contract_ages(prev_ages, new_md, turn)
             new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)
@@ -948,6 +971,41 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
         return lp
 
 
+def _claude_rewrite(prompt: str, model: str, cfg_timeout: float, project_root) -> str | None:
+    """Call claude binary with encoder system prompt. Returns output or None on failure."""
+    try:
+        try:
+            from . import warm_session
+            from .warm_session import _claude_binary
+            claude_bin = _claude_binary() or "claude"
+        except Exception:
+            claude_bin = "claude"
+        try:
+            iso_cwd = warm_session.worker_cwd(Path(project_root) / ".burnless", model)
+        except Exception:
+            iso_cwd = None
+        result = subprocess.run(
+            [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
+             "--append-system-prompt", ENCODER_SYSTEM_PROMPT,
+             "--allowedTools", "", "--output-format", "json"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=(cfg_timeout or 60),
+            cwd=iso_cwd,
+            env={**os.environ, "BURNLESS_NO_EPOCH": "1"},
+        )
+        data = json.loads(result.stdout)
+        out = data["result"]
+        out = out.strip()
+        if out.startswith("```"):
+            lines = out.split("\n")
+            out = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+        return out if out else None
+    except Exception:
+        return None
+
+
 def living_rewriter(project_root) -> Callable[[str], str | None]:
     def _rewrite(prompt: str) -> str | None:
         try:
@@ -972,6 +1030,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
             except (TypeError, ValueError):
                 cfg_timeout = 0
 
+            out = None
             if provider == "ollama-local":
                 # RM-2: endpoint/timeout come from config (encoder.endpoint,
                 # encoder.timeout_s); BURNLESS_LOCAL_API is an override, not
@@ -1013,34 +1072,23 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                 from .compression import _strip_gemma_channels
                 out = _strip_gemma_channels(out)
             else:
-                try:
-                    from . import warm_session
-                    from .warm_session import _claude_binary
-                    claude_bin = _claude_binary() or "claude"
-                except Exception:
-                    claude_bin = "claude"
-                try:
-                    iso_cwd = warm_session.worker_cwd(Path(project_root) / ".burnless", model)
-                except Exception:
-                    iso_cwd = None
-                result = subprocess.run(
-                    [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
-                     "--append-system-prompt", ENCODER_SYSTEM_PROMPT,
-                     "--allowedTools", "", "--output-format", "json"],
-                    input=prompt,
-                    capture_output=True,
-                    text=True,
-                    timeout=(cfg_timeout or 60),
-                    cwd=iso_cwd,
-                    env={**os.environ, "BURNLESS_NO_EPOCH": "1"},
-                )
-                data = json.loads(result.stdout)
-                out = data["result"]
+                out = _claude_rewrite(prompt, model, cfg_timeout, project_root)
 
-            out = out.strip()
-            if out.startswith("```"):
-                lines = out.split("\n")
-                out = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+            if not out and provider == "ollama-local":
+                fallback_model = enc.get("fallback_model")
+                if fallback_model:
+                    try:
+                        from . import recovery as recovery_fallback
+                        recovery_fallback.record_hook_error(
+                            project_root, hook="living_rewriter_fallback", host="claude",
+                            error=f"local encoder returned empty; falling back to {fallback_model}"
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        return _claude_rewrite(prompt, fallback_model, cfg_timeout, project_root)
+                    except Exception:
+                        return None
 
             return out if out else None
         except Exception as exc:
@@ -1052,6 +1100,22 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                 )
             except Exception:
                 pass
+
+            fallback_model = enc.get("fallback_model")
+            if fallback_model and provider == "ollama-local":
+                try:
+                    from . import recovery as recovery_fallback
+                    recovery_fallback.record_hook_error(
+                        project_root, hook="living_rewriter_fallback", host="claude",
+                        error=f"local encoder failed ({type(exc).__name__}); falling back to {fallback_model}"
+                    )
+                except Exception:
+                    pass
+                try:
+                    return _claude_rewrite(prompt, fallback_model, cfg_timeout, project_root)
+                except Exception:
+                    return None
+
             return None
 
     return _rewrite
