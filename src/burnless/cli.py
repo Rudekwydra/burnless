@@ -2463,6 +2463,12 @@ def _pilot_next_session_id(run_id: str, rollover_index: int) -> str:
     return f"{run_id}-fresh-{rollover_index}"
 
 
+def _extract_rollover_meta(rollover_result):
+    last = (rollover_result or {}).get("last") or {}
+    prepared = last.get("prepared") or {}
+    return last, prepared, last.get("new_session_id")
+
+
 def _pilot_yesno(value: object) -> str:
     return "yes" if bool(value) else "no"
 
@@ -2655,7 +2661,7 @@ def _run_pilot_cycle(
             monitor_thread.join(timeout=1.0)
 
     rollover_result = rollover_state.get("result") or {}
-    prepared = rollover_result.get("prepared") or {}
+    last, prepared, new_session_id = _extract_rollover_meta(rollover_result)
     restore_meta = (prepared.get("restore") or {}).get("recovery") or {}
     turns = int((prepared.get("run_state") or {}).get("count") or 0)
     pilot_append_session_log(
@@ -2684,8 +2690,8 @@ def _run_pilot_cycle(
             "phase": "restart_end" if is_restart_cycle else "end",
             "returncode": int(rc if isinstance(rc, int) else rc[0]),
             "new_session": (
-                rollover_result.get("new_session_id")
-                if (rollover_result.get("last") or {}).get("status") == "prepared"
+                new_session_id
+                if last.get("status") == "prepared"
                 else None
             ),
             "rollover": rollover_result,
@@ -2876,16 +2882,16 @@ def cmd_pilot(args: argparse.Namespace) -> int:
                 break
 
             rollover = cycle.get("rollover") or {}
-            last = rollover.get("last") or {}
+            last, prepared, new_session_id_from_monitor = _extract_rollover_meta(rollover)
             if last.get("status") != "prepared":
                 break
 
-            prepared_restore = (rollover.get("prepared") or {}).get("restore") or {}
+            prepared_restore = (prepared.get("restore") or {}) or {}
             restore_text = (prepared_restore.get("hookSpecificOutput") or {}).get("additionalContext")
             if selected_host == "codex" and isinstance(restore_text, str) and restore_text.strip():
                 pending_initial_input = (restore_text.strip() + "\n").encode("utf-8")
 
-            current_session_id = rollover.get("new_session_id") or next_session_id
+            current_session_id = new_session_id_from_monitor or next_session_id
             rollover_index += 1
     except KeyboardInterrupt:
         # Ctrl-C between cycles (during relay it goes to the child). Journal,

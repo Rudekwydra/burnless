@@ -87,7 +87,7 @@ def test_compaction_logs_refs_ratio(tmp_path):
     )
     assert result["status"] == "committed"
 
-    log_path = root / ".burnless" / "owner_loop.jsonl"
+    log_path = root / "owner_loop.jsonl"
     events = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     committed = [ev for ev in events if ev.get("event") == "checkpoint_committed"]
     assert committed
