@@ -107,6 +107,26 @@ async def handle_delegate(text: str, tier: Optional[str] = None, project_root: O
             return {"error": "spec_gate", "reason": gate.reason, "hint": gate.message}
         text = gate.text
 
+        # Hardcore tier gate: only if tier was manually overridden
+        if tier:
+            decision = routing.decide_route(text, tier, cfg.get("routing", {}))
+            if decision.action == "blocked":
+                msg = routing.format_escalation_block(
+                    cfg.get("language", "pt-BR"),
+                    tier,
+                    decision.natural_tier,
+                    decision.matched_keyword or "default",
+                    decision.policy_source,
+                )
+                msg += "\nEscape hatch: use o CLI com --force (o MCP nao tem force)."
+                return {
+                    "error": "hardcore_blocked",
+                    "natural_tier": decision.natural_tier,
+                    "matched_keyword": decision.matched_keyword or "default",
+                    "policy_source": decision.policy_source,
+                    "hint": msg,
+                }
+
         state_path = burnless_root / "state.json"
         did = state_mod.alloc_delegation_id(state_path)
 
