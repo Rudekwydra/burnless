@@ -124,6 +124,7 @@ def evaluate_rollover(
     rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
     delta_budget_tokens: int = 2000,
+    trusted_confidences: tuple = ("exact",),
 ) -> dict:
     run_state = summarize_run_events(root, run_id)
     if not run_state.get("idle", False):
@@ -138,6 +139,14 @@ def evaluate_rollover(
         return {
             "should_rollover": False,
             "reason": "usage_unknown",
+            "run_state": run_state,
+            "usage": usage,
+        }
+
+    if confidence not in trusted_confidences:
+        return {
+            "should_rollover": False,
+            "reason": "usage_estimated_untrusted",
             "run_state": run_state,
             "usage": usage,
         }
@@ -184,6 +193,7 @@ def should_rollover(
     context_usage: ContextUsage | None = None,
     rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
+    trusted_confidences: tuple = ("exact",),
 ) -> dict:
     run_state = summarize_run_events(root, run_id)
     if not run_state.get("idle", False):
@@ -195,6 +205,9 @@ def should_rollover(
     confidence = usage.confidence or "unknown"
     if current is None or limit is None or confidence == "unknown":
         return {"should_rollover": False, "reason": "usage_unknown", "run_state": run_state, "usage": usage}
+
+    if confidence not in trusted_confidences:
+        return {"should_rollover": False, "reason": "usage_estimated_untrusted", "run_state": run_state, "usage": usage}
 
     pct = (current / limit) if limit else 0.0
     trigger_by_pct = pct >= float(rollover_at_pct)
@@ -228,6 +241,7 @@ def arm_rollover(
     context_usage: ContextUsage | None = None,
     rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
+    trusted_confidences: tuple = ("exact",),
 ) -> dict:
     decision = should_rollover(
         root,
@@ -238,6 +252,7 @@ def arm_rollover(
         context_usage=context_usage,
         rollover_at_tokens=rollover_at_tokens,
         rollover_at_pct=rollover_at_pct,
+        trusted_confidences=trusted_confidences,
     )
     if not decision.get("should_rollover"):
         return {"status": "not_ready", **decision}
@@ -280,6 +295,7 @@ def monitor_rollover_once(
     rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
     delta_budget_tokens: int = 2000,
+    trusted_confidences: tuple = ("exact",),
 ) -> dict:
     decision = should_rollover(
         root,
@@ -290,6 +306,7 @@ def monitor_rollover_once(
         context_usage=context_usage,
         rollover_at_tokens=rollover_at_tokens,
         rollover_at_pct=rollover_at_pct,
+        trusted_confidences=trusted_confidences,
     )
     if not decision.get("should_rollover"):
         return {"status": "not_ready", **decision}
@@ -305,6 +322,7 @@ def monitor_rollover_once(
         context_usage=context_usage,
         rollover_at_tokens=rollover_at_tokens,
         rollover_at_pct=rollover_at_pct,
+        trusted_confidences=trusted_confidences,
     )
     prepared = prepare_rollover(
         root,
@@ -339,6 +357,7 @@ def monitor_rollover_loop(
     poll_interval_s: float = 0.5,
     stop_event: threading.Event | None = None,
     max_checks: int | None = None,
+    trusted_confidences: tuple = ("exact",),
 ) -> dict:
     stop_event = stop_event or threading.Event()
     checks = 0
@@ -357,6 +376,7 @@ def monitor_rollover_loop(
             rollover_at_tokens=rollover_at_tokens,
             rollover_at_pct=rollover_at_pct,
             delta_budget_tokens=delta_budget_tokens,
+            trusted_confidences=trusted_confidences,
         )
         if last.get("status") in {"armed", "prepared"}:
             stop_event.set()

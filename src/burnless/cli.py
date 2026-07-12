@@ -2600,6 +2600,7 @@ def _run_pilot_cycle(
                     delta_budget_tokens=int(pilot_cfg.get("delta_budget_tokens", 2000)),
                     poll_interval_s=float(pilot_cfg.get("poll_interval_s", 0.5)),
                     stop_event=stop_event,
+                    trusted_confidences=("exact", "estimated") if bool(pilot_cfg.get("trust_estimated_usage", False)) else ("exact",),
                 )
                 rollover_state["result"] = result
                 last = result.get("last") or {}
@@ -2756,6 +2757,7 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         print(f"  configured model: {pilot_cfg.get('model', '(default)')}")
         print(f"  rollover mode: {pilot_cfg.get('rollover_mode', 'respawn')}")
         print(f"  auto_rollover: {pilot_cfg.get('auto_rollover', 'default-on (use --no-auto to disable)')}")
+        print(f"  trust_estimated_usage: {pilot_cfg.get('trust_estimated_usage', False)}")
         print(f"  rollover_at_tokens: {pilot_cfg.get('rollover_at_tokens', 40000)}")
         print(f"  rollover_at_pct: {pilot_cfg.get('rollover_at_pct', 0.65)}")
         print(f"  delta_budget_tokens: {pilot_cfg.get('delta_budget_tokens', 2000)}")
