@@ -1842,6 +1842,34 @@ def _resolve_budget_tokens(root_path: Path, source: str) -> int:
         return fallback
 
 
+def _live_handoff_path(root_path: Path) -> Path:
+    return root_path / "epochs" / "_rolling" / "live_handoff.md"
+
+
+def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> str | None:
+    path = _live_handoff_path(root_path)
+    try:
+        if not path.exists():
+            return None
+        stat = path.stat()
+        mtime = stat.st_mtime
+        if time.time() - mtime > ttl_s:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            return None
+        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        stripped = text.strip()
+        return stripped if stripped else None
+    except Exception:
+        return None
+
+
 _RESTORE_POINTER_RULE = (
     "regra: Refs e Recuperáveis são PONTEIROS — use Read/grep sob demanda; "
     "não releia arquivos já conhecidos sem motivo."
@@ -1947,6 +1975,7 @@ def _assemble_restore_layers(
     living_md: str,
     pending: list[dict[str, Any]],
     max_chars: int,
+    handoff: str | None = None,
 ) -> tuple[str, int, int]:
     """Priority-layered restore assembly (A1). Used when the naive full render
     exceeds the budget. Never truncates the MIDDLE of anything; instead it
@@ -2097,6 +2126,8 @@ def _assemble_restore_layers(
     summaries.sort(key=lambda item: item[0])
 
     parts = [header]
+    if handoff:
+        parts += ["", "## Handoff da sessão anterior (escrito pelo próprio modelo, pré-clear)", handoff]
     if priority_block:
         parts += ["", priority_block]
     if decisoes_block:
@@ -2167,6 +2198,9 @@ def render_restore(
     ]
     header = "\n".join(header_parts)
 
+    live_handoff = _consume_live_handoff(root_path)
+    live_handoff_chars = len(live_handoff) if live_handoff else 0
+
     checkpoint_chars = len(living_md.strip())
     max_chars = max(800, int(budget_tokens) * 4)
     selected_checkpoint_path = _latest_checkpoint_path(root_path, host, checkpoint_session_id)
@@ -2181,6 +2215,8 @@ def render_restore(
 
     pending_sorted = sorted(pending, key=lambda r: int(r.get("seq") or 0))
     full_parts = [header]
+    if live_handoff:
+        full_parts += ["", "## Handoff da sessão anterior (escrito pelo próprio modelo, pré-clear)", live_handoff]
     if living_md.strip():
         full_parts += ["", living_md.rstrip()]
     if pending_sorted:
@@ -2199,7 +2235,7 @@ def render_restore(
         # Over budget: priority-layered assembly (A1) — demote, never cut the middle.
         truncated = True
         context, pending_whole, pending_summarized = _assemble_restore_layers(
-            header, manifest, living_md, pending_sorted, max_chars
+            header, manifest, living_md, pending_sorted, max_chars, live_handoff
         )
 
     owner_loop.log_owner_event(
@@ -2242,6 +2278,7 @@ def render_restore(
             "truncated": truncated,
             "pending_whole": pending_whole,
             "pending_summarized": pending_summarized,
+            "live_handoff_chars": live_handoff_chars,
             "reference": str(selected_checkpoint_path) if selected_checkpoint_path else None,
         },
     }
