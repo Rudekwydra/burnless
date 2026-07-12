@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
-from .markers import normalize_section, EXCHANGE_Q_MARKERS, EXCHANGE_A_MARKERS, find_line_anchored
+from .markers import normalize_section, EXCHANGE_Q_MARKERS, EXCHANGE_A_MARKERS, find_line_anchored, to_pt_markers
 
 SECTIONS = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs"]
 
@@ -873,6 +873,9 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
                 prompt = living_rewrite_prompt(prev_md, exchange)
             new_md = rewriter(prompt)
 
+            if new_md:
+                new_md = to_pt_markers(new_md)
+
             if not new_md or not new_md.strip():
                 try:
                     recovery_mod.record_hook_error(
@@ -906,7 +909,7 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
                             if fallback_md:
                                 fallback_parsed = parse_living_v3(fallback_md)
                                 if any(fallback_parsed.get(s) for s in SECTIONS_V3):
-                                    new_md = fallback_md
+                                    new_md = to_pt_markers(fallback_md)
                                     fallback_attempted = True
                         except Exception:
                             pass

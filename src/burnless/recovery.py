@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import owner_loop
-from .markers import EXCHANGE_MARKER_LINES
+from .markers import EXCHANGE_MARKER_LINES, to_en_markers, to_pt_markers, SECTION_PT_TO_EN
 
 SESSION_ROOT_NAME = "sessions"
 ROLLING_ROOT_NAME = "_rolling"
@@ -580,6 +580,8 @@ def read_checkpoint(root, host: str, host_session_id: str) -> dict[str, Any] | N
     for cp in _checkpoint_paths(root_path, host, host_session_id):
         data = _load_checkpoint_at(cp)
         if data is not None:
+            if "living_md" in data:
+                data["living_md"] = to_pt_markers(data.get("living_md") or "")
             return data
     return None
 
@@ -889,11 +891,16 @@ def write_checkpoint(
         parent_final_merged = current.get("parent_final_merged")
     if parent_final_merged is None:
         parent_final_merged = True
+
+    checkpoint_living_md = living_md
+    if _format_en_markers(root_path):
+        checkpoint_living_md = to_en_markers(living_md)
+
     payload = _checkpoint_payload(
         host=host,
         host_session_id=host_session_id,
         process_instance_id=process_instance_id,
-        living_md=living_md,
+        living_md=checkpoint_living_md,
         harvested_state=harvested_state,
         applied_through=applied_through,
         journal_head=journal_head,
@@ -902,6 +909,9 @@ def write_checkpoint(
         inherited_from=inherited_from,
         parent_final_merged=parent_final_merged,
     )
+    if _format_en_markers(root_path):
+        payload["format_version"] = 2
+
     for checkpoint_path in _checkpoint_paths(root_path, host, host_session_id):
         _atomic_json_write(checkpoint_path, payload)
     for mirror_path in _mirror_paths(root_path, host, host_session_id):
@@ -1995,6 +2005,18 @@ def _restore_lang(root_path: Path) -> str:
         return _os.environ.get("BURNLESS_LANG", "en")
 
 
+def _format_en_markers(root_path: Path) -> bool:
+    """Read format.en_markers toggle from config (default False)."""
+    try:
+        from . import config as config_mod
+
+        cfg = config_mod.load(_project_root(root_path) / ".burnless" / "config.yaml")
+        fmt = cfg.get("format") or {} if isinstance(cfg, dict) else {}
+        return bool(fmt.get("en_markers", False))
+    except Exception:
+        return False
+
+
 _MANIFEST_HEADER = "## Manifesto (leia sob demanda, não tudo)"
 _PENDING_HEADER = "## Trocas ainda não consolidadas"
 _LIVING_TRUNCATED_MARKER = "[living_md truncado — leia o checkpoint completo no Manifesto]"
@@ -2045,14 +2067,16 @@ def _render_manifest(
     return "\n".join(lines)
 
 
-def _render_pending_block(record: dict[str, Any]) -> str:
+def _render_pending_block(record: dict[str, Any], *, en: bool = False) -> str:
+    q_marker = "Q:" if en else "PERGUNTA:"
+    a_marker = "A:" if en else "RESPOSTA:"
     block = [
         f"### seq {record.get('seq')}",
         f"exchange_id: {record.get('exchange_id')}",
-        "PERGUNTA:",
+        q_marker,
         record.get("user_text") or "",
         "",
-        "RESPOSTA:",
+        a_marker,
         record.get("assistant_text") or "",
     ]
     files = record.get("files") or []
@@ -2074,13 +2098,14 @@ def _pending_summary_line(record: dict[str, Any], max_chars: int = 120) -> str:
     return f"- seq {record.get('seq')} · {first_line}"
 
 
-def _render_v3_sections(parsed: dict[str, list[str]], names: Iterable[str]) -> str:
+def _render_v3_sections(parsed: dict[str, list[str]], names: Iterable[str], *, en: bool = False) -> str:
     out: list[str] = []
     for name in names:
         entries = parsed.get(name) or []
         if not entries:
             continue
-        out.append(f"## {name}")
+        display_name = SECTION_PT_TO_EN.get(name, name) if en else name
+        out.append(f"## {display_name}")
         for entry in entries:
             if "\n" in entry or entry.startswith("- ") or entry.startswith("#"):
                 out.append(entry)
@@ -2099,6 +2124,7 @@ def _assemble_restore_layers(
     handoff: str | None = None,
     handoff_header: str | None = None,
     lang: str = "en",
+    en: bool = False,
 ) -> tuple[str, int, int]:
     """Priority-layered restore assembly (A1). Used when the naive full render
     exceeds the budget. Never truncates the MIDDLE of anything; instead it
@@ -2132,16 +2158,16 @@ def _assemble_restore_layers(
 
     if is_v3:
         # Layer 2: Foco atual + Threads abertas — never truncated.
-        priority_block = _render_v3_sections(parsed, _PRIORITY_SECTIONS)
+        priority_block = _render_v3_sections(parsed, _PRIORITY_SECTIONS, en=en)
         # Layer 4: current Decisões — protected above older pending / Refs.
-        decisoes_block = _render_v3_sections(parsed, _DECISOES_SECTION)
+        decisoes_block = _render_v3_sections(parsed, _DECISOES_SECTION, en=en)
         # Layer 6: the rest of living_md (Refs, Riscos, Contracts...).
         rest_names = [
             name
             for name in parsed.keys()
             if name not in _PRIORITY_SECTIONS and name not in _DECISOES_SECTION
         ]
-        rest_block = _render_v3_sections(parsed, rest_names)
+        rest_block = _render_v3_sections(parsed, rest_names, en=en)
     else:
         # Fallback: living_md does not parse as V3 — serve it first, whole if
         # possible, tail-truncated (never the middle) if not.
@@ -2165,7 +2191,7 @@ def _assemble_restore_layers(
     # thread's last turn is the anchor for resuming work.
     if pending_sorted:
         newest = pending_sorted[-1]
-        newest_cost = len(_render_pending_block(newest)) + 1
+        newest_cost = len(_render_pending_block(newest, en=en)) + 1
         if budget - newest_cost >= 0:
             budget -= newest_cost
             whole_seqs.add(int(newest.get("seq") or 0))
@@ -2206,7 +2232,7 @@ def _assemble_restore_layers(
         seq = int(record.get("seq") or 0)
         if seq in whole_seqs:
             continue
-        block_cost = len(_render_pending_block(record)) + 1
+        block_cost = len(_render_pending_block(record, en=en)) + 1
         own_summary = len(_pending_summary_line(record)) + 1
         if budget - block_cost < reserve - own_summary:
             break
@@ -2266,7 +2292,7 @@ def _assemble_restore_layers(
             pending_lines.extend(line for _seq, line in summaries)
         for record in pending_sorted:
             if int(record.get("seq") or 0) in whole_seqs:
-                pending_lines.append(_render_pending_block(record))
+                pending_lines.append(_render_pending_block(record, en=en))
         parts.extend(pending_lines)
     parts += ["", manifest]
     context = "\n".join(parts).strip()
@@ -2335,6 +2361,7 @@ def render_restore(
     from . import i18n
 
     lang = _restore_lang(root_path)
+    en = _format_en_markers(root_path)
     handoff_header = i18n.msg("restore_handoff_header", lang)
     header_parts = [
         _RESTORE_PREFIX,
@@ -2370,10 +2397,10 @@ def render_restore(
     if live_handoff:
         full_parts += ["", handoff_header, live_handoff]
     if living_md.strip():
-        full_parts += ["", living_md.rstrip()]
+        full_parts += ["", (to_en_markers(living_md) if en else living_md).rstrip()]
     if pending_sorted:
         full_parts += ["", _PENDING_HEADER]
-        full_parts += [_render_pending_block(record) for record in pending_sorted]
+        full_parts += [_render_pending_block(record, en=en) for record in pending_sorted]
     full_parts += ["", manifest]
     full_context = "\n".join(full_parts).strip()
 
@@ -2387,7 +2414,7 @@ def render_restore(
         # Over budget: priority-layered assembly (A1) — demote, never cut the middle.
         truncated = True
         context, pending_whole, pending_summarized = _assemble_restore_layers(
-            header, manifest, living_md, pending_sorted, max_chars, live_handoff, handoff_header, lang
+            header, manifest, living_md, pending_sorted, max_chars, live_handoff, handoff_header, lang, en
         )
 
     owner_loop.log_owner_event(
