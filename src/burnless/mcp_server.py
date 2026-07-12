@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -125,12 +126,13 @@ async def handle_delegate(text: str, tier: Optional[str] = None, project_root: O
         agent_info = agents_cfg.get(routed_tier, {})
         agent_name = agent_info.get("name", "haiku")
 
+        downgraded_text = re.sub(r"^##\s", "### ", text, flags=re.MULTILINE)
         md_content = delegations.render_delegation(
             delegation_id=did,
             goal="Task delegation",
-            task=text,
+            task=downgraded_text,
             success="Deliver JSON output with status, files, validated, evidence",
-            kind_hint=report_kind.infer_kind_hint(text),
+            kind_hint=report_kind.infer_kind_hint(downgraded_text),
             agent_name=agent_name,
             tier=routed_tier,
             routed_by=routed_by,

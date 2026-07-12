@@ -46,6 +46,7 @@ def _last_assistant_usage_tokens(transcript_path: Path) -> int | None:
         int(last_usage.get("input_tokens") or 0)
         + int(last_usage.get("cache_read_input_tokens") or 0)
         + int(last_usage.get("cache_creation_input_tokens") or 0)
+        + int(last_usage.get("output_tokens") or 0)
     )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import copy
 import os
 import re
 import yaml
@@ -275,7 +276,7 @@ def load(path: Path) -> dict:
     project_data = _read(path)
     user_data = _deep_merge(global_data, project_data)
     if not user_data:
-        return DEFAULT_CONFIG
+        return copy.deepcopy(DEFAULT_CONFIG)
     user_agents = user_data.get("agents") if isinstance(user_data.get("agents"), dict) else {}
     legacy_diamond_only = "diamond" in user_agents and "silver" not in user_agents
     user_comp = user_data.get("compression", {}) if isinstance(user_data.get("compression"), dict) else {}
