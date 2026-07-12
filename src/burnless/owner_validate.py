@@ -3,27 +3,27 @@ import re
 
 def _normalize_core(line: str) -> str:
     """
-    Remove decorações e retorna núcleo textual minúsculo.
-    Ordem: headers/vazias → bullet → trust-tags → provenance → supersede → strip → lower.
+    Remove decorations and return lowercased text core.
+    Order: headers/empty → bullet → trust-tags → provenance → supersede → strip → lower.
     """
-    # Headers e linhas vazias
+    # Headers and empty lines
     if line.startswith("##") or not line.strip():
         return ""
 
-    # Bullet inicial
+    # Initial bullet
     if line.startswith("- "):
         line = line[2:]
 
-    # Trust-tags no começo ([doctrine], [state], [inflight])
+    # Trust-tags at start ([doctrine], [state], [inflight])
     line = re.sub(r"^\[(doctrine|state|inflight)\]\s*", "", line)
 
-    # Provenance no fim ([chat:...])
+    # Provenance at end ([chat:...])
     line = re.sub(r"\[chat:[^\]]*\]\s*$", "", line)
 
-    # Supersede (~~...~~ → conteúdo interno)
+    # Supersede (~~...~~ → inner content)
     line = re.sub(r"~~([^~]*)~~", r"\1", line)
 
-    # Strip e lower
+    # Strip and lower
     return line.strip().lower()
 
 
@@ -75,9 +75,9 @@ def validate_owner_output(
     floor_md: str, candidate_md: str, min_core_len: int = 4
 ) -> str:
     """
-    Valida linha-a-linha. Mantém linhas suportadas, dropa não-suportadas.
-    Remove headers órfãos. Se resultado <25% conteúdo do floor ou vazio, retorna floor.
-    Nunca levanta exceção — em erro, retorna floor.
+    Validate line-by-line. Keep supported lines, drop unsupported ones.
+    Remove orphaned headers. If result <25% of floor content or empty, return floor.
+    Never raises exception — on error, return floor.
     """
     try:
         if not isinstance(floor_md, str):
@@ -85,7 +85,7 @@ def validate_owner_output(
         if not isinstance(candidate_md, str) or not candidate_md.strip():
             return floor_md
 
-        # Constrói lista de suporte e conta linhas de conteúdo do floor
+        # Build support list and count floor content lines
         floor_lines = floor_md.split("\n")
         floor_cores = [c for c in (_normalize_core(line) for line in floor_lines) if c]
         floor_content_count = sum(
@@ -93,29 +93,29 @@ def validate_owner_output(
             if len(_normalize_core(line)) >= min_core_len
         )
 
-        # Filtra candidato linha-a-linha
+        # Filter candidate line-by-line
         candidate_lines = candidate_md.split("\n")
         filtered = []
         for line in candidate_lines:
             core = _normalize_core(line)
-            # Headers, vazias ou suportadas: mantém
+            # Headers, empty, or supported: keep
             if core == "" or _is_supported_fuzzy(core, floor_cores):
                 filtered.append(line)
-            # Senão: dropa linha
+            # Otherwise: drop line
 
-        # Agrupa em seções (header + conteúdo) e remove seções sem conteúdo
+        # Group into sections (header + content) and remove sections without content
         result = []
         i = 0
         while i < len(filtered):
             line = filtered[i]
             if line.startswith("##"):
-                # Coleta header + seu conteúdo até próximo header
+                # Collect header + its content until next header
                 section = [line]
                 j = i + 1
                 while j < len(filtered) and not filtered[j].startswith("##"):
                     section.append(filtered[j])
                     j += 1
-                # Verifica se seção tem conteúdo
+                # Check if section has content
                 has_content = any(
                     len(_normalize_core(l)) >= min_core_len for l in section
                 )
@@ -123,11 +123,11 @@ def validate_owner_output(
                     result.extend(section)
                 i = j
             else:
-                # Não-header fora de seção (antes do primeiro header)
+                # Non-header outside section (before first header)
                 result.append(line)
                 i += 1
 
-        # Remove linhas vazias no início/fim
+        # Remove empty lines at start/end
         while result and not result[0].strip():
             result.pop(0)
         while result and not result[-1].strip():
@@ -135,16 +135,16 @@ def validate_owner_output(
 
         result_md = "\n".join(result)
 
-        # Guarda de degeneração
+        # Degeneration guard
         candidate_content_count = sum(
             1 for line in result
             if len(_normalize_core(line)) >= min_core_len
         )
 
-        # Se floor vazio, retorna resultado
+        # If floor empty, return result
         if floor_content_count == 0:
             return result_md
-        # Se candidato vazio ou <25% do floor, fallback
+        # If candidate empty or <25% of floor, fallback
         if candidate_content_count == 0 or candidate_content_count < floor_content_count * 0.25:
             return floor_md
 

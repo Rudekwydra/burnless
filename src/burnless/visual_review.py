@@ -6,8 +6,7 @@ audit JSON so the operator can scan for "obviously wrong" output at a
 glance — without opening N files manually.
 
 Origin: QTP_OPERATIONAL_TEST_2026-05-06.md issue 5. Worker + LLM
-auditor were both happy with deliverables that were "design feio,
-simplório" — file present, size OK, prose OK, but visual quality bad.
+auditor were both happy with deliverables that were "ugly, simplistic design" — file present, size OK, prose OK, but visual quality bad.
 Filesystem audit (QTP-A) catches missing files; this hook catches
 glanceable failures in things that filesystem can't see.
 

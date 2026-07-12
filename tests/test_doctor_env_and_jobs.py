@@ -26,7 +26,7 @@ class TestCheckF:
         assert c.band == "F"
         assert c.status == "WARN"
         assert "localhost:19999" in c.detail
-        assert "inalcancavel" in c.detail
+        assert "unreachable" in c.detail
 
     def test_f1_ollama_default(self, monkeypatch):
         """Ollama default (env vars unset) → attempts localhost:11434."""
@@ -109,7 +109,7 @@ class TestCheckG:
         assert c.id == "G1"
         assert c.band == "G"
         assert c.status == "FAIL"
-        assert "nao existe" in c.detail
+        assert "does not exist" in c.detail
         assert "missing_job" in c.detail
 
     def test_g_file_too_old(self, monkeypatch, tmp_path):
@@ -146,8 +146,8 @@ class TestCheckG:
         assert c.band == "G"
         assert c.status == "FAIL"
         assert "stale_job" in c.detail
-        assert "ultimo sucesso ha" in c.detail
-        assert "limite 2h" in c.detail  # 2*period_hours = 2*1 = 2
+        assert "last success" in c.detail
+        assert "limit 2h" in c.detail  # 2*period_hours = 2*1 = 2
 
     def test_g_file_recent(self, monkeypatch, tmp_path):
         """Job file within 2*period_hours → PASS."""
@@ -179,7 +179,7 @@ class TestCheckG:
         assert c.band == "G"
         assert c.status == "PASS"
         assert "healthy_job" in c.detail
-        assert "dentro do periodo" in c.detail
+        assert "within period" in c.detail
 
     def test_g_malformed_entry(self, monkeypatch, tmp_path):
         """Job entry missing required key → WARN."""
@@ -204,7 +204,7 @@ class TestCheckG:
         assert c.id == "G1"
         assert c.band == "G"
         assert c.status == "WARN"
-        assert "malformado" in c.detail
+        assert "malformed" in c.detail
 
     def test_g_multiple_jobs(self, monkeypatch, tmp_path):
         """Multiple jobs → multiple checks, indexed G1, G2, etc."""
@@ -273,4 +273,4 @@ class TestCheckG:
         c = checks[0]
         assert c.id == "G1"
         assert c.status == "FAIL"
-        assert "nao existe" in c.detail
+        assert "does not exist" in c.detail

@@ -929,7 +929,7 @@ def should_compact(
     source: str | None,
     compact_cfg: dict[str, Any],
 ) -> str:
-    """Retorna 'compact' ou 'skip'. Determinístico, sem LLM, sem I/O."""
+    """Returns 'compact' or 'skip'. Deterministic, no LLM, no I/O."""
     if source in ("clear", "end"):
         return "compact"
 
@@ -1662,13 +1662,12 @@ def claim_handoff(
 
 
 def migrate_legacy_handoff_pool(root, *, host: str = "claude") -> dict[str, Any]:
-    """Migração idempotente: handoffs do pool legado (_rolling/handoffs/) que
-    ainda não têm chain correspondente ganham uma chain nova (keyed pelo seu
-    process_instance_id), preservando old_sid/claimed_by. Handoffs já
-    reivindicados (claimed_by preenchido) são só arquivados, sem criar chain
-    nova para eles (lineage já consumida, não deve virar candidata de adoção).
-    Rodar 2x é no-op: uma vez migrado, _find_chain_id_by_pid já encontra a
-    chain e o segundo passe pula."""
+    """Idempotent migration: legacy pool handoffs (_rolling/handoffs/) without
+    a corresponding chain gain a new chain (keyed by process_instance_id),
+    preserving old_sid/claimed_by. Already-claimed handoffs (claimed_by set)
+    are only archived, no new chain created for them (lineage consumed,
+    should not become adoption candidate). Running 2x is no-op: once migrated,
+    _find_chain_id_by_pid finds the chain and the second pass skips it."""
     root_path = _root_path(root)
     handoff_dir = _rolling_root(root_path) / HANDOFF_DIR_NAME
     archived_dir = handoff_dir / "_migrated"
@@ -1732,9 +1731,9 @@ CHAIN_GC_TTL_SECONDS = 7 * 86400
 
 
 def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
-    """GC térmico: chain com PID morto E last_seen > CHAIN_GC_TTL_SECONDS
-    é selada via `exporting.export_epoch` (o consolidado dela vai pro
-    frio, nunca é deletado cru) e movida para chains/_archived/."""
+    """Thermal GC: chain with dead PID AND last_seen > CHAIN_GC_TTL_SECONDS
+    is sealed via `exporting.export_epoch` (its consolidated state goes to
+    cold storage, never deleted raw) and moved to chains/_archived/."""
     from . import exporting
 
     root_path = _root_path(root)
@@ -1794,8 +1793,8 @@ def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
 
 
 def list_chains(root, *, host: str = "claude") -> list[dict[str, Any]]:
-    """Lista as chains do projeto (vivas e mortas, exceto as arquivadas em
-    chains/_archived/) para exibição em `burnless status`/`doctor`."""
+    """List project chains (live and dead, except archived in chains/_archived/)
+    for display in `burnless status`/`doctor`."""
     root_path = _root_path(root)
     chains_root = _chains_root(root_path)
     result: list[dict[str, Any]] = []

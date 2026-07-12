@@ -3,24 +3,24 @@ import hashlib
 from typing import Any, Dict, List, Tuple
 
 def _tok(s: str) -> int:
-    """Estimador de tokens: (len(s) + 3) // 4"""
+    """Token estimator: (len(s) + 3) // 4"""
     return (len(s) + 3) // 4
 
 
 def _hash(block: Any) -> str:
-    """Hash determinístico do bloco (sha256 truncado) para verificar re-fetch."""
+    """Deterministic hash of block (truncated sha256) to verify re-fetch."""
     canon = json.dumps(block, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
 
 
 def load_transcript(path: str) -> List[Dict[str, Any]]:
     """
-    Lê .jsonl linha a linha. Para cada linha JSON válida, extrai:
+    Read .jsonl line by line. For each valid JSON line, extract:
     - role: obj["message"]["role"] (default "user")
-    - content: obj["message"]["content"] (pode ser str ou lista)
+    - content: obj["message"]["content"] (may be str or list)
 
-    Retorna lista de eventos {"line": line_no, "role": role, "content": content}.
-    Linhas inválidas (JSON quebrado) puladas silenciosamente.
+    Return list of events {"line": line_no, "role": role, "content": content}.
+    Invalid lines (broken JSON) skipped silently.
     """
     events = []
     with open(path, "r", encoding="utf-8") as f:
@@ -39,32 +39,32 @@ def load_transcript(path: str) -> List[Dict[str, Any]]:
                     "content": content
                 })
             except (json.JSONDecodeError, KeyError, TypeError):
-                # Pula linhas inválidas
+                # Skip invalid lines
                 continue
     return events
 
 
 def collapse(path: str, keep_last_turns: int = 2) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """
-    Collapsa blocos de tool_use/tool_result antigos em ponteiros.
+    Collapse old tool_use/tool_result blocks into pointers.
 
-    1. Carrega eventos via load_transcript.
-    2. Conta turnos: incrementa turn quando role=="user" e content é str.
-    3. Descobre max_turn.
-    4. Para cada bloco em content (quando lista), se type in ("tool_use", "tool_result")
-       e turno do evento < (max_turn - keep_last_turns), substitui por ponteiro.
+    1. Load events via load_transcript.
+    2. Count turns: increment turn when role=="user" and content is str.
+    3. Discover max_turn.
+    4. For each block in content (when list), if type in ("tool_use", "tool_result")
+       and event turn < (max_turn - keep_last_turns), replace with pointer.
 
-    Ponteiro: {"ptr": ref_id, "kind": type, "tool": tool_name_or_None, "tok": tok_original, "src": path, "line": line_no, "block": block_index}
+    Pointer: {"ptr": ref_id, "kind": type, "tool": tool_name_or_None, "tok": tok_original, "src": path, "line": line_no, "block": block_index}
     ref_id = f"gc:{line_no}:{block_index}"
 
-    Blocos de texto e todo I/O dos keep_last_turns turnos mais recentes ficam intactos.
+    Text blocks and all I/O from the keep_last_turns most recent turns remain intact.
 
-    Retorna: (collapsed_events, index)
+    Returns: (collapsed_events, index)
     index: dict ref_id -> {"src": path, "line": line_no, "block": block_index}
     """
     events = load_transcript(path)
 
-    # Primeiro passo: contar turnos e achar max_turn
+    # First step: count turns and find max_turn
     turn = 0
     max_turn = 0
     for event in events:
@@ -72,7 +72,7 @@ def collapse(path: str, keep_last_turns: int = 2) -> Tuple[List[Dict[str, Any]],
             max_turn = turn
             turn += 1
 
-    # Segundo passo: colapsar blocos antigos
+    # Second step: collapse old blocks
     collapsed_events = []
     index = {}
 
@@ -83,7 +83,7 @@ def collapse(path: str, keep_last_turns: int = 2) -> Tuple[List[Dict[str, Any]],
             collapsed_content = []
             turn_counter = 0
 
-            # Re-calcula turn para este evento específico (contando up-to event)
+            # Recalculate turn for this specific event (counting up-to event)
             for e in events:
                 if e["line"] == event["line"]:
                     break
@@ -95,7 +95,7 @@ def collapse(path: str, keep_last_turns: int = 2) -> Tuple[List[Dict[str, Any]],
             for block_index, block in enumerate(event["content"]):
                 if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result"):
                     if event_turn < (max_turn - keep_last_turns):
-                        # Colapsa este bloco
+                        # Collapse this block
                         ref_id = f"gc:{event['line']}:{block_index}"
                         tool_name = block.get("name") if block.get("type") == "tool_use" else None
                         tok_original = _tok(json.dumps(block, ensure_ascii=False))
@@ -120,10 +120,10 @@ def collapse(path: str, keep_last_turns: int = 2) -> Tuple[List[Dict[str, Any]],
                             "hash": blk_hash
                         }
                     else:
-                        # Mantém bloco intacto (within keep_last_turns)
+                        # Keep block intact (within keep_last_turns)
                         collapsed_content.append(block)
                 else:
-                    # Mantém blocos de texto
+                    # Keep text blocks
                     collapsed_content.append(block)
 
             collapsed_event["content"] = collapsed_content
@@ -135,11 +135,11 @@ def collapse(path: str, keep_last_turns: int = 2) -> Tuple[List[Dict[str, Any]],
 
 def expand(ref_id: str, index: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Re-expande um ponteiro usando o index.
+    Re-expand a pointer using the index.
 
-    Usa index[ref_id] para abrir o .jsonl em src, ler a linha line,
-    e retornar o conteúdo raw original do bloco em posição block.
-    Byte-a-byte idêntico ao original.
+    Use index[ref_id] to open .jsonl at src, read line,
+    and return the raw original content of the block at position block.
+    Byte-for-byte identical to the original.
     """
     if ref_id not in index:
         raise ValueError(f"ref_id {ref_id} não encontrado no index")
@@ -161,20 +161,20 @@ def expand(ref_id: str, index: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
                     expected = ref_info.get("hash")
                     if expected is not None and _hash(block) != expected:
                         raise ValueError(
-                            f"Hash mismatch para ref {ref_id}: source drifted"
+                            f"Hash mismatch for ref {ref_id}: source drifted"
                         )
                     return block
                 else:
-                    raise ValueError(f"Block {block_index} não encontrado na linha {line_no}")
+                    raise ValueError(f"Block {block_index} not found at line {line_no}")
 
-    raise ValueError(f"Linha {line_no} não encontrada em {src}")
+    raise ValueError(f"Line {line_no} not found in {src}")
 
 
 def measure(path: str, keep_last_turns: int = 2) -> Dict[str, Any]:
     """
-    Mede redução de espaço após collapse.
+    Measure space reduction after collapse.
 
-    Retorna {"total_tok": ..., "collapsed_tok": ..., "reduction_pct": ...}
+    Returns {"total_tok": ..., "collapsed_tok": ..., "reduction_pct": ...}
     """
     events = load_transcript(path)
 
@@ -194,10 +194,10 @@ def measure(path: str, keep_last_turns: int = 2) -> Dict[str, Any]:
             for block in event["content"]:
                 if isinstance(block, dict):
                     if "ptr" in block:
-                        # É um ponteiro
+                        # It's a pointer
                         collapsed_tok += _tok(json.dumps(block, ensure_ascii=False))
                     elif block.get("type") in ("tool_use", "tool_result"):
-                        # Bloco original (não colapsado)
+                        # Original block (not collapsed)
                         collapsed_tok += _tok(json.dumps(block, ensure_ascii=False))
 
     reduction_pct = round((1 - collapsed_tok / total_tok) * 100, 1) if total_tok > 0 else 0.0
