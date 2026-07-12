@@ -2568,8 +2568,8 @@ def _run_pilot_cycle(
     initial_input_bytes: bytes | None = None,
 ) -> dict:
     argv = adapter.build_fresh_argv(project_root, model=model, extra_args=extra_args) if is_restart_cycle else adapter.build_interactive_argv(project_root, model=model, extra_args=extra_args)
-    env = os.environ.copy()
-    env["BURNLESS_PILOT_RUN_ID"] = run_id
+    from .pilot.core import build_child_env
+    env = build_child_env(run_id)
 
     installation = adapter.detect() if hasattr(adapter, "detect") else type("I", (), {"version": None})()
     caps = adapter.capabilities() if hasattr(adapter, "capabilities") else type("C", (), {"reset_strategy": "respawn"})()
