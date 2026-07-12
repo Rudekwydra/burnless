@@ -37,7 +37,7 @@ def render_restore(
         append_session_log(
             root,
             {
-                "ts": payload.get("hookSpecificOutput", {}).get("ts"),
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "host": host,
                 "old_session": host_session_id,
                 "new_session": new_session_id,

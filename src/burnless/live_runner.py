@@ -684,6 +684,9 @@ def run_with_live_panel(
                     refresh_rate=refresh_rate,
                     event_filter=event_filter,
                     phase_sink=phase_sink,
+                    consolidated_text=consolidated_text,
+                    session_holder=session_holder,
+                    saw_stream_json=saw_stream_json,
                 )
         except Exception:
             if mode in {"watch", "brief"}:
@@ -989,6 +992,9 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
     burnless_tokens = kwargs["burnless_tokens"]
     refresh_rate = kwargs["refresh_rate"]
     phase_sink: Callable[[str], None] | None = kwargs.get("phase_sink")
+    consolidated_text = kwargs["consolidated_text"]
+    session_holder = kwargs["session_holder"]
+    saw_stream_json = kwargs["saw_stream_json"]
     last_sink_phase = "thinking"
     last_render = start_mono
     last_useful_mono = start_mono
@@ -1022,6 +1028,16 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
             else:
                 stderr_parts.append(line)
             clean = line.rstrip("\n")
+            translated: str | None = None
+            if clean and stream == "stdout":
+                translated = _translate_stream_json(clean, consolidated_text, session_holder)
+                if translated is not None:
+                    saw_stream_json = True
+            if translated is not None:
+                log.write(f"{translated}\n")
+            else:
+                log.write(f"[{stream}] {line}")
+            log.flush()
             if clean:
                 last_useful_mono = now
                 panel_event = event_filter.feed(clean)
@@ -1036,8 +1052,6 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
                         if new_phase != last_sink_phase:
                             phase_sink(new_phase)
                             last_sink_phase = new_phase
-            log.write(f"[{stream}] {line}")
-            log.flush()
             if mode == "full":
                 target = sys.stdout if stream == "stdout" else sys.stderr
                 target.write(line)
@@ -1062,7 +1076,7 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
             )
             last_render = now
 
-    # Drain remaining events (raw log only, no translation in _continue_after_interrupt).
+    # Drain remaining events with same translation as main loop.
     while not events.empty():
         try:
             stream, line = events.get_nowait()
@@ -1070,7 +1084,16 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
                 stdout_parts.append(line)
             else:
                 stderr_parts.append(line)
-            log.write(f"[{stream}] {line}")
+            clean = line.rstrip("\n")
+            translated: str | None = None
+            if clean and stream == "stdout":
+                translated = _translate_stream_json(clean, consolidated_text, session_holder)
+                if translated is not None:
+                    saw_stream_json = True
+            if translated is not None:
+                log.write(f"{translated}\n")
+            else:
+                log.write(f"[{stream}] {line}")
             log.flush()
         except queue.Empty:
             break
@@ -1091,16 +1114,21 @@ def _continue_after_interrupt(**kwargs) -> RunResult:
         )
     elif mode == "minimal" and minimal_spinner2 is not None:
         minimal_spinner2.final(elapsed_s=time.monotonic() - start_mono)
+    final_stdout = (
+        "\n".join(consolidated_text) if saw_stream_json and consolidated_text
+        else "".join(stdout_parts)
+    )
     return RunResult(
         agent=agent_cfg.get("name"),
         command=command,
-        stdout="".join(stdout_parts),
+        stdout=final_stdout,
         stderr="".join(stderr_parts),
         returncode=proc.returncode if proc.returncode is not None else 0,
         started_at=started.isoformat(),
         ended_at=ended.isoformat(),
         duration_s=(ended - started).total_seconds(),
         interrupted=False,
+        session_id=(session_holder[-1] if session_holder else None),
     )
 
 
