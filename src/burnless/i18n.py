@@ -37,6 +37,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "pt-BR": "## Handoff da sessão anterior (escrito pelo próprio modelo, pré-clear)",
         "en": "## Handoff from previous session (written by the model itself, pre-clear)",
     },
+    "restore_manifest_checkpoint": {
+        "pt-BR": "- checkpoint completo: {path}",
+        "en": "- full checkpoint: {path}",
+    },
+    "restore_manifest_exports": {
+        "pt-BR": "- exports da sessão anterior: {path}",
+        "en": "- exports from previous session: {path}",
+    },
+    "restore_manifest_refs": {
+        "pt-BR": "- Refs do documento vivo: já no formato `path#Lx-y — why [seq N]` — leia só o que a tarefa atual pedir",
+        "en": "- Living-doc Refs: already in `path#Lx-y — why [seq N]` format — read only what the current task needs",
+    },
+    "restore_pending_old_header": {
+        "pt-BR": "Trocas antigas (resumo de 1 linha; conteúdo no journal — ver Manifesto):",
+        "en": "Older exchanges (1-line summary; content in the journal — see Manifest):",
+    },
 }
 
 
