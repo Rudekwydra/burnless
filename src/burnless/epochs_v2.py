@@ -950,19 +950,27 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
             return None
 
         try:
+            cfg_endpoint = str(enc.get("endpoint") or "").strip()
+            try:
+                cfg_timeout = float(enc.get("timeout_s") or 0)
+            except (TypeError, ValueError):
+                cfg_timeout = 0
+
             if provider == "ollama-local":
                 # RM-2: endpoint/timeout come from config (encoder.endpoint,
                 # encoder.timeout_s); BURNLESS_LOCAL_API is an override, not
                 # the only path. Defaults: ollama :11434, 90s.
                 local_api = (os.environ.get("BURNLESS_LOCAL_API") or str(enc.get("local_api") or "")).strip().lower()
-                cfg_endpoint = str(enc.get("endpoint") or "").strip()
-                try:
-                    cfg_timeout = float(enc.get("timeout_s") or 0)
-                except (TypeError, ValueError):
-                    cfg_timeout = 0
                 if local_api == "llamacpp":
-                    url = cfg_endpoint or "http://localhost:11435/completion"
-                    data = json.dumps({"prompt": prompt}).encode()
+                    url = cfg_endpoint or "http://localhost:11435/v1/chat/completions"
+                    data = json.dumps({
+                        "messages": [
+                            {"role": "system", "content": ENCODER_SYSTEM_PROMPT},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "temperature": 0.2,
+                        "stream": False,
+                    }).encode()
                     timeout_val = cfg_timeout or 120
                 else:
                     url = cfg_endpoint or "http://localhost:11434/api/generate"
@@ -980,7 +988,9 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     body = json.loads(resp.read())
 
                 if local_api == "llamacpp":
-                    out = body.get("content") or body.get("response") or ""
+                    out = (body.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+                    if not out:
+                        out = body.get("content") or body.get("response") or ""
                 else:
                     out = body.get("response", "")
 
@@ -1004,7 +1014,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     input=prompt,
                     capture_output=True,
                     text=True,
-                    timeout=60,
+                    timeout=(cfg_timeout or 60),
                     cwd=iso_cwd,
                     env={**os.environ, "BURNLESS_NO_EPOCH": "1"},
                 )

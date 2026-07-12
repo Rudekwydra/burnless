@@ -39,20 +39,18 @@ def parse_encoder_arg(spec):
 def make_wrapper_rewriter(rewriter_fn):
     """Wrap rewriter to measure latency and count failures."""
     calls = []
-    failures = 0
 
     def wrapper(prompt):
         t0 = time.monotonic()
         result = rewriter_fn(prompt)
         elapsed = time.monotonic() - t0
         calls.append(elapsed)
-        nonlocal failures
         if result is None:
-            failures += 1
+            wrapper.failures += 1
         return result
 
     wrapper.calls = calls
-    wrapper.failures = failures
+    wrapper.failures = 0
     return wrapper
 
 
@@ -97,7 +95,7 @@ def score_restore(scenario, run, encoder_name):
     must_reach_total = len(scenario.get("must_reach", []))
 
     # last_exchange_verbatim
-    last_turn = run.last_turns[-1]
+    last_turn = run.last_turns[2]
     last_exchange_verbatim = (last_turn["user"] in ctx) and (last_turn["assistant"] in ctx)
 
     # budget_ok
