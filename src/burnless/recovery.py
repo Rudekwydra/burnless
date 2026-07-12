@@ -1763,7 +1763,8 @@ def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
             continue
         if (now - last_seen_epoch) <= CHAIN_GC_TTL_SECONDS:
             continue
-        if not _pid_is_dead_or_reused(str(meta.get("pid") or ""), str(meta.get("pid_proc_name") or "")):
+        pid_value = str(meta.get("pid") or "")
+        if _extract_os_pid(pid_value) is not None and not _pid_is_dead_or_reused(pid_value, str(meta.get("pid_proc_name") or "")):
             continue
         chain_id = str(meta.get("chain_id") or chain_dir.name)
         handoff_path = chain_dir / CHAIN_HANDOFF_NAME
