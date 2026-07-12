@@ -43,7 +43,7 @@ def test_handoff_included_and_consumed(tmp_path):
     meta = payload["recovery"]
 
     assert handoff_text in ctx, f"Handoff text not found in context: {ctx}"
-    assert "## Handoff da sessão anterior" in ctx
+    assert "## Handoff" in ctx
     assert not handoff_path.exists(), "Handoff file should be consumed (unlinked)"
     assert meta["live_handoff_chars"] == len(handoff_text)
 
@@ -85,7 +85,7 @@ def test_handoff_stale_ignored(tmp_path):
     meta = payload["recovery"]
 
     assert "EU estava fazendo X" not in ctx, "Stale handoff should not appear"
-    assert "## Handoff da sessão anterior" not in ctx
+    assert "## Handoff" not in ctx
     assert not handoff_path.exists(), "Stale handoff file should be deleted"
     assert meta["live_handoff_chars"] == 0
 
@@ -119,7 +119,7 @@ def test_handoff_absent_noop(tmp_path):
     ctx = payload["hookSpecificOutput"]["additionalContext"]
     meta = payload["recovery"]
 
-    assert "## Handoff da sessão anterior" not in ctx
+    assert "## Handoff" not in ctx
     assert "objetivo vivo" in ctx
     assert meta["live_handoff_chars"] == 0
 
@@ -162,7 +162,7 @@ def test_handoff_survives_budget(tmp_path):
     meta = payload["recovery"]
 
     assert handoff_text in ctx, "Handoff should survive budget truncation"
-    assert "## Handoff da sessão anterior" in ctx
+    assert "## Handoff" in ctx
     assert meta["live_handoff_chars"] == len(handoff_text)
     assert meta["truncated"] is True
     assert not handoff_path.exists(), "Handoff file should be consumed"

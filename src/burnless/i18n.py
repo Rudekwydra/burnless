@@ -29,6 +29,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "pt-BR": "burnless: worker context — re-delegacao bloqueada. Execute a task diretamente; opt-in explicito: BURNLESS_ALLOW_NESTED=1",
         "en": "burnless: worker context — nested delegation blocked. Execute task directly; explicit opt-in: BURNLESS_ALLOW_NESTED=1",
     },
+    "restore_pointer_rule": {
+        "pt-BR": "regra: Refs e Recuperáveis são PONTEIROS — use Read/grep sob demanda; não releia arquivos já conhecidos sem motivo.",
+        "en": "rule: Refs and Recoverables are POINTERS — use Read/grep on demand; do not re-read already-known files without reason.",
+    },
+    "restore_handoff_header": {
+        "pt-BR": "## Handoff da sessão anterior (escrito pelo próprio modelo, pré-clear)",
+        "en": "## Handoff from previous session (written by the model itself, pre-clear)",
+    },
 }
 
 
