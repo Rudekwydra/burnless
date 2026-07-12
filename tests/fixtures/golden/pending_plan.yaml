@@ -1,0 +1,154 @@
+# pending_plan — 21 turnos, 3 rollovers, thread pendente sobrevive a collapse rewriter
+name: pending_plan
+description: >-
+  P10/4 golden case: sessão 1 abre thread pendente; sessões 2-4 com collapse rewriter
+  (declara tudo completo, zera threads); guard preserve_open_threads reinjeta thread
+  e ela sobrevive ao 3º rollover.
+budget_tokens: null
+compact_budget_tokens: 2500
+sessions:
+  - stop_compact: true
+    turns:
+      - user: >-
+          Quero entregar o módulo Import v2 do catálogo antes do fim do sprint.
+          [[FOCO: entregar o modulo Import v2 do catalogo]]
+        assistant: >-
+          Foco registrado. Vou mapear o escopo completo do módulo antes de propor
+          as fases.
+      - user: >-
+          Onde fica a implementação antiga? Preciso entender o design antes de
+          mexer no v2.
+        assistant: >-
+          O design está documentado. [[REF: /src/app/catalog/import_v2.py#L1-40 —
+          design do Import v2]] Deixei o caminho completo pro arquivo.
+        files:
+          - /src/app/catalog/import_v2.py
+      - user: >-
+          Por enquanto vamos usar a planilha manual de carga pra destravar os
+          testes. Depois migramos. [[DECIDE: usar planilha manual de carga para
+          o catalogo]]
+        assistant: >-
+          Registrado como decisão provisória. Deixei um TODO apontando que
+          isso é temporary.
+      - user: >-
+          Consegui rodar o teste básico de carregamento. Está tudo verde por
+          enquanto. Tinha um teste flaky no setup, deixei marcado.
+        assistant: >-
+          Ótimo, teste verde. [[THREAD+: investigar flakiness do teste]] Deixei
+          a thread pra retomar depois.
+      - user: >-
+          Vou pausar aqui — tenho que resolver uns issues rápidos de docs.
+          Na volta quero construir o módulo em fases.
+        assistant: >-
+          Combinado. [[THREAD+: na volta construir Import v2 em fases (parse,
+          valida, grava)]] Thread aberta, retoma na próxima sessão.
+      - user: >-
+          Bom ponto de parada. Vou limpar o contexto e retomo depois.
+        assistant: >-
+          Fechado. O foco e a thread pendente ficam registrados no documento vivo.
+
+  - stop_compact: true
+    rewriter: collapse
+    turns:
+      - user: >-
+          Limpei o backlog de issues de documentação que estava pendente.
+          Atualizei os readmes de todos os serviços principais.
+        assistant: >-
+          Ótimo, documentação consolidada. Os readmes estão claros agora.
+      - user: >-
+          Também ajustei as regras de lint do projeto pra ser mais leniente
+          com comentários de design. Rodei o check em toda a base. Achei que o
+          problema do teste era no setup do fixture, já resolvido.
+        assistant: >-
+          Lint revisado e consolidado. Toda a base passou. [[THREAD-: flakiness
+          do teste]] Problema resolvido, thread fechada.
+      - user: >-
+          Os testes de CI estão falhando intermitentemente em alguns nós.
+          Investigar depois, por enquanto tá documentado.
+        assistant: >-
+          Intermitência registrada. Deixei os logs em um arquivo de análise.
+      - user: >-
+          A decisão antiga sobre usar o método provisório não vale mais.
+          Vamos usar seed SQL versionado no lugar. [[SUPERSEDE: usar planilha
+          manual de carga para o catalogo => carga inicial via seed SQL versionado]]
+        assistant: >-
+          Registrado. Decisão antiga sai, seed SQL entra em vigor.
+      - user: >-
+          Encerrando — vou limpar o contexto e retomar depois com a suite
+          de validação.
+        assistant: >-
+          Fechado. Contexto limpo e pronto pro próximo ciclo.
+
+  - stop_compact: true
+    rewriter: collapse
+    turns:
+      - user: >-
+          Voltei. Vou rodar a suite de testes integrados pra ver o status
+          da base.
+        assistant: >-
+          Suite rodou: 47 passed, 2 skipped. Base verde.
+      - user: >-
+          Achei um vazamento de memória no scheduler de background tasks.
+          Deixei a correção pronta, vou commitá-la agora.
+        assistant: >-
+          Vazamento isolado e corrigido. Teste confirmou que o problema
+          foi resolvido.
+      - user: >-
+          Precisamos de um contrato estável pra o serviço consumidor não
+          quebrar quando as mudanças entrarem.
+        assistant: >-
+          Contrato consolidado. [[CONTRACT: /src/app/catalog/api.py expõe
+          carregamento robusto]] Assinatura congelada até a release.
+      - user: >-
+          Revisamos os riscos do sistema e documentei tudo. Pronto pro
+          deploy de staging.
+        assistant: >-
+          Riscos mapeados. [[RISK: schema de seed SQL pode desatualizar com
+          mudanças rápidas de feature]] Mitigação em place.
+      - user: >-
+          Encerrando a sessão; contexto limpo pra retomar depois.
+        assistant: >-
+          Fechado. Documento vivo atualizado, pronto pro próximo passo.
+
+  - stop_compact: true
+    rewriter: collapse
+    turns:
+      - user: >-
+          Voltei de novo. Checando o status de validação antes de entrar no
+          ciclo de release.
+        assistant: >-
+          Status: tudo verde. Validação consolidada, base pronta.
+      - user: >-
+          Vou rodar a suíte de schema pra garantir que tudo está correto
+          antes de subir pra prod.
+        assistant: >-
+          Schema validado. Migrações checadas e seguras pra prod.
+      - user: >-
+          Telemetria de carregamento foi adicionada em toda a pipeline.
+          Pronto pra medir performance em produção.
+        assistant: >-
+          Telemetria integrada. [[VALID: pytest suite_schema -q OK]] Contadores
+          de performance ativos.
+        files:
+          - /src/app/catalog/telemetry.py
+      - user: >-
+          Última confirmação: o contrato que congelamos ainda tá intacto?
+        assistant: >-
+          Confirmado: /src/app/catalog/api.py segue o contrato original.
+          Tudo safe.
+      - user: >-
+          Perfeito. Contexto limpo, vou finalizar a sequência.
+        assistant: >-
+          Finalizado. Feature em estado pra merge + deploy.
+
+must_remember:
+  - na volta construir Import v2 em fases
+
+must_forget:
+  - investigar flakiness do teste
+  - usar planilha manual de carga para o catalogo
+
+must_reach:
+  - entregar o modulo Import v2 do catalogo
+  - design do Import v2
+  - /src/app/catalog/import_v2.py

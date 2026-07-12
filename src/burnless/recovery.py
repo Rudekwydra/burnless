@@ -835,9 +835,11 @@ def _checkpoint_payload(
     journal_head: int,
     generation: int,
     chain_id: str | None = None,
+    inherited_from: str | None = None,
+    parent_final_merged: bool = True,
 ) -> dict[str, Any]:
     content_hash = "sha256:" + hashlib.sha256(living_md.encode("utf-8")).hexdigest()
-    return {
+    payload = {
         "schema": 1,
         "generation": generation,
         "host": host,
@@ -851,6 +853,11 @@ def _checkpoint_payload(
         "content_hash": content_hash,
         "chain_id": chain_id,
     }
+    if inherited_from is not None:
+        payload["inherited_from"] = inherited_from
+    if not parent_final_merged:
+        payload["parent_final_merged"] = parent_final_merged
+    return payload
 
 
 def write_checkpoint(
@@ -863,6 +870,8 @@ def write_checkpoint(
     harvested_state: dict[str, Any],
     applied_through: int,
     journal_head: int | None = None,
+    inherited_from: str | None = None,
+    parent_final_merged: bool | None = None,
 ) -> dict[str, Any]:
     root_path = _root_path(root)
     canonical_root = _canonical_session_root(root_path, host, host_session_id)
@@ -873,6 +882,12 @@ def write_checkpoint(
     current = read_checkpoint(root_path, host, host_session_id)
     chain_id = resolve_or_create_chain(root_path, host=host, process_instance_id=process_instance_id, cwd=None)
     generation = int((current or {}).get("generation") or 0) + 1
+    if inherited_from is None and current:
+        inherited_from = current.get("inherited_from")
+    if parent_final_merged is None and current:
+        parent_final_merged = current.get("parent_final_merged")
+    if parent_final_merged is None:
+        parent_final_merged = True
     payload = _checkpoint_payload(
         host=host,
         host_session_id=host_session_id,
@@ -883,6 +898,8 @@ def write_checkpoint(
         journal_head=journal_head,
         generation=generation,
         chain_id=chain_id,
+        inherited_from=inherited_from,
+        parent_final_merged=parent_final_merged,
     )
     for checkpoint_path in _checkpoint_paths(root_path, host, host_session_id):
         _atomic_json_write(checkpoint_path, payload)
@@ -996,6 +1013,37 @@ def _entry_core(line: str) -> str:
             break
         s = s[:m.start()]
     return s.strip()
+
+
+def _drop_stale_decisions(parent_md: str, candidate_md: str, exchange: str) -> str:
+    """Remove stale decisions from candidate that were superseded in parent.
+
+    For each decision in candidate_md:
+    - If it exists (substring) in parent_md, keep it.
+    - If it does NOT exist in parent_md AND the exchange doesn't mention it
+      (via _exchange_mentions heuristic), drop it (stale).
+    - Otherwise (exchange mentions it or parent has it), keep it.
+
+    Returns candidate_md with stale decisions removed.
+    """
+    from .epochs_v2 import parse_living_v3, _rebuild_md_v3, _exchange_mentions
+
+    parent_parsed = parse_living_v3(parent_md)
+    candidate_parsed = parse_living_v3(candidate_md)
+
+    parent_decisoes = {_entry_core(d) for d in parent_parsed.get('Decisões', [])}
+    candidate_decisoes = candidate_parsed.get('Decisões', [])
+
+    filtered_decisoes = []
+    for decision_line in candidate_decisoes:
+        decision_core = _entry_core(decision_line)
+        if decision_core in parent_decisoes:
+            filtered_decisoes.append(decision_line)
+        elif _exchange_mentions(decision_core, exchange):
+            filtered_decisoes.append(decision_line)
+
+    candidate_parsed['Decisões'] = filtered_decisoes
+    return _rebuild_md_v3(candidate_parsed)
 
 
 def _validate_candidate(
@@ -1200,6 +1248,48 @@ def compact_pending(
             checkpoint.get("living_md") or "", candidate, pending_text
         )
 
+        parent_merge_done = False
+        parent_threads_reinjected = 0
+        inherited_from_sid = checkpoint.get("inherited_from")
+        parent_final_merged_flag = checkpoint.get("parent_final_merged")
+        if inherited_from_sid and parent_final_merged_flag is False:
+            parent_checkpoint = read_checkpoint(root_path, host, inherited_from_sid)
+            if parent_checkpoint:
+                parent_journal_dir = _journal_dir(root_path, host, inherited_from_sid)
+                parent_journal_head_val = _journal_head(parent_journal_dir)
+                parent_applied_through = int(parent_checkpoint.get("applied_through") or 0)
+                if parent_journal_head_val <= parent_applied_through:
+                    parent_living_md = parent_checkpoint.get("living_md") or ""
+                    if parent_living_md:
+                        candidate = preserve_open_threads(
+                            parent_living_md, candidate, pending_text
+                        )
+                        snapshot_generation = int(checkpoint.get("generation") or 0)
+                        if snapshot_generation <= 1:
+                            try:
+                                candidate = _drop_stale_decisions(parent_living_md, candidate, pending_text)
+                            except Exception:
+                                pass
+                        parent_threads_reinjected = len([
+                            l for l in parent_living_md.split("\n")
+                            if "##" in l
+                        ])
+                    parent_merge_done = True
+                    owner_loop.log_owner_event(
+                        root_path,
+                        {
+                            "phase": "recovery",
+                            "event": "parent_threads_merged",
+                            "host": host,
+                            "host_session_id": host_session_id,
+                            "process_instance_id": process_instance_id,
+                            "parent_sid": inherited_from_sid,
+                            "threads_reinjected": parent_threads_reinjected,
+                        },
+                    )
+            else:
+                parent_merge_done = True
+
         if not _refresh_compaction_lease(
             root_path,
             host=host,
@@ -1321,6 +1411,9 @@ def compact_pending(
         except Exception:
             pass
 
+        parent_final_merged_value = parent_final_merged_flag
+        if parent_merge_done and parent_final_merged_flag is False:
+            parent_final_merged_value = True
         committed = write_checkpoint(
             root_path,
             host=host,
@@ -1330,6 +1423,8 @@ def compact_pending(
             harvested_state=harvested_state,
             applied_through=max(int(r.get("seq") or 0) for r in pending),
             journal_head=snapshot_head,
+            inherited_from=inherited_from_sid,
+            parent_final_merged=parent_final_merged_value,
         )
         # I2 metric: how pointer-shaped is the memory after this compaction?
         refs_lines = 0
@@ -1799,6 +1894,8 @@ def inherit_checkpoint(
         harvested_state=harvested,
         applied_through=0,
         journal_head=0,
+        inherited_from=source_sid,
+        parent_final_merged=False,
     )
     owner_loop.log_owner_event(
         root_path,
@@ -2196,6 +2293,29 @@ def render_restore(
     pending = [r for r in records if int(r.get("seq") or 0) > applied_through]
 
     living_md = checkpoint.get("living_md") or ""
+
+    # P10/4: merge parent threads (read-only) even before next compact
+    try:
+        inherited_from = checkpoint.get("inherited_from")
+        parent_final_merged_flag = checkpoint.get("parent_final_merged")
+        if inherited_from and parent_final_merged_flag is False:
+            parent_checkpoint = read_checkpoint(root_path, host, inherited_from)
+            if parent_checkpoint:
+                parent_journal_dir = _journal_dir(root_path, host, inherited_from)
+                parent_journal_head_val = _journal_head(parent_journal_dir)
+                parent_applied_through = int(parent_checkpoint.get("applied_through") or 0)
+                if parent_journal_head_val <= parent_applied_through:
+                    parent_living_md = parent_checkpoint.get("living_md") or ""
+                    if parent_living_md:
+                        checkpoint_generation = int(checkpoint.get("generation") or 0)
+                        if checkpoint_generation <= 1:
+                            living_md = parent_living_md
+                        else:
+                            from .epochs_v2 import preserve_open_threads
+                            living_md = preserve_open_threads(parent_living_md, living_md, "")
+    except Exception:
+        pass
+
     if not living_md.strip() and not pending and applied_through <= 0 and journal_head <= 0:
         return None
 
