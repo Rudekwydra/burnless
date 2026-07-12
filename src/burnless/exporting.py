@@ -13,6 +13,7 @@ inside ``.burnless/``.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -38,6 +39,121 @@ def _exports_keep(root_path: Path) -> int:
         return max(1, int(keep))
     except Exception:
         return DEFAULT_EXPORTS_KEEP
+
+
+def _index_enabled(root_path: Path) -> bool:
+    """Read epochs.index from config.yaml (default False). Fail-closed."""
+    try:
+        cfg_path = root_path / "config.yaml"
+        if not cfg_path.exists():
+            return False
+        import yaml
+
+        data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        return bool((data.get("epochs") or {}).get("index", False))
+    except Exception:
+        return False
+
+
+def _export_title(content: str) -> str:
+    """Extract title from export content. Find '## Current focus' or '## Foco atual',
+    then return the first non-empty line following it, stripped of markers."""
+    lines = content.splitlines()
+    focus_idx = -1
+    for i, line in enumerate(lines):
+        if line.strip() in ("## Current focus", "## Foco atual"):
+            focus_idx = i
+            break
+    if focus_idx < 0 or focus_idx >= len(lines) - 1:
+        return ""
+    for i in range(focus_idx + 1, len(lines)):
+        candidate = lines[i].strip()
+        if not candidate:
+            continue
+        candidate = re.sub(r"^\- ", "", candidate)
+        candidate = re.sub(r"^\[(?:state|inflight)\]\s*", "", candidate)
+        candidate = re.sub(r"\s*\[chat:[^\]]*\]", "", candidate)
+        candidate = candidate[:100]
+        return candidate
+    return ""
+
+
+def update_epoch_index(root_path, *, created: str, host: str, sid8: str, generation, export_filename: str, title: str) -> None:
+    """Update per-project INDEX.md with epoch export record. Append-only, idempotent."""
+    try:
+        epochs_dir = root_path / "epochs"
+        index_path = epochs_dir / "INDEX.md"
+        if export_filename in (index_path.read_text(encoding="utf-8") if index_path.exists() else ""):
+            return
+        epochs_dir.mkdir(parents=True, exist_ok=True)
+        project = root_path.parent.name
+        if index_path.exists():
+            current = index_path.read_text(encoding="utf-8")
+        else:
+            current = f"# Epoch index — {project}\n\n"
+        title_display = title if title else "(sem título)"
+        line = f"- {created} · {host} · {sid8} · gen{generation} · {title_display} · exports/{export_filename}\n"
+        _atomic_write(index_path, current + line)
+    except Exception:
+        pass
+
+
+def backfill_epoch_index(root, host: str = "", host_session_id: str = "") -> dict:
+    """Backfill INDEX.md from existing exports. Returns status dict."""
+    try:
+        from . import recovery
+
+        root_path = recovery._root_path(root)
+        exports_dir = root_path / EXPORTS_DIRNAME
+        if not exports_dir.exists():
+            return {"status": "indexed", "added": 0, "total": 0}
+
+        index_path = root_path / "epochs" / "INDEX.md"
+        before_entries = 0
+        if index_path.exists():
+            content = index_path.read_text(encoding="utf-8")
+            before_entries = sum(1 for line in content.splitlines() if line.startswith("- "))
+
+        exports = sorted(
+            (p for p in exports_dir.glob("epoch-*.md") if p.is_file()),
+            key=lambda p: p.stat().st_mtime
+        )
+
+        for export_file in exports:
+            try:
+                content = export_file.read_text(encoding="utf-8")
+                lines = content.splitlines()
+                front_matter = {}
+                in_front = False
+                for line in lines:
+                    if line.strip() == "---":
+                        if not in_front:
+                            in_front = True
+                        else:
+                            break
+                    elif in_front and ":" in line:
+                        key, val = line.split(":", 1)
+                        front_matter[key.strip()] = val.strip()
+
+                created = front_matter.get("created", "")
+                host_fm = front_matter.get("host", host or "")
+                host_session_id_fm = front_matter.get("host_session_id", host_session_id or "")
+                generation = front_matter.get("generation", "")
+                sid8 = host_session_id_fm[:8] if host_session_id_fm else (host_session_id or "")[:8]
+                title = _export_title(content)
+                update_epoch_index(root_path, created=created, host=host_fm, sid8=sid8, generation=generation, export_filename=export_file.name, title=title)
+            except Exception:
+                pass
+
+        after_entries = 0
+        if index_path.exists():
+            content = index_path.read_text(encoding="utf-8")
+            after_entries = sum(1 for line in content.splitlines() if line.startswith("- "))
+
+        added = max(0, after_entries - before_entries)
+        return {"status": "indexed", "added": added, "total": len(exports)}
+    except Exception:
+        return {"status": "indexed", "added": 0, "total": 0}
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -135,6 +251,9 @@ def export_epoch(root, host: str, host_session_id: str) -> dict[str, Any]:
         if recovery._format_en_markers(root_path):
             content = to_en_markers(content)
         _atomic_write(target, content)
+        if _index_enabled(root_path):
+            title = _export_title(content)
+            update_epoch_index(root_path, created=created, host=host, sid8=sid8, generation=checkpoint.get("generation"), export_filename=target.name, title=title)
         removed = _gc_exports(exports_dir, _exports_keep(root_path))
         return {"status": "exported", "path": str(target), "gc_removed": removed}
     except Exception as exc:
