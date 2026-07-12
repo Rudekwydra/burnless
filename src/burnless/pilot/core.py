@@ -10,6 +10,16 @@ import subprocess
 import json
 
 
+def build_child_env(run_id: str) -> dict[str, str]:
+    """Spawn env for the pilot child host: parent env minus Claude session-identity
+    vars (CLAUDECODE and every CLAUDE_CODE_*), so a pty launched from inside a
+    Claude session spawns a child indistinguishable from a fresh-terminal one."""
+    env = {k: v for k, v in os.environ.items()
+           if k != "CLAUDECODE" and not k.startswith("CLAUDE_CODE_")}
+    env["BURNLESS_PILOT_RUN_ID"] = run_id
+    return env
+
+
 @dataclass(frozen=True)
 class HostInstallation:
     name: str
