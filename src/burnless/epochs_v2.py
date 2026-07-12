@@ -11,6 +11,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from .markers import normalize_section, EXCHANGE_Q_MARKERS, EXCHANGE_A_MARKERS, find_line_anchored
+
 SECTIONS = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs"]
 
 # Living Memory V3 — additive 8-section model (V2 stays intact above)
@@ -121,17 +123,22 @@ def is_noop(prev_md: str, exchange: str, max_len: int = 240) -> bool:
         return True
 
     user_portion = exchange_stripped
-    for marker in ('PERGUNTA:', 'Pergunta:'):
-        if marker in exchange_stripped:
-            start = exchange_stripped.find(marker) + len(marker)
-            rest = exchange_stripped[start:].strip()
-            for end_marker in ('RESPOSTA:', 'Resposta:', '\n\n'):
-                if end_marker in rest:
-                    end = rest.find(end_marker)
-                    user_portion = rest[:end].strip()
-                    break
-            if user_portion:
+    for marker in EXCHANGE_Q_MARKERS:
+        start_idx = find_line_anchored(exchange_stripped, marker)
+        if start_idx == -1:
+            continue
+        start = start_idx + len(marker)
+        rest = exchange_stripped[start:].strip()
+        for end_marker in (*EXCHANGE_A_MARKERS, '\n\n'):
+            if end_marker == '\n\n':
+                end = rest.find(end_marker)
+            else:
+                end = find_line_anchored(rest, end_marker)
+            if end != -1:
+                user_portion = rest[:end].strip()
                 break
+        if user_portion:
+            break
 
     return _is_trivial_text(user_portion)
 
@@ -150,7 +157,7 @@ def parse_living(md: str) -> dict[str, list[str]]:
             if current_section and current_body:
                 body_lines = [l.strip() for l in current_body if l.strip()]
                 result[current_section] = [l.lstrip('- ').strip() if l.lstrip().startswith('- ') else l for l in body_lines]
-            current_section = line[3:].strip()
+            current_section = normalize_section(line[3:].strip())
             current_body = []
         else:
             if current_section:
@@ -508,7 +515,7 @@ def parse_living_v3(md: str) -> dict[str, list[str]]:
             if current_section and current_body:
                 entries = _parse_section_entries(current_body)
                 result[current_section] = entries
-            current_section = line[3:].strip()
+            current_section = normalize_section(line[3:].strip())
             if current_section in ignored_headers:
                 current_section = None
             current_body = []
