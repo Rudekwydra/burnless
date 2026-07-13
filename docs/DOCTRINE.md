@@ -118,6 +118,24 @@ Rolling memory runs in your **Claude CLI session** via hooks (no `burnless chat`
 
 **On-disk format:** checkpoints and epoch exports use EN structural markers (`## Current focus`, `Q:`/`A:`, …) with `format_version: 2` by default; readers normalize back to the canonical internal keys, so consumers are format-agnostic. Set `format.en_markers: false` in `config.yaml` to keep PT markers on disk.
 
+### On-disk layout per session
+
+`.burnless/epochs/sessions/<host>/<session_id>/` holds four artifacts, each with a distinct role — the split is deliberate, not incidental:
+
+- **`living.md`** — the semantic layer: compacted narrative in prose/bullets (`## Foco atual`, `## Threads abertas`, `## Decisões`, …), meaning-preserving, not a transcript. Each bullet carries an inline anchor `[chat:<sha256>·t<N>]` pointing back to the exact raw exchange, so a future turn can re-read full fidelity on demand instead of trusting the summary blindly.
+- **`state.json`** — the pointer/tiering layer, physically separate from the prose: `contracts` (paths that must be re-read in full, never compressed), `refs` (path + why + line-range, reread on demand rather than inlined), `open_threads`, and `recuperaveis`/`recuperaveis_unparsed` (the recoverable-but-lossy tier — the only layer where compression risk actually concentrates).
+- **`checkpoint.json`** — a durable snapshot bundling `living_md` + `harvested_state` (= `state.json`'s content) plus bookkeeping (`generation`, `applied_through`, `journal_head`, `chain_id`, `content_hash`) into one file, so `SessionStart` restore is a single read instead of joining three files live.
+- **`journal/NNNNNN-sha256_*.json`** — one file per turn, written synchronously by the `Stop` hook (`burnless epoch journal-append`) before the turn is considered idle. Raw structured exchange record, never summarized at write time.
+
+### Restore = checkpoint + pending delta (an un-folded turn is never lost)
+
+`compact-pending` folds journal records into `checkpoint.living_md` periodically (batched, not necessarily every turn — `applied_through` lagging behind the real `journal_head` on disk is expected and normal). Restore does not read only the folded checkpoint: `render_restore` (`src/burnless/recovery.py:2323`) computes `pending = [r for r in records if r.seq > checkpoint.applied_through]` (~line 2353) and injects `checkpoint.living_md` **plus every pending record** into the next session. A lag in the fold step is a performance detail, not a correctness gap — nothing written to the journal is ever lost on restore, compacted or not.
+
+### Two rollover paths, different guarantees
+
+- **Plain chat/IDE session (no pty)** — a `UserPromptSubmit` hook (`clear_hint_inject.sh`) measures hot tokens against a threshold and, once crossed, only *injects an instruction* telling the model to write `_rolling/live_handoff.md` and then suggest `/clear` to the human. Nothing here can execute `/clear` itself — the human decides. `live_handoff.md` (Camada B) is a voluntary, model-authored reflection written when the model judges the moment safe (never mid-delegation/mid-edit). It is a quality booster layered on top of the mechanical journal, not a required safety net: restore already reconstructs correctly from `journal` + `checkpoint` alone even when `live_handoff.md` is stale or absent.
+- **`burnless pilot`/`pty` session** — an outer Python process owns the host CLI as a pty child. A background thread (`monitor_rollover_loop`, `src/burnless/pilot/rollover.py:345`) polls token usage; `should_rollover` (line 186) only fires once `run_state.idle == True` — never mid-tool-call, always between turns. Once armed, `arm_rollover`/`prepare_rollover` write the handoff pointer, then the wrapper sends `SIGTERM` to the whole child process group (`cli.py:2640`) and spawns a fresh `claude` process with a new session id (`cli.py:2888-2920`). The new process's `SessionStart` hook restores via the same checkpoint+pending mechanism above. This is a real kill+respawn, not the CLI's native `/clear` — continuity is reconstructed entirely from disk, not from any in-process state surviving the kill.
+
 ---
 
 ## Spec Authoring — Pre-Dispatch Checklist (6 Rules)
