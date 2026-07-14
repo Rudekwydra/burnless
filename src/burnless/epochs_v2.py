@@ -1059,9 +1059,16 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     timeout_val = cfg_timeout or 120
                 else:
                     url = cfg_endpoint or "http://localhost:11434/api/generate"
-                    data = json.dumps(
-                        {"model": model, "prompt": prompt, "system": ENCODER_SYSTEM_PROMPT, "stream": False}
-                    ).encode()
+                    payload = {"model": model, "prompt": prompt, "system": ENCODER_SYSTEM_PROMPT, "stream": False}
+                    # encoder.think (config) / BURNLESS_ENCODER_THINK (env override):
+                    # thinking-channel models burn hidden tokens per compact unless
+                    # the API is told not to; omitted = provider default (unchanged).
+                    _think_raw = (os.environ.get("BURNLESS_ENCODER_THINK") or ("" if enc.get("think") is None else str(enc.get("think")))).strip().lower()
+                    if _think_raw in ("false", "0", "off", "no"):
+                        payload["think"] = False
+                    elif _think_raw in ("true", "1", "on", "yes"):
+                        payload["think"] = True
+                    data = json.dumps(payload).encode()
                     timeout_val = cfg_timeout or 90
 
                 req = urllib.request.Request(
