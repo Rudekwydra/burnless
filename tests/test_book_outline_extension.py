@@ -6,15 +6,22 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Add book scripts to path for imports
-sys.path.insert(0, "/Users/roberto/antigravity/burnless/book/scripts")
+import pytest
+
+_BOOK_SCRIPTS = Path(__file__).resolve().parents[1] / "book" / "scripts"
+pytestmark = pytest.mark.skipif(not _BOOK_SCRIPTS.exists(), reason="book/ not present in this checkout")
+sys.path.insert(0, str(_BOOK_SCRIPTS))
+
+_BOOK_DIR = Path(__file__).resolve().parents[1] / "book"
+_CHAPTER_PLAN_PATH = str(_BOOK_DIR / "chapter_plan.json")
+_EXTEND_OUTLINE_SCRIPT = str(_BOOK_DIR / "scripts" / "extend_outline.py")
 
 
 def test_extend_outline_dry_run_no_modify():
     """Verify dry-run doesn't modify the plan file."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Copy real plan to tmp
-        real_plan = "/Users/roberto/antigravity/burnless/book/chapter_plan.json"
+        real_plan = _CHAPTER_PLAN_PATH
         tmp_plan = os.path.join(tmpdir, "chapter_plan.json")
         with open(real_plan) as src:
             with open(tmp_plan, "w") as dst:
@@ -28,7 +35,7 @@ def test_extend_outline_dry_run_no_modify():
         result = subprocess.run(
             [
                 "python3",
-                "/Users/roberto/antigravity/burnless/book/scripts/extend_outline.py",
+                _EXTEND_OUTLINE_SCRIPT,
                 "--plan", tmp_plan,
                 "--dry-run",
             ],
@@ -79,7 +86,7 @@ def test_extend_outline_dedup_existing_capsules():
                 json.dump(new_cap, f)
 
         # Copy real plan
-        real_plan = "/Users/roberto/antigravity/burnless/book/chapter_plan.json"
+        real_plan = _CHAPTER_PLAN_PATH
         tmp_plan = os.path.join(tmpdir, "chapter_plan.json")
         with open(real_plan) as src:
             with open(tmp_plan, "w") as dst:
@@ -89,7 +96,7 @@ def test_extend_outline_dedup_existing_capsules():
         result = subprocess.run(
             [
                 "python3",
-                "/Users/roberto/antigravity/burnless/book/scripts/extend_outline.py",
+                _EXTEND_OUTLINE_SCRIPT,
                 "--plan", tmp_plan,
                 "--frozen-dir", frozen_dir,
                 "--dry-run",
@@ -109,7 +116,7 @@ def test_extend_outline_json_structure():
     """Verify dry-run output has required fields."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Copy real plan
-        real_plan = "/Users/roberto/antigravity/burnless/book/chapter_plan.json"
+        real_plan = _CHAPTER_PLAN_PATH
         tmp_plan = os.path.join(tmpdir, "chapter_plan.json")
         with open(real_plan) as src:
             with open(tmp_plan, "w") as dst:
@@ -118,7 +125,7 @@ def test_extend_outline_json_structure():
         result = subprocess.run(
             [
                 "python3",
-                "/Users/roberto/antigravity/burnless/book/scripts/extend_outline.py",
+                _EXTEND_OUTLINE_SCRIPT,
                 "--plan", tmp_plan,
                 "--dry-run",
             ],
@@ -147,7 +154,7 @@ def test_extend_outline_no_apply_zero_capsules():
         os.makedirs(frozen_dir)
 
         # Copy real plan
-        real_plan = "/Users/roberto/antigravity/burnless/book/chapter_plan.json"
+        real_plan = _CHAPTER_PLAN_PATH
         tmp_plan = os.path.join(tmpdir, "chapter_plan.json")
         with open(real_plan) as src:
             with open(tmp_plan, "w") as dst:
@@ -156,7 +163,7 @@ def test_extend_outline_no_apply_zero_capsules():
         result = subprocess.run(
             [
                 "python3",
-                "/Users/roberto/antigravity/burnless/book/scripts/extend_outline.py",
+                _EXTEND_OUTLINE_SCRIPT,
                 "--plan", tmp_plan,
                 "--frozen-dir", frozen_dir,
                 "--apply",

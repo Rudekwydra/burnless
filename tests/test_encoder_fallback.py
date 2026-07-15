@@ -147,6 +147,6 @@ class TestApplyCaptureStructureFallback:
     def test_hook_error_names_exist(self):
         """Verify that hook error names are used in code."""
         from pathlib import Path
-        epochs_code = Path("/Users/roberto/antigravity/burnless/src/burnless/epochs_v2.py").read_text()
+        epochs_code = (Path(__file__).resolve().parents[1] / "src" / "burnless" / "epochs_v2.py").read_text()
         assert "living_rewriter_fallback" in epochs_code
         assert "apply_capture_fallback_retry" in epochs_code

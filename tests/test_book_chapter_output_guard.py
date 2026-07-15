@@ -3,10 +3,14 @@
 Pytest tests for chapter_output_guard validation.
 """
 import sys
+from pathlib import Path
+
 import pytest
 
 # Insert the scripts directory into sys.path to import the guard module
-sys.path.insert(0, "/Users/roberto/antigravity/burnless/book/scripts")
+_BOOK_SCRIPTS = Path(__file__).resolve().parents[1] / "book" / "scripts"
+pytestmark = pytest.mark.skipif(not _BOOK_SCRIPTS.exists(), reason="book/ not present in this checkout")
+sys.path.insert(0, str(_BOOK_SCRIPTS))
 
 from chapter_output_guard import validate_chapter_output
 
