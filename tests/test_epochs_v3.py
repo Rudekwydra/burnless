@@ -151,3 +151,37 @@ def test_enforce_budget_v3_trim_order_decisoes_then_refs_then_riscos():
     # Refs partially trimmed but Riscos untouched (Refs not yet exhausted)
     assert 0 < len(parsed["Refs"]) < 30
     assert len(parsed["Riscos"]) == 5
+
+
+def test_focus_invariant_rewrites_when_threads_open():
+    new_md = (
+        "## Foco atual\n"
+        "- tudo completo, nada em voo\n\n"
+        "## Threads abertas\n"
+        "- [inflight] resetar senha DataForSEO antes do go-live\n\n"
+        "## Decisões\n\n"
+        "## Contracts\n\n"
+        "## Refs\n"
+    )
+    result = e.enforce_focus_not_complete("", new_md)
+    assert "tudo completo" not in result
+    assert "Próxima ação pendente" in result
+    assert "resetar senha DataForSEO" in result
+
+
+def test_focus_invariant_noop_when_no_threads():
+    new_md = (
+        "## Foco atual\n"
+        "- tudo completo\n\n"
+        "## Threads abertas\n\n"
+        "## Decisões\n\n"
+        "## Contracts\n\n"
+        "## Refs\n"
+    )
+    result = e.enforce_focus_not_complete("", new_md)
+    assert result == new_md
+
+
+def test_v2_prompt_has_plano_futuro():
+    prompt = e.living_rewrite_prompt("", "")
+    assert "fecha a thread" in prompt
