@@ -128,7 +128,7 @@ def test_autofixed_spec_still_hits_verify_gates() -> None:
     from pathlib import Path
 
     # Use actual project path
-    project_root = Path("/Users/roberto/antigravity/burnless")
+    project_root = Path(__file__).resolve().parents[1]
 
     # Construct spec with relative path that can be autofixed + unfenced Verify
     # "tests/conftest.py" is autofixable (has real file reference), unfenced Verify should block
@@ -152,7 +152,7 @@ def test_autofixed_spec_still_hits_verify_gates() -> None:
     assert result.ok is False
     assert result.reason == "unfenced_verify"
     # Autofix should have been applied to text, even though gate (b) blocked
-    assert "/Users/roberto/antigravity/burnless/tests/conftest.py" in result.text
+    assert str(project_root / "tests" / "conftest.py") in result.text
     # Autofix notice should be present in result
     assert result.autofix_notice != ""
 

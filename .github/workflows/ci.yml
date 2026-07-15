@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+    branches: [main, v0.9-agent-arch]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: pip install -e '.[dev]'
+      - name: Test suite
+        run: python -m pytest -q
+      - name: Public git check
+        run: bash scripts/public_git_check.sh
