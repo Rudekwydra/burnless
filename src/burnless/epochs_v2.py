@@ -266,6 +266,7 @@ Sem pensamento/debate/markdown extra — apenas as 5 seções.
 - Mantenha apenas threads relevantes; descarte resolvidas antigas
 - Preserve Contracts verbatim; deixe Refs e Threads evaporarem se irrelevantes
 - Comprima 'Decisões': uma linha por decisão, resumida
+- Plano-futuro: intenção declarada e ainda não executada é Thread ABERTA — entregar o design/spec/commit de uma etapa não fecha a thread da etapa seguinte. 'Foco atual' NUNCA vira "tudo completo" enquanto existir thread aberta; nesse caso 'Foco atual' aponta a próxima ação pendente.
 
 Retorne apenas o documento markdown atualizado. Sem markdown fence. Pronto."""
     return prompt
@@ -413,6 +414,79 @@ def preserve_open_threads(prev_md: str, new_md: str, exchange: str = "") -> str:
                     new_md = new_md[:next_section_pos] + evaporated_text + new_md[next_section_pos:]
 
     return new_md
+
+
+def enforce_focus_not_complete(prev_md: str, new_md: str) -> str:
+    """Prevent false 'Foco atual: tudo completo' when threads exist (deterministic, zero-LLM).
+
+    If new_md contains 1+ relevant open threads (nucleus >= 12 chars) AND 'Foco atual'
+    matches false-complete patterns, rewrite ONLY the '## Foco atual' section with
+    a single line '- → Próxima ação pendente: <nucleus>' (1st thread's nucleus verbatim).
+    Otherwise return new_md unchanged. Deterministic only: no LLM calls.
+    """
+    parsed = parse_living_v3(new_md)
+    threads_abertas = parsed.get('Threads abertas', [])
+    foco_atual = parsed.get('Foco atual', [])
+
+    relevant_threads = []
+    for thread_line in threads_abertas:
+        thread_line_clean = thread_line.lstrip('- ').strip()
+        if not thread_line_clean:
+            continue
+
+        nucleus = _TRUST_PREFIX_RE.sub('', thread_line_clean)
+        while True:
+            m = _TRAILING_TAG_RE.search(nucleus)
+            if not m:
+                break
+            nucleus = nucleus[:m.start()]
+        nucleus = nucleus.strip()
+
+        if len(nucleus) >= 12:
+            relevant_threads.append(nucleus)
+
+    if not relevant_threads:
+        return new_md
+
+    foco_text = ' '.join(foco_atual).lower()
+
+    false_complete_patterns = [
+        r'tudo\s+(completo|conclu)',
+        r'nada\s+(em voo|pendente|aberto)',
+        r'(nenhuma|sem)\s+thread',
+        r'sem pend[êe]nc',
+        r'threads?\s+nenhuma',
+        r'all\s+(complete|done)',
+        r'nothing\s+(in flight|pending|open)',
+        r'no\s+open\s+threads',
+    ]
+
+    matches_false_complete = any(re.search(p, foco_text, re.IGNORECASE) for p in false_complete_patterns)
+
+    if not matches_false_complete:
+        return new_md
+
+    foco_marker = new_md.find('## Foco atual')
+    if foco_marker == -1:
+        return new_md
+
+    eol = new_md.find('\n', foco_marker)
+    if eol == -1:
+        return new_md
+
+    next_section_pos = -1
+    for section in SECTIONS_V3:
+        if section != 'Foco atual':
+            marker = new_md.find(f'## {section}', eol + 1)
+            if marker != -1 and (next_section_pos == -1 or marker < next_section_pos):
+                next_section_pos = marker
+
+    new_line = f'- → Próxima ação pendente: {relevant_threads[0]}'
+
+    if next_section_pos == -1:
+        return new_md[:eol + 1] + f'\n{new_line}\n'
+    else:
+        return new_md[:eol + 1] + f'\n{new_line}\n' + new_md[next_section_pos:]
 
 
 def _inject_missing_threads_section(new_md: str, threads: list[str]) -> str:
@@ -932,6 +1006,7 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
             ages = update_contract_ages(prev_ages, new_md, turn)
             new_md = preserve_guard(prev_md, new_md, contract_ages=ages, turn=turn)
             new_md = preserve_open_threads(prev_md, new_md, exchange)
+            new_md = enforce_focus_not_complete(prev_md, new_md)
             if eff_version >= 3:
                 new_md = enforce_budget_v3(
                     new_md,
