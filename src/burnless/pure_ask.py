@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
 import shlex
 import subprocess
 import tempfile
+import urllib.request
 
 
 DEFAULT_ASK_SYSTEM = (
@@ -14,6 +17,14 @@ _DISALLOWED_TOOLS = [
     "Bash", "Edit", "Write", "Read", "Glob", "Grep", "Task",
     "WebFetch", "WebSearch", "NotebookEdit", "TodoWrite",
 ]
+
+
+def resolve_ask_provider(tier: str, cfg: dict) -> str:
+    """Resolve tier -> provider name.
+
+    Returns the provider for a tier, defaulting to 'anthropic'.
+    """
+    return ((cfg.get("agents") or {}).get(tier) or {}).get("provider", "anthropic")
 
 
 def resolve_ask_model(tier: str, cfg: dict) -> str:
@@ -39,6 +50,67 @@ def resolve_ask_model(tier: str, cfg: dict) -> str:
         if tok == "--model" and i + 1 < len(parts):
             return parts[i + 1]
     raise ValueError(f"burnless ask: could not resolve a model for tier '{tier}'")
+
+
+def run_ask_ollama(model: str, prompt: str, system: str | None = None, timeout: int = 120, host: str | None = None) -> tuple[int, str, str]:
+    """Run a pure completion via local ollama/llamacpp HTTP API.
+
+    Returns (returncode, stdout, stderr).
+    - returncode 0 on success, 1 on any exception
+    - stdout is the completion content or empty string on error
+    - stderr is the exception message or empty string on success
+    """
+    try:
+        api_mode = os.environ.get("BURNLESS_LOCAL_API", "ollama").lower()
+        messages = [
+            {"role": "system", "content": system or DEFAULT_ASK_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
+
+        if api_mode == "llamacpp":
+            local_host = os.environ.get("BURNLESS_LOCAL_HOST", "http://localhost:11435")
+            endpoint = "/v1/chat/completions"
+            payload = {
+                "model": model or "local",
+                "messages": messages,
+                "stream": False,
+                "temperature": 0.2,
+            }
+        else:
+            local_host = host or os.environ.get("BURNLESS_OLLAMA_HOST", "http://localhost:11434")
+            endpoint = "/api/chat"
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "think": False,
+                "keep_alive": os.environ.get("BURNLESS_OLLAMA_KEEPALIVE", "30m"),
+                "options": {
+                    "temperature": 0.2,
+                    "num_ctx": int(os.environ.get("BURNLESS_OLLAMA_NUM_CTX", "32768")),
+                },
+            }
+
+        url = local_host.rstrip("/") + endpoint
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp_data = json.loads(resp.read().decode("utf-8"))
+
+        if api_mode == "llamacpp":
+            content = resp_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        else:
+            content = resp_data.get("message", {}).get("content", "")
+
+        return 0, content.strip(), ""
+    except Exception as e:
+        return 1, "", str(e)
 
 
 def build_ask_command(model: str, output_format: str = "text", system: str | None = None, max_budget_usd: float | None = None) -> list[str]:
@@ -78,8 +150,33 @@ def run_ask(
 
     When model is provided (not None and not empty), uses it directly without
     calling resolve_ask_model. Otherwise, resolves model from tier/config.
+
+    When model is not provided, first checks the tier's provider: if ollama or
+    ollama-local, routes to run_ask_ollama instead of claude CLI.
     """
-    resolved_model = model if model else resolve_ask_model(tier, cfg)
+    if model:
+        # Explicit model: use claude-CLI path
+        cmd = build_ask_command(model, output_format=output_format, system=system, max_budget_usd=max_budget_usd)
+        result = subprocess.run(
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=tempfile.gettempdir(),
+        )
+        return result.returncode, result.stdout, result.stderr
+
+    # No explicit model: check provider
+    provider = resolve_ask_provider(tier, cfg)
+    if provider in ("ollama", "ollama-local"):
+        local_model = ((cfg.get("agents") or {}).get(tier) or {}).get("model")
+        if not local_model:
+            raise ValueError(f"burnless ask: could not resolve a local model for tier '{tier}'")
+        return run_ask_ollama(local_model, prompt, system=system, timeout=timeout)
+
+    # Anthropic provider (or other): use claude-CLI path
+    resolved_model = resolve_ask_model(tier, cfg)
     cmd = build_ask_command(resolved_model, output_format=output_format, system=system, max_budget_usd=max_budget_usd)
     result = subprocess.run(
         cmd,
