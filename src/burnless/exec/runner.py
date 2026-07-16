@@ -536,9 +536,37 @@ def _emit_audit_record(proj_root, did, summary, capsule_path, log_path, cfg):
 
 
 
+def _recorded_project_root(delegation_md_path) -> Path | None:
+    """Parse the leading YAML front-matter of a delegation .md for a
+    `project_root:` line and return it as a Path, or None on any failure
+    (missing file, no front-matter, missing key, malformed content)."""
+    try:
+        text = Path(delegation_md_path).read_text(encoding="utf-8")
+        if not text.startswith("---\n"):
+            return None
+        end = text.index("\n---\n", 4)
+        front_matter = text[4:end]
+        for line in front_matter.splitlines():
+            m = re.match(r"^project_root:\s*(.+)$", line.strip())
+            if m:
+                value = m.group(1).strip()
+                return Path(value) if value else None
+        return None
+    except Exception:
+        return None
+
+
 def execute_delegation(opts: RunOpts, root=None) -> int:
     root = root or paths_mod.require_root()
     p = paths_mod.paths_for(root)
+    try:
+        _deleg_md = p["delegations"] / f"{opts.id}.md"
+        _rp = _recorded_project_root(_deleg_md)
+        if _rp is not None and paths_mod.is_project_root(_rp) and _rp != root.parent:
+            root = _rp / ".burnless"
+            p = paths_mod.paths_for(root)
+    except Exception:
+        pass
     cfg = config_mod.load(p["config"])
     if opts.worker_overrides:
         cfg = config_mod.apply_worker_overrides(cfg, opts.worker_overrides)

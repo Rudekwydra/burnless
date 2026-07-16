@@ -259,11 +259,12 @@ def cmd_delegate(args: argparse.Namespace, cfg_override: dict | None = None) -> 
         routed_by=kw,
     )
     deleg_path = p["delegations"] / f"{did}.md"
+    _project_root_line = f"project_root: {p['root'].parent}"
     if chain:
-        header = f"---\nchain: [{', '.join(chain)}]\n---\n"
-        deleg_mod.write_delegation(deleg_path, header + body)
+        header = f"---\n{_project_root_line}\nchain: [{', '.join(chain)}]\n---\n"
     else:
-        deleg_mod.write_delegation(deleg_path, body)
+        header = f"---\n{_project_root_line}\n---\n"
+    deleg_mod.write_delegation(deleg_path, header + body)
     def _set_last(st):
         st["last_delegation"] = did
     state_mod.update_locked(p["state"], _set_last)
