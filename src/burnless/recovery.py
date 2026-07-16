@@ -2566,7 +2566,7 @@ def render_restore(
             f"(written by the model itself, {handoff_age or 'recent'} before /clear)"
         )
 
-    header_parts = [
+    telemetry_line = " ".join([
         _RESTORE_PREFIX,
         f"host={host}",
         f"old_sid={checkpoint_session_id}",
@@ -2576,7 +2576,10 @@ def render_restore(
         f"applied_through={applied_through}",
         f"journal_head={journal_head}",
         f"pending_count={len(pending)}",
-    ]
+    ])
+    if handoff_age is not None:
+        telemetry_line += f" handoff_age={handoff_age}"
+    header_parts = [telemetry_line]
     if divergence_line:
         header_parts.append(divergence_line)
     if live_handoff and lineage_assertable and handoff_age is not None:
