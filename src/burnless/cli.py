@@ -50,6 +50,7 @@ from .pilot import monitor_rollover_loop as pilot_monitor_rollover_loop
 from .pilot import resolve_host_adapter as pilot_resolve_host_adapter
 from .pilot import run_pilot as pilot_run
 from .pilot import hud as hud_mod
+from .pilot import append_event as pilot_append_event
 from .pilot.cadence_providers import build_cadence_controller
 from .pilot.cadence_controller import build_injector as _build_cadence_injector
 from .prompt_context import (_with_runtime_context, _build_cacheable_runtime_prefix, _TELEGRAPHIC_OUTPUT_HINT, _QTP_F_FIXED_SUFFIX)
@@ -2813,7 +2814,20 @@ def _run_pilot_cycle(
             pilot_kwargs["title_provider"] = lambda: hud_mod.hud_title(project_root)
         if cadence_enabled:
             controller = build_cadence_controller(adapter=adapter, project_root=project_root, run_id=run_id, host_session_id=host_session_id, cfg=cadence_cfg or {})
-            pilot_kwargs["injector"] = _build_cadence_injector(controller, time.monotonic)
+            inner_injector = _build_cadence_injector(controller, time.monotonic)
+            def wrapped_injector() -> bytes | None:
+                result = inner_injector()
+                if result is not None:
+                    try:
+                        pilot_append_event(
+                            project_root,
+                            run_id,
+                            {"event": "compact_issued", "ts": datetime.now(timezone.utc).isoformat()}
+                        )
+                    except Exception:
+                        pass
+                return result
+            pilot_kwargs["injector"] = wrapped_injector
         rc = pilot_run(argv, **pilot_kwargs)
     finally:
         if stop_event is not None:
