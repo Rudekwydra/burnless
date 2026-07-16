@@ -458,19 +458,11 @@ def run_cached_worker(
     # Real-time Maestro metrics — best effort, never blocks the result path.
     try:
         from . import metrics as _metrics_mod
-        from . import paths as _paths_mod
+        from . import paths
 
-        # Walk up from project_root to find the .burnless dir.
-        bl_root = None
-        for candidate in [project_root, *project_root.parents]:
-            if (candidate / ".burnless").is_dir():
-                bl_root = candidate / ".burnless"
-                break
-            if candidate.name == ".burnless":
-                bl_root = candidate
-                break
+        bl_root = paths.find_root(start=project_root)
         if bl_root is not None:
-            _p = _paths_mod.paths_for(bl_root)
+            _p = paths.paths_for(bl_root)
             _metrics_mod.record_brain_call(
                 metrics_path=_p["metrics"],
                 audit_path=_p["audit"],
