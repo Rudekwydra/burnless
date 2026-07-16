@@ -321,8 +321,7 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
                 first_component = cwd_rel.parts[0] if cwd_rel.parts else None
                 if first_component:
                     candidate = workspace / first_component
-                    if paths.is_project_root(candidate):
-                        return candidate
+                    return candidate
             except ValueError:
                 pass
 
