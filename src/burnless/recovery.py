@@ -1987,14 +1987,15 @@ def _live_handoff_path(root_path: Path) -> Path:
     return root_path / "epochs" / "_rolling" / "live_handoff.md"
 
 
-def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> str | None:
+def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> tuple[str, int] | None:
     path = _live_handoff_path(root_path)
     try:
         if not path.exists():
             return None
         stat = path.stat()
         mtime = stat.st_mtime
-        if time.time() - mtime > ttl_s:
+        age_s = max(0, int(time.time() - mtime))
+        if age_s > ttl_s:
             try:
                 path.unlink()
             except OSError:
@@ -2006,9 +2007,17 @@ def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> str | None:
         except OSError:
             pass
         stripped = text.strip()
-        return stripped if stripped else None
+        return (stripped, age_s) if stripped else None
     except Exception:
         return None
+
+
+def _humanize_handoff_age(age_s: int, lang: str) -> str:
+    if age_s < 60:
+        return "recente" if lang == "pt-BR" else "recent"
+    if age_s < 3600:
+        return f"{age_s // 60}m"
+    return f"{age_s // 3600}h"
 
 
 def _restore_divergence_warning(root_path: Path, own_mtime: float | None, lang: str, ttl_s: int = 21600) -> str | None:
@@ -2371,11 +2380,13 @@ def render_restore(
     if budget_tokens is None:
         budget_tokens = _resolve_budget_tokens(root_path, source)
     checkpoint_session_id = host_session_id
+    used_startup_fallback = False
     checkpoint = read_checkpoint(root_path, host, checkpoint_session_id)
     if checkpoint is None and source == "startup":
         latest = _latest_project_checkpoint(root_path, host, process_instance_id=process_instance_id)
         if latest is not None:
             checkpoint_session_id, checkpoint = latest
+            used_startup_fallback = True
     checkpoint = checkpoint or {
         "generation": 0,
         "living_md": "",
@@ -2426,7 +2437,33 @@ def render_restore(
     except OSError:
         _own_mtime = None
     divergence_line = _restore_divergence_warning(root_path, _own_mtime, lang)
-    handoff_header = i18n.msg("restore_handoff_header", lang)
+    live_handoff_result = _consume_live_handoff(root_path)
+    if live_handoff_result is None:
+        live_handoff = None
+        handoff_age_s = None
+        handoff_age = None
+    else:
+        live_handoff, handoff_age_s = live_handoff_result
+        handoff_age = _humanize_handoff_age(handoff_age_s, lang)
+
+    lineage_assertable = (
+        not used_startup_fallback and checkpoint_session_id == host_session_id
+    )
+    if lineage_assertable:
+        handoff_header = i18n.msg(
+            "restore_handoff_header", lang, age=handoff_age or "recente"
+        )
+    elif lang == "pt-BR":
+        handoff_header = (
+            "## Handoff da sessão anterior "
+            f"(escrito pelo próprio modelo, {handoff_age or 'recente'} antes do /clear)"
+        )
+    else:
+        handoff_header = (
+            "## Handoff from previous session "
+            f"(written by the model itself, {handoff_age or 'recent'} before /clear)"
+        )
+
     header_parts = [
         _RESTORE_PREFIX,
         f"host={host}",
@@ -2437,13 +2474,39 @@ def render_restore(
         f"applied_through={applied_through}",
         f"journal_head={journal_head}",
         f"pending_count={len(pending)}",
-        i18n.msg("restore_pointer_rule", lang),
     ]
     if divergence_line:
-        header_parts.insert(len(header_parts) - 1, divergence_line)
+        header_parts.append(divergence_line)
+    if live_handoff and lineage_assertable and handoff_age is not None:
+        header_parts.append(
+            i18n.msg(
+                "restore_identity_preamble",
+                lang,
+                old_sid_short=checkpoint_session_id[:8],
+                age=handoff_age,
+            )
+        )
+        stale_notice = ""
+        if handoff_age_s is not None and handoff_age_s > 1800:
+            stale_notice = (
+                "Como handoff_age > 30m, a licença de assentamento está degradada: confie na estrutura e faça spot-check dos claims voláteis."
+                if lang == "pt-BR"
+                else "Because handoff_age > 30m, the settlement license is degraded: trust the structure and spot-check volatile claims."
+            )
+        header_parts.append(
+            i18n.msg(
+                "restore_trust_contract",
+                lang,
+                age=handoff_age,
+                stale_notice=stale_notice,
+                pointer_rule_text=i18n.msg("restore_pointer_rule", lang),
+            ).replace("  ", " ")
+        )
+    else:
+        header_parts.append(i18n.msg("restore_pointer_rule", lang))
+    if live_handoff:
+        header_parts.append(i18n.msg("restore_resume_imperative", lang))
     header = "\n".join(header_parts)
-
-    live_handoff = _consume_live_handoff(root_path)
     live_handoff_chars = len(live_handoff) if live_handoff else 0
 
     checkpoint_chars = len(living_md.strip())
