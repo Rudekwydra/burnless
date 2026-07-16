@@ -54,6 +54,46 @@ def validate_spec_paths(text: str) -> SpecValidation:
     return SpecValidation(ok=not offending, offending=offending)
 
 
+_EXEC_LANGS: frozenset[str] = frozenset(
+    {"sh", "bash", "shell", "zsh", "console", "shell-session", "sh-session"}
+)
+
+
+def _executed_regions(text: str) -> str:
+    """Text a worker/runner actually executes: fenced shell code blocks plus the
+    ## Verify commands. Relative paths here are hard-blocked; prose is only warned."""
+    out: list[str] = []
+    in_fence = False
+    fence_char = ""
+    lang = ""
+    buf: list[str] = []
+    for line in text.splitlines():
+        s = line.lstrip()
+        if not in_fence:
+            if s.startswith("```") or s.startswith("~~~"):
+                in_fence = True
+                fence_char = s[0]
+                info = s.lstrip("`~").strip()
+                lang = info.split()[0].lower() if info else ""
+                buf = []
+            continue
+        if s.startswith(fence_char * 3):
+            if lang in _EXEC_LANGS:
+                out.append("\n".join(buf))
+            in_fence = False
+            lang = ""
+            buf = []
+            continue
+        buf.append(line)
+    try:
+        from .delegation_parse import extract_verify_block
+
+        out.extend(extract_verify_block(text))
+    except Exception:
+        pass
+    return "\n".join(out)
+
+
 def autofix_relative_paths(text: str, project_root: Path) -> tuple[str, list[str]]:
     """Rewrite offending relative project-file paths to their absolute form.
 
@@ -159,6 +199,21 @@ def format_rejection(v: SpecValidation, project_root: Path, lang: str = "pt-BR")
     )
 
 
+def format_prose_path_warning(prose_paths: list[str], lang: str = "pt-BR") -> str:
+    bullets = "\n".join(f"    {p}" for p in prose_paths)
+    if lang.startswith("pt"):
+        return (
+            "\n[WARN] burnless: caminhos relativos SO na prosa (fora de fences shell e ## Verify) -- nao bloqueiam.\n"
+            "   Se algum for alvo de acao do worker, torne-o absoluto; se for so referencia, ignore.\n"
+            f"{bullets}\n"
+        )
+    return (
+        "\n[WARN] burnless: relative paths in PROSE only (outside shell fences and ## Verify) -- not blocking.\n"
+        "   If any is a worker action target, make it absolute; if it is only a reference, ignore.\n"
+        f"{bullets}\n"
+    )
+
+
 _CMD_SUBSTITUTION_RE = re.compile(r"`|\$\(")
 
 
@@ -229,23 +284,30 @@ def evaluate_spec_gates(
     """
     autofix_notice = ""
 
-    # (a) Relative paths gate
+    # (a) Relative paths gate — hard-block only inside executed regions
+    #     (fenced shell blocks + ## Verify); prose-only hits downgrade to a warning.
     if not allow_relative_paths and cfg.get("validation", {}).get("require_absolute_paths", True):
-        sv = validate_spec_paths(text)
-        if not sv.ok:
+        lang = cfg.get("language", "pt-BR")
+        sv_exec = validate_spec_paths(_executed_regions(text))
+        if not sv_exec.ok:
             fixed_text, rewritten = autofix_relative_paths(text, project_root)
-            if rewritten and validate_spec_paths(fixed_text).ok:
+            if rewritten and validate_spec_paths(_executed_regions(fixed_text)).ok:
                 text = fixed_text
-                lang = cfg.get("language", "pt-BR")
                 autofix_notice = format_autofix_notice(rewritten, project_root, lang)
             else:
-                lang = cfg.get("language", "pt-BR")
                 return SpecGateResult(
                     ok=False,
                     text=text,
                     reason="relative_paths",
-                    message=format_rejection(sv, project_root, lang)
+                    message=format_rejection(sv_exec, project_root, lang)
                 )
+        else:
+            prose_only = [
+                p for p in validate_spec_paths(text).offending
+                if p not in set(sv_exec.offending)
+            ]
+            if prose_only:
+                autofix_notice += format_prose_path_warning(prose_only, lang)
 
     # (b) Unfenced verify gate
     _enforce_fence = cfg.get("validation", {}).get("enforce_verify_fence", True)

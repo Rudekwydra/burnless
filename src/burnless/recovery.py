@@ -2011,6 +2011,43 @@ def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> str | None:
         return None
 
 
+def _restore_divergence_warning(root_path: Path, own_mtime: float | None, lang: str, ttl_s: int = 21600) -> str | None:
+    """Warn-only cross-root freshness check. Returns a divergence line if a sibling project
+    holds a live_handoff.md that is fresh (<ttl_s) and newer than this root's own handoff.
+    NEVER reads sibling content — stat + path only (no cross-project leak)."""
+    try:
+        from . import i18n
+
+        project = _project_root(root_path)
+        workspace = project.parent
+        now = time.time()
+        best_path = None
+        best_mtime = 0.0
+        for proj_dir in workspace.iterdir():
+            try:
+                if not proj_dir.is_dir() or proj_dir == project:
+                    continue
+                sib = proj_dir / ".burnless" / "epochs" / "_rolling" / "live_handoff.md"
+                if not sib.exists():
+                    continue
+                mt = sib.stat().st_mtime
+                if now - mt > ttl_s:
+                    continue
+                if own_mtime is not None and mt <= own_mtime:
+                    continue
+                if mt > best_mtime:
+                    best_mtime = mt
+                    best_path = sib
+            except OSError:
+                continue
+        if best_path is None:
+            return None
+        age_min = int((now - best_mtime) / 60)
+        return i18n.msg("restore_divergence_warn", lang, path=str(best_path), age=age_min, root=str(project))
+    except Exception:
+        return None
+
+
 def _restore_lang(root_path: Path) -> str:
     try:
         from . import config as config_mod
@@ -2383,6 +2420,12 @@ def render_restore(
 
     lang = _restore_lang(root_path)
     en = _format_en_markers(root_path)
+    _own_hp = _live_handoff_path(root_path)
+    try:
+        _own_mtime = _own_hp.stat().st_mtime if _own_hp.exists() else None
+    except OSError:
+        _own_mtime = None
+    divergence_line = _restore_divergence_warning(root_path, _own_mtime, lang)
     handoff_header = i18n.msg("restore_handoff_header", lang)
     header_parts = [
         _RESTORE_PREFIX,
@@ -2396,6 +2439,8 @@ def render_restore(
         f"pending_count={len(pending)}",
         i18n.msg("restore_pointer_rule", lang),
     ]
+    if divergence_line:
+        header_parts.insert(len(header_parts) - 1, divergence_line)
     header = "\n".join(header_parts)
 
     live_handoff = _consume_live_handoff(root_path)

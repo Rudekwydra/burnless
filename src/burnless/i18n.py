@@ -37,6 +37,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "pt-BR": "## Handoff da sessão anterior (escrito pelo próprio modelo, pré-clear)",
         "en": "## Handoff from previous session (written by the model itself, pre-clear)",
     },
+    "restore_divergence_warn": {
+        "pt-BR": "[burnless] DIVERGÊNCIA: handoff mais novo em {path} (idade {age}m) que o da raiz resolvida {root} — uma janela anterior provavelmente escreveu noutra raiz. NÃO reencarne cego; verifique qual raiz é a correta.",
+        "en": "[burnless] DIVERGENCE: fresher handoff at {path} (age {age}m) than under resolved root {root} — a previous window likely wrote to a different root. Do NOT resurrect blind; check which root is correct.",
+    },
     "restore_manifest_checkpoint": {
         "pt-BR": "- checkpoint completo: {path}",
         "en": "- full checkpoint: {path}",
