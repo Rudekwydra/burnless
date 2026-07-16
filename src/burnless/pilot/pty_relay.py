@@ -33,6 +33,7 @@ def run_pilot(
     env: dict[str, str] | None = None,
     capture: bool = False,
     input_bytes: bytes | None = None,
+    injector: Callable[[], bytes | None] | None = None,
     on_spawn=None,
     title_provider: Callable[[], str] | None = None,
     title_interval_s: float = 5.0,
@@ -97,6 +98,14 @@ def run_pilot(
             if os.isatty(stdin_fd):
                 rlist.append(stdin_fd)
             ready, _, _ = select.select(rlist, [], [], 0.1)
+
+            if injector is not None:
+                try:
+                    chunk = injector()
+                    if chunk:
+                        os.write(master_fd, chunk)
+                except Exception:
+                    injector = None
 
             if title_provider is not None:
                 now = time.monotonic()

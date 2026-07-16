@@ -71,6 +71,56 @@ def test_run_pilot_relay_roundtrip(monkeypatch):
     assert "\x1b[?1049l" in out_text
 
 
+def test_run_pilot_injector_writes_to_child(monkeypatch):
+    from burnless.pilot import run_pilot
+
+    script = Path(__file__).resolve().parent / "fixtures" / "fake_tui_host.py"
+    spawned = {}
+
+    class _FD:
+        def __init__(self, fd):
+            self._fd = fd
+
+        def fileno(self):
+            return self._fd
+
+    stdin_fd = os.open(os.devnull, os.O_RDONLY)
+    stdout_r, stdout_w = os.pipe()
+    monkeypatch.setattr(sys, "stdin", _FD(stdin_fd))
+    monkeypatch.setattr(sys, "stdout", _FD(stdout_w))
+
+    def on_spawn(proc):
+        spawned["pid"] = proc.pid
+
+    injector_called = [False]
+    def injector():
+        if not injector_called[0]:
+            injector_called[0] = True
+            return b"injected\n/exit\n"
+        return None
+
+    try:
+        rc = run_pilot([sys.executable, str(script)], on_spawn=on_spawn, injector=injector)
+    finally:
+        os.close(stdin_fd)
+        os.close(stdout_w)
+
+    out = b""
+    while True:
+        chunk = os.read(stdout_r, 4096)
+        if not chunk:
+            break
+        out += chunk
+    os.close(stdout_r)
+    out_text = out.decode("utf-8", "replace")
+    assert rc == 0
+    assert spawned["pid"] > 0
+    assert "\x1b[?1049h" in out_text
+    assert "fake-host ready" in out_text
+    assert "echo:injected" in out_text
+    assert "\x1b[?1049l" in out_text
+
+
 def test_claude_adapter_builds_argv(tmp_path):
     from burnless.pilot.hosts.claude import ClaudeAdapter
 
