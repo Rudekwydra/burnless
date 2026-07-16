@@ -11,31 +11,48 @@ from .compact_detect import detect_compact_summaries
 
 
 def resolve_transcript_path(project_root: Path, run_id: str) -> Path | None:
-    """Resolve the Claude JSONL transcript for a pilot run via the events log's transcript_ref."""
+    """Resolve the Claude JSONL transcript for a pilot run.
+
+    Prefer the events log's transcript_ref (written by pilot-event hooks); fall
+    back to the newest *.jsonl in the Claude project dir for this cwd, so cadence
+    works even when the driven session has no hooks configured.
+    """
     from .events import events_path
 
-    path = events_path(Path(project_root), run_id)
-    if not path.exists():
-        return None
     transcript_ref = None
+    path = events_path(Path(project_root), run_id)
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ref = obj.get("transcript_ref")
+                    if ref:
+                        transcript_ref = ref
+        except OSError:
+            transcript_ref = None
+
+    if transcript_ref:
+        return Path(transcript_ref)
+
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                ref = obj.get("transcript_ref")
-                if ref:
-                    transcript_ref = ref
+        from ..usage_meter import claude_project_dir
+
+        pdir = claude_project_dir(cwd=Path(project_root))
+        if pdir.exists():
+            jsonls = sorted(pdir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if jsonls:
+                return jsonls[0]
     except OSError:
-        return None
-    if not transcript_ref:
-        return None
-    return Path(transcript_ref)
+        pass
+
+    return None
 
 
 def backlog_turns_since_last_compact(transcript_path: Path | None) -> int:

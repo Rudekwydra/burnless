@@ -89,3 +89,19 @@ def test_build_cadence_controller_providers_work(tmp_path):
     assert ctrl.idle_provider() is True
     assert ctrl.backlog_provider() == 0
     assert ctrl.focus_provider() == ""
+
+
+def test_resolve_transcript_path_falls_back_to_project_dir(tmp_path, monkeypatch):
+    import burnless.usage_meter as um
+    pdir = tmp_path / "proj"
+    pdir.mkdir()
+    older = pdir / "old.jsonl"
+    older.write_text("", encoding="utf-8")
+    newer = pdir / "new.jsonl"
+    newer.write_text("", encoding="utf-8")
+    import os as _os
+    _os.utime(older, (1, 1))
+    _os.utime(newer, (100, 100))
+    monkeypatch.setattr(um, "claude_project_dir", lambda *, cwd=None: pdir)
+    # events file absent -> must fall back to newest jsonl
+    assert resolve_transcript_path(tmp_path / "noevents", "rX") == newer
