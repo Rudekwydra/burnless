@@ -265,3 +265,125 @@ def test_restore_owner_event_reports_layering(tmp_path):
     assert last["truncated"] is True
     assert last["pending_whole"] >= 1
     assert last["pending_summarized"] >= 1
+
+
+def test_last_prompt_section_journal_path(tmp_path):
+    # Root 1: newest exchange answered -> RESPONDIDA + do-not-answer-again line.
+    root = tmp_path / "answered" / ".burnless"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "config.yaml").write_text("language: pt-BR\n", encoding="utf-8")
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+    recovery.journal_append(
+        root,
+        {
+            "schema": 1,
+            "host": "claude",
+            "host_session_id": "sid-1",
+            "process_instance_id": "proc-1",
+            "transcript_path": "/tmp/t.jsonl",
+            "exchange_id": "sha256:one",
+            "user_text": "PERGUNTA-1: primeira pergunta",
+            "assistant_text": "RESPOSTA-1: primeira resposta",
+            "files": [],
+        },
+    )
+    recovery.journal_append(
+        root,
+        {
+            "schema": 1,
+            "host": "claude",
+            "host_session_id": "sid-1",
+            "process_instance_id": "proc-1",
+            "transcript_path": "/tmp/t.jsonl",
+            "exchange_id": "sha256:two",
+            "user_text": "PERGUNTA-2: a mais recente pergunta do Roberto",
+            "assistant_text": "RESPOSTA-2: resumo da resposta mais recente\ndetalhe adicional",
+            "files": [],
+        },
+    )
+
+    payload = _restore(root, budget_tokens=4000, sid="sid-1")
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+
+    assert "## Última mensagem do Roberto — status: RESPONDIDA" in ctx
+    assert "> PERGUNTA-2: a mais recente pergunta do Roberto" in ctx
+    assert "NÃO responder de novo" in ctx
+    manifest_idx = ctx.index("## Manifesto (leia sob demanda, não tudo)")
+    section_idx = ctx.index("## Última mensagem do Roberto — status: RESPONDIDA")
+    assert section_idx > manifest_idx
+
+    # Root 2: newest exchange NOT answered -> EM ABERTO, no do-not-answer line.
+    root2 = tmp_path / "open" / ".burnless"
+    root2.mkdir(parents=True, exist_ok=True)
+    (root2 / "config.yaml").write_text("language: pt-BR\n", encoding="utf-8")
+    recovery.write_checkpoint(
+        root2,
+        host="claude",
+        host_session_id="sid-2",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+    recovery.journal_append(
+        root2,
+        {
+            "schema": 1,
+            "host": "claude",
+            "host_session_id": "sid-2",
+            "process_instance_id": "proc-1",
+            "transcript_path": "/tmp/t.jsonl",
+            "exchange_id": "sha256:open-1",
+            "user_text": "PERGUNTA-ABERTA: pergunta ainda sem resposta",
+            "assistant_text": "",
+            "files": [],
+        },
+    )
+
+    payload2 = _restore(root2, budget_tokens=4000, sid="sid-2")
+    ctx2 = payload2["hookSpecificOutput"]["additionalContext"]
+    assert "status: EM ABERTO" in ctx2
+    assert "NÃO responder de novo" not in ctx2
+
+    # Root 3: newest user_text over 600 chars -> truncated with an ellipsis.
+    root3 = tmp_path / "long" / ".burnless"
+    root3.mkdir(parents=True, exist_ok=True)
+    (root3 / "config.yaml").write_text("language: pt-BR\n", encoding="utf-8")
+    recovery.write_checkpoint(
+        root3,
+        host="claude",
+        host_session_id="sid-3",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+    long_user_text = "PERGUNTA-LONGA: " + ("detalhe repetido " * 60)
+    assert len(long_user_text) > 600
+    recovery.journal_append(
+        root3,
+        {
+            "schema": 1,
+            "host": "claude",
+            "host_session_id": "sid-3",
+            "process_instance_id": "proc-1",
+            "transcript_path": "/tmp/t.jsonl",
+            "exchange_id": "sha256:long-1",
+            "user_text": long_user_text,
+            "assistant_text": "RESPOSTA-LONGA: ok",
+            "files": [],
+        },
+    )
+
+    payload3 = _restore(root3, budget_tokens=4000, sid="sid-3")
+    ctx3 = payload3["hookSpecificOutput"]["additionalContext"]
+    section_start = ctx3.index("## Última mensagem do Roberto")
+    assert "…" in ctx3[section_start:]

@@ -2152,6 +2152,49 @@ def _render_pending_block(record: dict[str, Any], *, en: bool = False) -> str:
     return "\n".join(block)
 
 
+def _render_last_prompt_section(record: dict[str, Any] | None, lang: str, *, en: bool = False) -> str:
+    if not record:
+        return ""
+    user_text = (record.get("user_text") or "").strip()
+    if not user_text:
+        return ""
+    assistant_text = (record.get("assistant_text") or "").strip()
+    answered = bool(assistant_text)
+    if len(user_text) > 600:
+        user_text = user_text[:599].rstrip() + "…"
+    blockquote_lines = [f"> {line}" for line in user_text.splitlines()]
+    if lang == "pt-BR":
+        header = (
+            "## Última mensagem do Roberto — status: RESPONDIDA"
+            if answered
+            else "## Última mensagem do Roberto — status: EM ABERTO"
+        )
+    else:
+        header = (
+            "## Roberto's last message — status: ANSWERED"
+            if answered
+            else "## Roberto's last message — status: OPEN"
+        )
+    lines = [header, *blockquote_lines]
+    if answered:
+        summary = ""
+        for line in assistant_text.splitlines():
+            if line.strip():
+                summary = line.strip()
+                break
+        if len(summary) > 120:
+            summary = summary[:119].rstrip() + "…"
+        if lang == "pt-BR":
+            lines.append(
+                f"Já respondi isto (resumo: {summary}). NÃO responder de novo — serve só para devolver o fio."
+            )
+        else:
+            lines.append(
+                f"Already answered (summary: {summary}). Do NOT answer again — this only hands back the thread."
+            )
+    return "\n".join(lines)
+
+
 def _pending_summary_line(record: dict[str, Any], max_chars: int = 120) -> str:
     """One-line summary for an old pending exchange that did not fit whole."""
     user_text = (record.get("user_text") or "").strip()
@@ -2192,6 +2235,7 @@ def _assemble_restore_layers(
     handoff_header: str | None = None,
     lang: str = "en",
     en: bool = False,
+    last_prompt_section: str = "",
 ) -> tuple[str, int, int]:
     """Priority-layered restore assembly (A1). Used when the naive full render
     exceeds the budget. Never truncates the MIDDLE of anything; instead it
@@ -2217,7 +2261,7 @@ def _assemble_restore_layers(
 
     # Fixed overhead: part separators, the pending-section header and the
     # one-line-summary label. Conservative so the final join stays in budget.
-    budget = max_chars - len(header) - len(manifest) - 200
+    budget = max_chars - len(header) - len(manifest) - len(last_prompt_section) - 200
     pending_sorted = sorted(pending, key=lambda r: int(r.get("seq") or 0))
 
     parsed = parse_living_v3(living_md)
@@ -2362,6 +2406,8 @@ def _assemble_restore_layers(
                 pending_lines.append(_render_pending_block(record, en=en))
         parts.extend(pending_lines)
     parts += ["", manifest]
+    if last_prompt_section:
+        parts += ["", last_prompt_section]
     context = "\n".join(parts).strip()
     return context, len(whole_seqs), summarized
 
@@ -2522,6 +2568,7 @@ def render_restore(
     )
 
     pending_sorted = sorted(pending, key=lambda r: int(r.get("seq") or 0))
+    last_prompt_section = _render_last_prompt_section(pending_sorted[-1], lang, en=en) if pending_sorted else ""
     full_parts = [header]
     if live_handoff:
         full_parts += ["", handoff_header, live_handoff]
@@ -2531,6 +2578,8 @@ def render_restore(
         full_parts += ["", _PENDING_HEADER]
         full_parts += [_render_pending_block(record, en=en) for record in pending_sorted]
     full_parts += ["", manifest]
+    if last_prompt_section:
+        full_parts += ["", last_prompt_section]
     full_context = "\n".join(full_parts).strip()
 
     truncated = False
@@ -2543,7 +2592,16 @@ def render_restore(
         # Over budget: priority-layered assembly (A1) — demote, never cut the middle.
         truncated = True
         context, pending_whole, pending_summarized = _assemble_restore_layers(
-            header, manifest, living_md, pending_sorted, max_chars, live_handoff, handoff_header, lang, en
+            header,
+            manifest,
+            living_md,
+            pending_sorted,
+            max_chars,
+            live_handoff,
+            handoff_header,
+            lang,
+            en,
+            last_prompt_section=last_prompt_section,
         )
 
     owner_loop.log_owner_event(
