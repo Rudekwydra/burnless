@@ -34,8 +34,20 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "rule: Refs and Recoverables are POINTERS — use Read/grep on demand; do not re-read already-known files without reason.",
     },
     "restore_handoff_header": {
-        "pt-BR": "## Handoff da sessão anterior (escrito pelo próprio modelo, pré-clear)",
-        "en": "## Handoff from previous session (written by the model itself, pre-clear)",
+        "pt-BR": "## Handoff da minha sessão (escrito por mim, {age} antes do /clear)",
+        "en": "## Handoff from my session (written by me, {age} before /clear)",
+    },
+    "restore_identity_preamble": {
+        "pt-BR": "Eu sou a continuação direta da sessão {old_sid_short}. O bloco abaixo é a minha memória de trabalho, escrita por mim {age} atrás, imediatamente antes do /clear.",
+        "en": "I am the direct continuation of session {old_sid_short}. The block below is my working memory, written by me {age} ago, immediately before /clear.",
+    },
+    "restore_trust_contract": {
+        "pt-BR": "Contrato (handoff_age={age}): claims marcados OK/verificado abaixo foram verificados por mim pré-clear — trate-os como assentados. Re-verifique SOMENTE se: o disco os contradisser; o claim cobrir estado externo volátil; ou handoff_age > 30m. {stale_notice} {pointer_rule_text}",
+        "en": "Contract (handoff_age={age}): claims marked OK/verified below were verified by me pre-clear — treat them as settled. Re-verify ONLY IF: disk contradicts them; the claim covers volatile external state; or handoff_age > 30m. {stale_notice} {pointer_rule_text}",
+    },
+    "restore_resume_imperative": {
+        "pt-BR": "Retomar AGORA do 'Próximo passo imediato' do handoff. Não re-auditar o que está OK.",
+        "en": "Resume NOW from the handoff's 'Immediate next step'. Do not re-audit what is marked OK.",
     },
     "restore_divergence_warn": {
         "pt-BR": "[burnless] DIVERGÊNCIA: handoff mais novo em {path} (idade {age}m) que o da raiz resolvida {root} — uma janela anterior provavelmente escreveu noutra raiz. NÃO reencarne cego; verifique qual raiz é a correta.",
@@ -89,6 +101,19 @@ def msg(key: str, lang: str, **kwargs) -> str:
     template = msg_dict.get(resolved_lang) or msg_dict.get("en")
     if not template:
         raise KeyError(f"No message template for key {key}")
+
+    # Preserve compatibility with callers that resolve these templates without
+    # supplying a concrete restore age.
+    if key == "restore_handoff_header":
+        kwargs.setdefault("age", "recente" if resolved_lang == "pt-BR" else "recent")
+    elif key == "restore_trust_contract":
+        kwargs.setdefault("age", "recente" if resolved_lang == "pt-BR" else "recent")
+        kwargs.setdefault("stale_notice", "")
+        pointer_messages = MESSAGES["restore_pointer_rule"]
+        kwargs.setdefault(
+            "pointer_rule_text",
+            pointer_messages.get(resolved_lang) or pointer_messages["en"],
+        )
 
     # Format with kwargs
     return template.format(**kwargs)
