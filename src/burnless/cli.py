@@ -1602,6 +1602,7 @@ def cmd_epoch(args: argparse.Namespace) -> int:
                 if getattr(args, "budget_tokens", None) is not None
                 else None  # A2: resolve from epochs.*_budget_tokens config
             ),
+            transcript_path=getattr(args, "transcript", None),
         )
         if payload is None:
             print("")

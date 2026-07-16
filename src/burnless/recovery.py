@@ -463,6 +463,61 @@ def _extract_files_from_content(content: Any) -> set[str]:
     return files
 
 
+def _last_user_prompt_from_transcript(path) -> dict[str, Any] | None:
+    try:
+        p = Path(path)
+        if not p.exists():
+            return None
+        entries: list[dict[str, Any]] = []
+        with p.open("r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    obj = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                entries.append(obj)
+
+        last_user_idx: int | None = None
+        last_user_text = ""
+        for idx, obj in enumerate(entries):
+            message = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+            role = str(message.get("role") or obj.get("role") or obj.get("type") or "").strip().lower()
+            content = message.get("content")
+            if role != "user" or not isinstance(content, str) or not content.strip():
+                continue
+            if _is_restore_noise(content):
+                continue
+            if obj.get("isSidechain") or message.get("isSidechain"):
+                continue
+            last_user_idx = idx
+            last_user_text = content
+
+        if last_user_idx is None:
+            return None
+
+        assistant_text = ""
+        for obj in entries[last_user_idx + 1 :]:
+            message = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+            role = str(message.get("role") or obj.get("role") or obj.get("type") or "").strip().lower()
+            if role != "assistant":
+                continue
+            content = message.get("content")
+            text = _content_text(content)
+            if not text.strip() or _is_restore_noise(text):
+                continue
+            assistant_text = text
+            break
+
+        return {"user_text": last_user_text, "assistant_text": assistant_text}
+    except Exception:
+        return None
+
+
 def extract_exchange(
     transcript_path,
     *,
@@ -2421,6 +2476,7 @@ def render_restore(
     new_session_id: str,
     source: str,
     budget_tokens: int | None = None,
+    transcript_path: str | None = None,
 ) -> dict[str, Any] | None:
     root_path = _root_path(root)
     if budget_tokens is None:
@@ -2569,6 +2625,14 @@ def render_restore(
 
     pending_sorted = sorted(pending, key=lambda r: int(r.get("seq") or 0))
     last_prompt_section = _render_last_prompt_section(pending_sorted[-1], lang, en=en) if pending_sorted else ""
+    if not last_prompt_section and not pending_sorted and transcript_path:
+        try:
+            old_transcript_path = Path(transcript_path).parent / f"{checkpoint_session_id}.jsonl"
+            rec = _last_user_prompt_from_transcript(old_transcript_path)
+            if rec:
+                last_prompt_section = _render_last_prompt_section(rec, lang, en=en)
+        except Exception:
+            pass
     full_parts = [header]
     if live_handoff:
         full_parts += ["", handoff_header, live_handoff]
