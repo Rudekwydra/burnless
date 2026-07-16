@@ -848,7 +848,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
 def cmd_watch(args: argparse.Namespace) -> int:
     from . import liveness as _live
-    bl_root = _resolve_burnless_root()
+    bl_root = paths_mod.find_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found. Run `burnless init` first.",
               file=sys.stderr)
@@ -887,17 +887,8 @@ def cmd_decode(args: argparse.Namespace) -> int:
     return 2
 
 
-def _resolve_burnless_root() -> Path | None:
-    cwd = Path.cwd()
-    for candidate in [cwd, *cwd.parents]:
-        bl = candidate / ".burnless"
-        if bl.is_dir():
-            return bl
-    return None
-
-
 def cmd_warm_init(args: argparse.Namespace) -> int:
-    bl_root = _resolve_burnless_root()
+    bl_root = paths_mod.find_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found. Run `burnless init` first.", file=sys.stderr)
         return 2
@@ -987,7 +978,7 @@ def _print_warm_status_block(provider: str, status_result: dict) -> None:
 
 
 def cmd_warm_status(args: argparse.Namespace) -> int:
-    bl_root = _resolve_burnless_root()
+    bl_root = paths_mod.find_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found.", file=sys.stderr)
         return 2
@@ -1002,7 +993,7 @@ def cmd_warm_status(args: argparse.Namespace) -> int:
 
 
 def cmd_warm_explain(args):
-    bl_root = _resolve_burnless_root()
+    bl_root = paths_mod.find_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found.", file=sys.stderr)
         return 2
@@ -1052,7 +1043,7 @@ def cmd_warm_explain(args):
 
 
 def cmd_warm_refresh(args: argparse.Namespace) -> int:
-    bl_root = _resolve_burnless_root()
+    bl_root = paths_mod.find_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found.", file=sys.stderr)
         return 2
@@ -1096,7 +1087,7 @@ def cmd_warm_daemon(args: argparse.Namespace) -> int:
     import subprocess
     from . import warm_daemon as wd
 
-    bl_root = _resolve_burnless_root()
+    bl_root = paths_mod.find_root()
     if bl_root is None:
         print("burnless: no .burnless/ directory found. Run `burnless init` first.", file=sys.stderr)
         return 2
@@ -1153,7 +1144,7 @@ def cmd_warm_daemon(args: argparse.Namespace) -> int:
 def cmd_trace(args: argparse.Namespace) -> int:
     from . import debugless as dbg
 
-    bl_root = _resolve_burnless_root()
+    bl_root = paths_mod.find_root()
     if bl_root is None:
         print("burnless: no .burnless/ found", file=sys.stderr)
         return 2
@@ -1182,7 +1173,7 @@ def cmd_trace(args: argparse.Namespace) -> int:
 def cmd_debugless_sweep(args: argparse.Namespace) -> int:
     from . import debugless as dbg
 
-    bl_root = _resolve_burnless_root()
+    bl_root = paths_mod.find_root()
     if bl_root is None:
         print("burnless: no .burnless/ found", file=sys.stderr)
         return 2
