@@ -1379,3 +1379,21 @@ def test_journal_append_still_writes_non_empty(tmp_path):
     journal_dir = root / "epochs" / "sessions" / "claude" / "sid-1" / "journal"
     journal_files = sorted(journal_dir.glob("*.json"))
     assert len(journal_files) == 1
+
+
+def test_extract_verified_claims_parses_ledger():
+    from burnless.recovery import _extract_verified_claims
+
+    handoff = """## Verificado pré-clear (não re-verificar)
+- `git status --short` → limpo (vazio)
+- `git log --oneline -4` → topo abc123
+
+## Tom
+- `algo irrelevante` → nao importa
+"""
+
+    assert _extract_verified_claims(handoff) == [
+        "git status --short",
+        "git log --oneline -4",
+    ]
+    assert _extract_verified_claims(None) == []
