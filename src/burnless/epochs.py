@@ -11,6 +11,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import paths
+
 LEVEL_PREFIXES = ["", "a", "b", "c", "d", "e", "f", "g", "h"]
 SLOT_RE = re.compile(r"^([a-h]?)(\d{2,3})\.md$")
 _CHAT_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
@@ -309,8 +311,7 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
                 break
             if current == Path.home():
                 break
-            config_file = current / ".burnless" / "config.yaml"
-            if config_file.exists():
+            if paths.is_project_root(current):
                 return current
             current = current.parent
 
@@ -319,7 +320,9 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
                 cwd_rel = cwd.relative_to(workspace)
                 first_component = cwd_rel.parts[0] if cwd_rel.parts else None
                 if first_component:
-                    return workspace / first_component
+                    candidate = workspace / first_component
+                    if paths.is_project_root(candidate):
+                        return candidate
             except ValueError:
                 pass
 

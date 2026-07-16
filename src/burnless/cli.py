@@ -1331,10 +1331,17 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         workspace = getattr(args, "workspace", None)
         transcript = getattr(args, "transcript", None)
         if cwd is not None:
-            root_path = epochs_mod.resolve_root(cwd, workspace=workspace, transcript=transcript) or Path.cwd()
+            root_path = epochs_mod.resolve_root(cwd, workspace=workspace, transcript=transcript)
         else:
             _fr = paths_mod.find_root()
-            root_path = (_fr.parent if _fr else Path.cwd())
+            root_path = (_fr.parent if _fr else None)
+        if root_path is None:
+            _cwd_for_msg = cwd if cwd is not None else Path.cwd()
+            print(
+                f"burnless epoch: no burnless project at {_cwd_for_msg} (no .burnless/config.yaml up-tree)",
+                file=_sys.stderr,
+            )
+            return 1
     chat_id = getattr(args, "chat_id", None)
     epoch_cmd = getattr(args, "epoch_cmd", None)
 
