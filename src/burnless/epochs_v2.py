@@ -33,6 +33,14 @@ ENCODER_SYSTEM_PROMPT = (
     "contiver fatos novos, devolva o documento anterior inalterado."
 )
 
+ENCODER_SYSTEM_PROMPT_EN = (
+    "You are the Burnless memory compactor. You receive a prior summary (unreliable, "
+    "machine-generated) and verbatim exchanges (sole source of truth). Your sole output is a "
+    "markdown memory document. You NEVER continue the conversation, NEVER invent questions, "
+    "answers, tests, or events absent from input, NEVER address the user. If the input "
+    "contains no new facts, return the previous document unchanged."
+)
+
 # Entity patterns: absolute paths, delegation ids, commit hashes, file.ext tokens
 _ENTITY_PATTERNS = [
     re.compile(r'/[\w][\w./\-]+'),
@@ -47,6 +55,22 @@ _NOOP_PATTERNS = [
                r'pode (ir|fazer|seguir|mandar)|manda|vai( em frente)?|segue|bom|[oó]timo|massa|top|'
                r'sim|n[aã]o|nope|yep|sure|thanks|obrigad[oa])\b', re.IGNORECASE),
 ]
+
+
+def _resolve_encoder_lang(enc: dict | None) -> str:
+    if enc is None:
+        enc = {}
+    lang_raw = (os.environ.get("BURNLESS_ENCODER_LANG") or ("" if enc.get("instruction_lang") is None else str(enc.get("instruction_lang")))).strip().lower()
+    if lang_raw.startswith("en"):
+        return "en"
+    return "pt"
+
+
+def _encoder_system_prompt(enc: dict | None) -> str:
+    if enc is None:
+        enc = {}
+    lang = _resolve_encoder_lang(enc)
+    return ENCODER_SYSTEM_PROMPT_EN if lang == "en" else ENCODER_SYSTEM_PROMPT
 
 
 def _is_trivial_text(s: str) -> bool:
@@ -668,8 +692,75 @@ def _rebuild_md_v3(parsed: dict[str, list[str]]) -> str:
     return '\n'.join(result_lines)
 
 
-def living_rewrite_prompt_v3(prev_md: str, exchange: str, budget_tokens: int = 2500) -> str:
-    prompt = f"""Você é um assistente de memória do Burnless. Sua tarefa é ATUALIZAR um documento vivo em markdown (Living Memory V3).
+def living_rewrite_prompt_v3(prev_md: str, exchange: str, budget_tokens: int = 2500, lang: str = "pt") -> str:
+    if lang == "en":
+        prompt = f"""You are a Burnless memory assistant. Your task is to UPDATE a living markdown document (Living Memory V3).
+
+## CRITICAL INSTRUCTION
+Return the COMPLETE updated document with EXACTLY 8 sections (in this order):
+1. ## Current focus
+2. ## Open threads
+3. ## Decisions
+4. ## Contracts
+5. ## Refs
+6. ## Risks
+7. ## Last validation
+8. ## Recoverable
+
+**NEVER alter existing Contract strings**: paths, IDs (d000), hashes, signatures. Copy verbatim or REMOVE the entire line.
+Keep entire doc under ~{budget_tokens} tokens; compress 'Decisions' to maximum.
+No thinking/debate/extra markdown — only the 8 sections.
+
+## Guide to V3 sections
+- 'Risks': open risks / what can go wrong, not yet mitigated.
+- 'Last validation': last verified command/test/audit and its status (e.g., 'pytest -q OK', 'd724 OK').
+- 'Recoverable': ids dNNN + command hints to recover context (NOT raw logs). E.g., 'd725 — pytest tests/test_epochs_v3.py'.
+- Line format in 'Refs': `<absolute_path>[#Lstart[-end]] — <short why> [seq <real-seq-number>]` — replace `<real-seq-number>` with the true seq number of the exchange that originated the fact (look at `seq NNN` from the pending exchange or prior document). NEVER copy an example number — if you don't know the real seq, omit the `[seq ...]` marker entirely on that line.
+- Line format in 'Recoverable': `dNNN — <command hint> [seq <real-seq-number>]` — same rule: use the real seq from the exchange, never a placeholder.
+- Line that doesn't follow format is still accepted (fallback), but PREFER the format when you know exact path/seq.
+
+### POINTER Rule (critical — memory points, doesn't paste)
+- Fact anchored in a file (any path cited in the exchange, with or without line numbers) MUST become ONE line in 'Refs' in the format `path#Lx-y — <short why> [seq N]` — NEVER a paragraph in 'Decisions' pasting file content.
+- 'Decisions' records only the decision itself, one short line; detail lives in the file, pointed to by the Ref. Reader has the Read tool and reads on demand.
+- Paste content in document ONLY when no source file exists to point to.
+- DON'T duplicate: if a fact became a 'Refs' line, don't repeat the same content in 'Decisions' (a brief mention of the decision can coexist with the Ref, but never the pasted content).
+
+### Consolidation axes
+- Provenance: every entry in 'Open threads', 'Decisions', and 'Risks' ends with origin marker `[chat:SHORT·tN]` when the exchange provides that info; if not, omit the marker (don't invent).
+- Supersede: if the new exchange CONTRADICTS an existing decision, DON'T erase — move the old to 'Recoverable' as a pointer and record the new in 'Decisions'. Recency alone does NOT supersede; only explicit contradiction.
+- Trust-boundary: prefix entries with `[doctrine]`, `[state]`, or `[inflight]`. `[doctrine]` never evaporates by age; `[state]` and `[inflight]` may evaporate.
+- Deletion: what leaves by age/irrelevance becomes a pointer in 'Recoverable' (dNNN + command hint), never raw-deleted — except trivial Refs.
+- Slot-routing: route each fact by SEMANTICS — still-open task → 'Open threads'; closed decision → 'Decisions'; verified command/test → 'Last validation'. Don't let open task fall only to 'Decisions'.
+- Evidence-retrieval: 'Recoverable' holds only dNNN + command hint + `chat:SHORT·tN`, never raw content.
+- Plan-future: declared intent not yet executed ("I'll do X on return", "next step Y", "phase N pending") is an OPEN Thread — delivering the design/spec/commit of one stage does NOT close the thread for the next stage. 'Current focus' NEVER becomes "all done" while an open thread exists; in that case 'Current focus' points to the next pending action.
+
+## VERBATIM Rule (critical)
+- You are a TRANSDUCER, not an editor. NEVER rewrite, paraphrase, summarize, or translate text of an existing entry.
+- For each entry you keep: copy the CORE text exactly as is (same words), and only (a) move it to the semantically correct section, (b) prefix the `[doctrine]/[state]/[inflight]` marker, (c) append provenance `[chat:ID·tN]` or mark supersede. The core between decorations must be an exact substring of the original.
+- You CAN REMOVE entries (dedup, obsolete, irrelevant) and REORDER. You CANNOT invent new phrases or merge two entries into a paraphrase.
+
+## Prior document (if any)
+```
+{prev_md if prev_md else ''}
+```
+
+## New exchange/event
+```
+{exchange}
+```
+
+## Expected update
+- Move resolved pending items from 'Open threads' → one line in 'Decisions'
+- Keep only relevant threads; discard old resolved ones
+- Preserve Contracts verbatim; let Refs and Threads evaporate if irrelevant
+- Compress 'Decisions': one line per decision, summarized
+- 'Recoverable' holds dNNN + command hint, never raw logs
+- 'Last validation' holds last verified command/test/audit
+- 'Risks' holds open risks
+
+Return only the updated markdown document. No markdown fence. Done."""
+    else:
+        prompt = f"""Você é um assistente de memória do Burnless. Sua tarefa é ATUALIZAR um documento vivo em markdown (Living Memory V3).
 
 ## Instrução CRÍTICA
 Retorne o documento COMPLETO atualizado com EXATAMENTE 8 seções (nesta ordem):
@@ -941,8 +1032,19 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
 
             eff_version = version if version is not None else _epochs_version(root)
 
+            try:
+                from . import config, paths
+                try:
+                    cfg = config.load(paths.paths_for(Path(root) / ".burnless")["config"])
+                except Exception:
+                    cfg = {}
+                enc = cfg.get("encoder") or {}
+            except Exception:
+                enc = {}
+            resolved_lang = _resolve_encoder_lang(enc)
+
             if eff_version >= 3:
-                prompt = living_rewrite_prompt_v3(prev_md, exchange)
+                prompt = living_rewrite_prompt_v3(prev_md, exchange, lang=resolved_lang)
             else:
                 prompt = living_rewrite_prompt(prev_md, exchange)
             new_md = rewriter(prompt)
@@ -1056,7 +1158,7 @@ def apply_capture(root, chat_id: str, exchange: str, rewriter: Callable[[str], s
         return lp
 
 
-def _claude_rewrite(prompt: str, model: str, cfg_timeout: float, project_root) -> str | None:
+def _claude_rewrite(prompt: str, model: str, cfg_timeout: float, project_root, enc: dict | None = None) -> str | None:
     """Call claude binary with encoder system prompt. Returns output or None on failure."""
     try:
         try:
@@ -1071,7 +1173,7 @@ def _claude_rewrite(prompt: str, model: str, cfg_timeout: float, project_root) -
             iso_cwd = None
         result = subprocess.run(
             [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
-             "--append-system-prompt", ENCODER_SYSTEM_PROMPT,
+             "--append-system-prompt", _encoder_system_prompt(enc),
              "--allowedTools", "", "--output-format", "json"],
             input=prompt,
             capture_output=True,
@@ -1125,7 +1227,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     url = cfg_endpoint or "http://localhost:11435/v1/chat/completions"
                     data = json.dumps({
                         "messages": [
-                            {"role": "system", "content": ENCODER_SYSTEM_PROMPT},
+                            {"role": "system", "content": _encoder_system_prompt(enc)},
                             {"role": "user", "content": prompt},
                         ],
                         "temperature": 0.2,
@@ -1134,7 +1236,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     timeout_val = cfg_timeout or 120
                 else:
                     url = cfg_endpoint or "http://localhost:11434/api/generate"
-                    payload = {"model": model, "prompt": prompt, "system": ENCODER_SYSTEM_PROMPT, "stream": False}
+                    payload = {"model": model, "prompt": prompt, "system": _encoder_system_prompt(enc), "stream": False}
                     # encoder.think (config) / BURNLESS_ENCODER_THINK (env override):
                     # thinking-channel models burn hidden tokens per compact unless
                     # the API is told not to; omitted = provider default (unchanged).
@@ -1164,7 +1266,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                 from .compression import _strip_gemma_channels
                 out = _strip_gemma_channels(out)
             else:
-                out = _claude_rewrite(prompt, model, cfg_timeout, project_root)
+                out = _claude_rewrite(prompt, model, cfg_timeout, project_root, enc)
 
             if not out and provider == "ollama-local":
                 fallback_model = enc.get("fallback_model")
@@ -1178,7 +1280,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                     except Exception:
                         pass
                     try:
-                        return _claude_rewrite(prompt, fallback_model, cfg_timeout, project_root)
+                        return _claude_rewrite(prompt, fallback_model, cfg_timeout, project_root, enc)
                     except Exception:
                         return None
 
@@ -1204,7 +1306,7 @@ def living_rewriter(project_root) -> Callable[[str], str | None]:
                 except Exception:
                     pass
                 try:
-                    return _claude_rewrite(prompt, fallback_model, cfg_timeout, project_root)
+                    return _claude_rewrite(prompt, fallback_model, cfg_timeout, project_root, enc)
                 except Exception:
                     return None
 

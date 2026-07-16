@@ -90,7 +90,7 @@ def _collect(*, home: Path, cwd: Path | None) -> list[Check]:
     _check_e(checks, cwd=cwd)
     _check_f(checks)
     _check_g(checks, cwd=cwd)
-    _check_h(checks, home=home)
+    _check_h(checks, home=home, cwd=cwd)
     return checks
 
 
@@ -659,7 +659,7 @@ def _check_g(checks: list[Check], cwd: Path | None = None) -> None:
 
 # ── Band H: Delegation (delegation subsystem / hook-guard) ─────────────────────
 
-def _check_h(checks: list[Check], home: Path | None = None) -> None:
+def _check_h(checks: list[Check], home: Path | None = None, cwd: Path | None = None) -> None:
     if home is None:
         home = Path.home()
 
@@ -761,6 +761,70 @@ def _check_h(checks: list[Check], home: Path | None = None) -> None:
             checks.append(Check("H3", "H", "PASS", "global metrics directories writable"))
     except Exception as e:
         checks.append(Check("H3", "H", "WARN", f"error checking metrics dirs: {e}"))
+
+    # H4: rolling-memory root divergence check (read-only diagnostic)
+    try:
+        import time
+        from . import epochs as _epochs
+
+        # Resolve workspace root
+        workspace_str = os.environ.get("BURNLESS_WORKSPACE_ROOT") or os.environ.get("BURNLESS_WORKSPACE") or str(home / "antigravity")
+        workspace = Path(workspace_str)
+
+        # Resolve which project the current cwd maps to
+        resolved = None
+        if cwd is not None:
+            try:
+                resolved = _epochs.resolve_root(cwd)
+            except Exception:
+                resolved = None
+
+        # Scan one level under workspace for handoffs
+        orphaned_fresh = []
+        current_time = time.time()
+
+        if workspace.exists() and workspace.is_dir():
+            for proj_dir in workspace.iterdir():
+                if not proj_dir.is_dir():
+                    continue
+
+                hp = proj_dir / ".burnless" / "epochs" / "_rolling" / "live_handoff.md"
+                if hp.exists():
+                    age_seconds = current_time - hp.stat().st_mtime
+
+                    # Check if this is orphaned-fresh (age < 6h and proj_dir != resolved)
+                    if age_seconds < 21600:  # 6h in seconds
+                        proj_resolved = proj_dir.resolve()
+                        resolved_cmp = resolved.resolve() if resolved is not None else None
+
+                        if resolved_cmp is None or proj_resolved != resolved_cmp:
+                            age_minutes = int(age_seconds / 60)
+                            orphaned_fresh.append((hp, age_minutes))
+
+        # Check for global-state residue
+        residue_paths = [
+            home / ".burnless" / "config.yaml",
+            home / ".burnless" / "epochs",
+            home / ".burnless" / "delegations",
+        ]
+        residue_exists = [p for p in residue_paths if p.exists()]
+
+        # Status
+        if orphaned_fresh or residue_exists:
+            msg_parts = []
+            if orphaned_fresh:
+                for hp, age_min in orphaned_fresh:
+                    msg_parts.append(f"{hp} ({age_min}min old)")
+            if residue_exists:
+                msg_parts.append("global-state residue found")
+
+            msg = "rolling-memory: " + "; ".join(msg_parts)
+            checks.append(Check("H4", "H", "WARN", msg))
+        else:
+            checks.append(Check("H4", "H", "PASS", "rolling-memory: no orphaned-fresh handoffs; no global-state residue"))
+
+    except Exception as e:
+        checks.append(Check("H4", "H", "WARN", f"rolling-memory scan error: {e}"))
 
 
 # ── Renderers ─────────────────────────────────────────────────────────────────

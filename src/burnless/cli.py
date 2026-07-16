@@ -1423,6 +1423,8 @@ def cmd_epoch(args: argparse.Namespace) -> int:
 
     elif epoch_cmd == "resolve-root":
         cwd = getattr(args, "cwd", None)
+        if cwd is None:
+            cwd = os.getcwd()
         workspace = getattr(args, "workspace", None)
         transcript = getattr(args, "transcript", None)
         r = epochs_mod.resolve_root(cwd, workspace=workspace, transcript=transcript)

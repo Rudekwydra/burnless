@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -330,7 +331,8 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
             return freshest_project_root(workspace)
 
         return None
-    except Exception:
+    except Exception as exc:
+        print(f"[burnless] resolve_root failed: {exc!r}", file=sys.stderr)
         return None
 
 
