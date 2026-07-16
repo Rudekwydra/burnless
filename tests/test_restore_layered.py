@@ -13,6 +13,8 @@ most recent pending exchanges. These tests pin the layered behavior:
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from burnless import recovery
@@ -387,3 +389,110 @@ def test_last_prompt_section_journal_path(tmp_path):
     ctx3 = payload3["hookSpecificOutput"]["additionalContext"]
     section_start = ctx3.index("## Última mensagem do Roberto")
     assert "…" in ctx3[section_start:]
+
+
+def _write_jsonl(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def test_last_user_prompt_from_transcript_picks_plain_user(tmp_path):
+    transcript = tmp_path / "old-sid.jsonl"
+    _write_jsonl(
+        transcript,
+        [
+            {"message": {"role": "user", "content": "primeira pergunta"}},
+            {"message": {"role": "assistant", "content": "primeira resposta"}},
+            {
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "content": "some tool output"}],
+                }
+            },
+            {"message": {"role": "user", "content": "última pergunta sem resposta"}},
+        ],
+    )
+
+    rec = recovery._last_user_prompt_from_transcript(transcript)
+    assert rec is not None
+    assert rec["user_text"] == "última pergunta sem resposta"
+    assert rec["assistant_text"] == ""
+
+    transcript2 = tmp_path / "old-sid-answered.jsonl"
+    _write_jsonl(
+        transcript2,
+        [
+            {"message": {"role": "user", "content": "primeira pergunta"}},
+            {"message": {"role": "assistant", "content": "primeira resposta"}},
+            {
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "content": "some tool output"}],
+                }
+            },
+            {"message": {"role": "user", "content": "última pergunta com resposta"}},
+            {"message": {"role": "assistant", "content": "resposta final"}},
+        ],
+    )
+
+    rec2 = recovery._last_user_prompt_from_transcript(transcript2)
+    assert rec2 is not None
+    assert rec2["user_text"] == "última pergunta com resposta"
+    assert rec2["assistant_text"] == "resposta final"
+
+
+def test_last_user_prompt_from_transcript_degrades(tmp_path):
+    missing = tmp_path / "does-not-exist.jsonl"
+    assert recovery._last_user_prompt_from_transcript(missing) is None
+
+    malformed = tmp_path / "malformed.jsonl"
+    malformed.parent.mkdir(parents=True, exist_ok=True)
+    with malformed.open("w", encoding="utf-8") as f:
+        f.write("not json at all\n")
+        f.write(json.dumps({"message": {"role": "user", "content": "pergunta válida"}}) + "\n")
+        f.write("{broken json\n")
+
+    result = recovery._last_user_prompt_from_transcript(malformed)
+    assert result is None or result["user_text"] == "pergunta válida"
+
+
+def test_restore_transcript_fallback_when_no_pending(tmp_path):
+    root = tmp_path / ".burnless"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "config.yaml").write_text("language: pt-BR\n", encoding="utf-8")
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-old",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    transcripts_dir = tmp_path / "transcripts"
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
+    new_transcript_path = transcripts_dir / "sid-new.jsonl"
+    old_transcript_path = transcripts_dir / "sid-old.jsonl"
+    _write_jsonl(
+        old_transcript_path,
+        [
+            {"message": {"role": "user", "content": "pergunta do transcript de fallback"}},
+        ],
+    )
+
+    payload = recovery.render_restore(
+        root,
+        host="claude",
+        host_session_id="sid-old",
+        process_instance_id="proc-1",
+        new_session_id="sid-new",
+        source="clear",
+        transcript_path=str(new_transcript_path),
+        budget_tokens=4000,
+    )
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+    assert "## Última mensagem do Roberto" in ctx
+    assert "pergunta do transcript de fallback" in ctx

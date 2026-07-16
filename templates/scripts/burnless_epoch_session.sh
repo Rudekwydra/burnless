@@ -72,7 +72,7 @@ RESTORE_ERR=$(mktemp)
 # pass --budget-tokens only when explicitly configured via env override.
 BUDGET_ARGS=()
 [[ -n "${BURNLESS_RESTORE_BUDGET_TOKENS:-}" ]] && BUDGET_ARGS=(--budget-tokens "$BURNLESS_RESTORE_BUDGET_TOKENS")
-RESTORE=$("$BB" epoch restore --root "$ROOT" --host claude --process-instance-id "$PID" --new-session-id "$SID" --source clear "${BUDGET_ARGS[@]}" 2>"$RESTORE_ERR")
+RESTORE=$("$BB" epoch restore --root "$ROOT" --host claude --process-instance-id "$PID" --new-session-id "$SID" --source clear --transcript "$TP" "${BUDGET_ARGS[@]}" 2>"$RESTORE_ERR")
 if [[ -z "$RESTORE" ]]; then
   log_hook_error "restore" "$(cat "$RESTORE_ERR" 2>/dev/null)"
   rm -f "$RESTORE_ERR"
