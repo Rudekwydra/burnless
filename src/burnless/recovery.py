@@ -2467,6 +2467,42 @@ def _assemble_restore_layers(
     return context, len(whole_seqs), summarized
 
 
+def _extract_verified_claims(handoff_text: str | None) -> list[str]:
+    """Pull command claims out of the '## Verificado' ledger section, if present."""
+    try:
+        if not handoff_text:
+            return []
+        lines = handoff_text.split("\n")
+        start = None
+        for idx, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("## ") and "verificado" in stripped.lower():
+                start = idx + 1
+                break
+        if start is None:
+            return []
+        claims: list[str] = []
+        for line in lines[start:]:
+            stripped = line.strip()
+            if stripped.startswith("## "):
+                break
+            if not (stripped.startswith("- ") or stripped.startswith("* ")):
+                continue
+            body = stripped[2:]
+            for sep in ("→", "->"):
+                if sep in body:
+                    body = body.split(sep, 1)[0]
+                    break
+            claim = " ".join(body.strip().strip("`").split())
+            if claim and claim not in claims:
+                claims.append(claim)
+            if len(claims) >= 20:
+                break
+        return claims
+    except Exception:
+        return []
+
+
 def render_restore(
     root,
     *,
@@ -2689,6 +2725,7 @@ def render_restore(
             "pending_summarized": pending_summarized,
             "watermark_gap": max(0, journal_head - applied_through),
             "truncated": truncated,
+            "verified_claims": _extract_verified_claims(live_handoff),
         },
     )
     return {
