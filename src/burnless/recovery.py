@@ -2042,27 +2042,91 @@ def _live_handoff_path(root_path: Path) -> Path:
     return root_path / "epochs" / "_rolling" / "live_handoff.md"
 
 
-def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> tuple[str, int] | None:
-    path = _live_handoff_path(root_path)
+def live_handoff_path_for(root) -> Path:
+    """Canonical absolute path of the live handoff the restore WILL read for
+    ``root``. Single source of truth for writer-side instructions (hooks/docs)
+    so write-location == read-location by construction."""
+    return _live_handoff_path(_root_path(root))
+
+
+def _handoff_text_valid(text: str | None) -> bool:
+    """Fail-safe against corrupted/empty distillates: only a handoff with real
+    content is surfaceable. Empty/whitespace-only is INVALID, never restored."""
+    return bool(text and text.strip())
+
+
+def _child_project_handoffs(root_path: Path) -> list[Path]:
+    """live_handoff.md files in immediate child projects of this project root.
+
+    Covers the divergent-root flow: session launched at a workspace/parent root
+    while the model worked (and wrote its handoff) inside a subproject. Hidden
+    dirs (including `.burnless` itself) are never treated as child projects."""
+    project = _project_root(root_path)
+    found: list[Path] = []
     try:
-        if not path.exists():
-            return None
-        stat = path.stat()
-        mtime = stat.st_mtime
-        age_s = max(0, int(time.time() - mtime))
-        if age_s > ttl_s:
+        for child in project.iterdir():
             try:
-                path.unlink()
+                if not child.is_dir() or child.name.startswith("."):
+                    continue
+                cand = child / ".burnless" / "epochs" / "_rolling" / "live_handoff.md"
+                if cand.is_file():
+                    found.append(cand)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return found
+
+
+def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> tuple[str, int] | None:
+    """Pick the freshest VALID live handoff for this restore, deterministically.
+
+    Candidates: this root's own handoff plus immediate child projects' handoffs
+    (the writer may have worked in a subproject while the session was launched
+    from the parent/workspace root). Ranking is content-validity FIRST, then
+    mtime — an empty or malformed handoff is never preferred over a fresh
+    non-empty one. The chosen file and the own file are consumed (unlinked);
+    unchosen child handoffs are left for their own roots' restores."""
+    own = _live_handoff_path(root_path)
+    now = time.time()
+    best: tuple[float, str, Path] | None = None
+    try:
+        for path in [own, *_child_project_handoffs(root_path)]:
+            try:
+                if not path.exists():
+                    continue
+                mtime = path.stat().st_mtime
+                if now - mtime > ttl_s:
+                    if path == own:
+                        try:
+                            path.unlink()
+                        except OSError:
+                            pass
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                if not _handoff_text_valid(text):
+                    # consume-once: an empty own handoff is still spent
+                    if path == own:
+                        try:
+                            path.unlink()
+                        except OSError:
+                            pass
+                    continue
+                if best is None or mtime > best[0]:
+                    best = (mtime, text.strip(), path)
+            except OSError:
+                continue
+        if best is None:
+            return None
+        mtime, text, chosen = best
+        # Consume the chosen handoff; also spend the own one (superseded) so a
+        # later restore cannot resurrect older state after newer was served.
+        for spent in {chosen, own}:
+            try:
+                spent.unlink()
             except OSError:
                 pass
-            return None
-        text = path.read_text(encoding="utf-8", errors="replace")
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        stripped = text.strip()
-        return (stripped, age_s) if stripped else None
+        return (text, max(0, int(now - mtime)))
     except Exception:
         return None
 
@@ -2562,9 +2626,6 @@ def render_restore(
     except Exception:
         pass
 
-    if not living_md.strip() and not pending and applied_through <= 0 and journal_head <= 0:
-        return None
-
     from . import i18n
 
     lang = _restore_lang(root_path)
@@ -2576,6 +2637,18 @@ def render_restore(
         _own_mtime = None
     divergence_line = _restore_divergence_warning(root_path, _own_mtime, lang)
     live_handoff_result = _consume_live_handoff(root_path)
+
+    # A fresh valid handoff alone is worth restoring even when this root has
+    # no checkpoint/journal yet (divergent-root writes land in a subproject).
+    if (
+        live_handoff_result is None
+        and not living_md.strip()
+        and not pending
+        and applied_through <= 0
+        and journal_head <= 0
+    ):
+        return None
+
     if live_handoff_result is None:
         live_handoff = None
         handoff_age_s = None

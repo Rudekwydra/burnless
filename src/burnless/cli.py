@@ -1532,6 +1532,14 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         print(str(r) if r else "")
         return 0
 
+    elif epoch_cmd == "handoff-path":
+        # Canonical emitter: the EXACT live_handoff.md path the restore will
+        # read for the resolved root. Writer-side instructions (clear-hint
+        # hook, docs) must source the path from here, never rebuild it — this
+        # keeps write-location == read-location by construction.
+        print(str(recovery_mod.live_handoff_path_for(root_path)))
+        return 0
+
     elif epoch_cmd == "resume":
         cwd = getattr(args, "cwd", None)
         workspace = getattr(args, "workspace", None)
@@ -2509,6 +2517,8 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-write")
     esp = epoch_sub.add_parser("handoff-claim", parents=[epoch_core], help="claim the freshest clear handoff")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-claim")
+    esp = epoch_sub.add_parser("handoff-path", parents=[epoch_core], help="print the canonical live_handoff.md path the restore will read (writer instructions must use this)")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-path")
     esp = epoch_sub.add_parser("restore", parents=[epoch_core], help="render checkpoint + pending delta for SessionStart")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="restore")
     esp = epoch_sub.add_parser("trust-audit", parents=[epoch_core], help="measure re-verification rate of a restored handoff's Verificado ledger against a new session transcript")
