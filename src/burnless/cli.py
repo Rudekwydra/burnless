@@ -1322,6 +1322,106 @@ def cmd_ask(args: argparse.Namespace) -> int:
     return 0
 
 
+def _normalize_trust_audit_text(text: str) -> str:
+    """Same normalization rule as recovery._extract_verified_claims: strip
+    surrounding backticks + whitespace, collapse internal whitespace."""
+    return " ".join((text or "").strip().strip("`").split())
+
+
+def _trust_audit(root_path, new_session_id: str, transcript_path: str | None = None, first_n: int = 10) -> dict:
+    """Read-only audit: measure whether a new session re-verified claims
+    already recorded as verified in the handoff's Verificado ledger."""
+    try:
+        owner_loop_path = Path(root_path) / ".burnless" / "owner_loop.jsonl"
+        event = None
+        if owner_loop_path.exists():
+            with owner_loop_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    if obj.get("event") == "restore_served" and obj.get("new_session_id") == new_session_id:
+                        event = obj
+        if event is None:
+            return {"status": "no_restore_event", "new_session_id": new_session_id}
+
+        claims = list(event.get("verified_claims") or [])
+        handoff_age = event.get("handoff_age")
+
+        if transcript_path:
+            t_path = Path(transcript_path)
+        else:
+            cwd_dashes = os.getcwd().replace("/", "-")
+            t_path = Path.home() / ".claude" / "projects" / cwd_dashes / f"{new_session_id}.jsonl"
+
+        if not t_path.exists():
+            return {
+                "status": "no_transcript",
+                "new_session_id": new_session_id,
+                "n_claims": len(claims),
+                "claims": claims,
+            }
+
+        observed: list[str] = []
+        with t_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                if len(observed) >= first_n:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("type") != "assistant":
+                    continue
+                content = ((rec.get("message") or {}).get("content")) or []
+                if not isinstance(content, list):
+                    continue
+                for item in content:
+                    if len(observed) >= first_n:
+                        break
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") != "tool_use" or item.get("name") != "Bash":
+                        continue
+                    command = (item.get("input") or {}).get("command")
+                    if command:
+                        observed.append(_normalize_trust_audit_text(command))
+
+        matched: list[str] = []
+        for claim in claims:
+            norm_claim = _normalize_trust_audit_text(claim)
+            for obs in observed:
+                if norm_claim in obs or obs in norm_claim:
+                    matched.append(claim)
+                    break
+
+        reverify_rate = (len(matched) / len(claims)) if claims else 0.0
+        stale_blind_rate = 1.0 if (
+            handoff_age is not None and handoff_age > 1800 and len(matched) == 0 and claims
+        ) else 0.0
+
+        return {
+            "status": "ok",
+            "new_session_id": new_session_id,
+            "claims": claims,
+            "n_claims": len(claims),
+            "observed": observed,
+            "matched": matched,
+            "reverify_rate": round(reverify_rate, 3),
+            "stale_blind_rate": stale_blind_rate,
+            "handoff_age": handoff_age,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 def cmd_epoch(args: argparse.Namespace) -> int:
     import sys as _sys
     _explicit = getattr(args, "root", None)
@@ -1623,6 +1723,12 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         except Exception:
             pass
         print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    elif epoch_cmd == "trust-audit":
+        import json as _json
+        result = _trust_audit(root_path, getattr(args, "sid", None), transcript_path=getattr(args, "transcript", None))
+        print(_json.dumps(result, ensure_ascii=False))
         return 0
 
     elif epoch_cmd == "inherit":
@@ -2401,6 +2507,9 @@ def build_parser() -> argparse.ArgumentParser:
     esp.set_defaults(func=cmd_epoch, epoch_cmd="handoff-claim")
     esp = epoch_sub.add_parser("restore", parents=[epoch_core], help="render checkpoint + pending delta for SessionStart")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="restore")
+    esp = epoch_sub.add_parser("trust-audit", parents=[epoch_core], help="measure re-verification rate of a restored handoff's Verificado ledger against a new session transcript")
+    esp.add_argument("--sid", dest="sid", required=True, help="new session id to audit")
+    esp.set_defaults(func=cmd_epoch, epoch_cmd="trust-audit")
     esp = epoch_sub.add_parser("inherit", parents=[epoch_core], help="bootstrap the new session checkpoint from its predecessor (memoria eterna)")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="inherit")
     esp = epoch_sub.add_parser("hook-error", parents=[epoch_core], help="append a hook error to the global ledger")

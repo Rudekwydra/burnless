@@ -1397,3 +1397,43 @@ def test_extract_verified_claims_parses_ledger():
         "git log --oneline -4",
     ]
     assert _extract_verified_claims(None) == []
+
+
+def test_trust_audit_computes_reverify_rate(tmp_path):
+    from burnless.cli import _trust_audit
+
+    bl_dir = tmp_path / ".burnless"
+    bl_dir.mkdir(parents=True, exist_ok=True)
+    owner_loop = bl_dir / "owner_loop.jsonl"
+    owner_loop.write_text(
+        json.dumps({
+            "event": "restore_served",
+            "new_session_id": "NEW1",
+            "verified_claims": ["git status --short", "git log --oneline -4"],
+            "handoff_age": 120,
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    transcript = tmp_path / "NEW1.jsonl"
+    transcript.write_text(
+        json.dumps({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "git status --short"}},
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "ls -la"}},
+                ],
+            },
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    result = _trust_audit(tmp_path, "NEW1", transcript_path=str(transcript))
+
+    assert result["status"] == "ok"
+    assert result["n_claims"] == 2
+    assert "git status --short" in result["matched"]
+    assert result["reverify_rate"] == 0.5
+    assert result["stale_blind_rate"] == 0.0
