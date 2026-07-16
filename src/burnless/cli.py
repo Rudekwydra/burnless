@@ -50,6 +50,8 @@ from .pilot import monitor_rollover_loop as pilot_monitor_rollover_loop
 from .pilot import resolve_host_adapter as pilot_resolve_host_adapter
 from .pilot import run_pilot as pilot_run
 from .pilot import hud as hud_mod
+from .pilot.cadence_providers import build_cadence_controller
+from .pilot.cadence_controller import build_injector as _build_cadence_injector
 from .prompt_context import (_with_runtime_context, _build_cacheable_runtime_prefix, _TELEGRAPHIC_OUTPUT_HINT, _QTP_F_FIXED_SUFFIX)
 
 from .delegation_parse import (
@@ -2392,6 +2394,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--report", action="store_true", help="show resolved pilot config and host probe")
     sp.add_argument("--auto-rollover", action="store_true", help="enable event-driven rollover monitor")
     sp.add_argument("--no-auto", action="store_true", dest="no_auto", help="disable auto-rollover even when the host supports it (auto-rollover is ON by default)")
+    sp.add_argument("--cadence", action="store_true", help="route C: continuous in-thread /compact driven by the CadenceController")
     sp.add_argument("--host", choices=["auto", "claude", "codex"], default="auto", help="host CLI to launch")
     sp.add_argument("--model", default=None, help="optional model override forwarded to the host")
     sp.add_argument("--run-id", default=None, dest="run_id", help="optional lineage id")
@@ -2403,6 +2406,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--report", action="store_true", help="show resolved pilot config and host probe")
     sp.add_argument("--auto-rollover", action="store_true", help="enable event-driven rollover monitor")
     sp.add_argument("--no-auto", action="store_true", dest="no_auto", help="disable auto-rollover even when the host supports it (auto-rollover is ON by default)")
+    sp.add_argument("--cadence", action="store_true", help="route C: continuous in-thread /compact driven by the CadenceController")
     sp.add_argument("--host", choices=["auto", "claude", "codex"], default="auto", help="host CLI to launch")
     sp.add_argument("--model", default=None, help="optional model override forwarded to the host")
     sp.add_argument("--run-id", default=None, dest="run_id", help="optional lineage id")
@@ -2677,6 +2681,8 @@ def _run_pilot_cycle(
     fresh_session_id: str | None,
     host_arg: str,
     initial_input_bytes: bytes | None = None,
+    cadence_enabled: bool = False,
+    cadence_cfg: dict | None = None,
 ) -> dict:
     argv = adapter.build_fresh_argv(project_root, model=model, extra_args=extra_args) if is_restart_cycle else adapter.build_interactive_argv(project_root, model=model, extra_args=extra_args)
     from .pilot.core import build_child_env
@@ -2789,6 +2795,9 @@ def _run_pilot_cycle(
             pilot_kwargs["input_bytes"] = initial_input_bytes
         if str(pilot_cfg.get("hud", "title")) == "title":
             pilot_kwargs["title_provider"] = lambda: hud_mod.hud_title(project_root)
+        if cadence_enabled:
+            controller = build_cadence_controller(adapter=adapter, project_root=project_root, run_id=run_id, host_session_id=host_session_id, cfg=cadence_cfg or {})
+            pilot_kwargs["injector"] = _build_cadence_injector(controller, time.monotonic)
         rc = pilot_run(argv, **pilot_kwargs)
     finally:
         if stop_event is not None:
@@ -2990,6 +2999,10 @@ def cmd_pilot(args: argparse.Namespace) -> int:
     )
     if _auto_rollover_diagnostic:
         print(_auto_rollover_diagnostic, file=sys.stderr)
+    cadence_cfg = pilot_cfg.get("cadence", {}) if isinstance(pilot_cfg, dict) else {}
+    cadence_enabled = bool(getattr(args, "cadence", False)) or bool(cadence_cfg.get("enabled", False))
+    if cadence_enabled and not bool(getattr(args, "auto_rollover", False)):
+        auto_rollover = False
     current_session_id = run_id
     rollover_index = 1
     rc = 0
@@ -3011,6 +3024,8 @@ def cmd_pilot(args: argparse.Namespace) -> int:
                 fresh_session_id=next_session_id if auto_rollover else None,
                 host_arg=getattr(args, "host", "auto"),
                 initial_input_bytes=pending_initial_input,
+                cadence_enabled=cadence_enabled,
+                cadence_cfg=cadence_cfg,
             )
             pending_initial_input = None
             rc = cycle["rc"]
