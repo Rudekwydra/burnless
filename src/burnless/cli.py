@@ -1676,6 +1676,11 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         process_instance_id = getattr(args, "process_instance_id", "") or host_session_id
         new_session_id = getattr(args, "new_session_id", "") or getattr(args, "session_id", "")
         source = getattr(args, "source", "clear")
+        if source == "clear" and os.environ.get("BURNLESS_PILOT_FORK") == "1":
+            # Fork mode: canal C (--append-system-prompt) owns the restore;
+            # the native SessionStart restore stays silent to avoid duplicating it.
+            print("")
+            return 0
         if source == "clear" and (not host_session_id or host_session_id == new_session_id):
             claimed = recovery_mod.claim_handoff(
                 root,
@@ -2693,10 +2698,11 @@ def _run_pilot_cycle(
     initial_input_bytes: bytes | None = None,
     cadence_enabled: bool = False,
     cadence_cfg: dict | None = None,
+    fork: bool = False,
 ) -> dict:
     argv = adapter.build_fresh_argv(project_root, model=model, extra_args=extra_args) if is_restart_cycle else adapter.build_interactive_argv(project_root, model=model, extra_args=extra_args)
     from .pilot.core import build_child_env
-    env = build_child_env(run_id)
+    env = build_child_env(run_id, fork=fork)
 
     installation = adapter.detect() if hasattr(adapter, "detect") else type("I", (), {"version": None})()
     caps = adapter.capabilities() if hasattr(adapter, "capabilities") else type("C", (), {"reset_strategy": "respawn"})()
@@ -2899,6 +2905,23 @@ def _pilot_resolve_auto_rollover(
     return True, None
 
 
+def _pilot_fork_enabled(project_root: Path) -> bool:
+    """Read pilot.fork.enabled from the project config. Default False."""
+    try:
+        cfg = config_mod.load(project_root / ".burnless" / "config.yaml")
+    except Exception:
+        return False
+    if not isinstance(cfg, dict):
+        return False
+    pilot_cfg = cfg.get("pilot", {})
+    if not isinstance(pilot_cfg, dict):
+        return False
+    fork_cfg = pilot_cfg.get("fork", {})
+    if not isinstance(fork_cfg, dict):
+        return False
+    return bool(fork_cfg.get("enabled", False))
+
+
 def cmd_pilot(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     project_root = root.parent if root.name == ".burnless" else root
@@ -3017,6 +3040,8 @@ def cmd_pilot(args: argparse.Namespace) -> int:
     rollover_index = 1
     rc = 0
     pending_initial_input: bytes | None = None
+    pending_extra_args: list[str] = []
+    fork_enabled = _pilot_fork_enabled(project_root)
 
     try:
         while True:
@@ -3025,7 +3050,7 @@ def cmd_pilot(args: argparse.Namespace) -> int:
                 project_root=project_root,
                 adapter=adapter,
                 model=model,
-                extra_args=extra_args,
+                extra_args=extra_args + pending_extra_args,
                 run_id=run_id,
                 host_session_id=current_session_id,
                 pilot_cfg=pilot_cfg,
@@ -3036,8 +3061,10 @@ def cmd_pilot(args: argparse.Namespace) -> int:
                 initial_input_bytes=pending_initial_input,
                 cadence_enabled=cadence_enabled,
                 cadence_cfg=cadence_cfg,
+                fork=fork_enabled,
             )
             pending_initial_input = None
+            pending_extra_args = []
             rc = cycle["rc"]
             if not auto_rollover:
                 break
@@ -3051,6 +3078,8 @@ def cmd_pilot(args: argparse.Namespace) -> int:
             restore_text = (prepared_restore.get("hookSpecificOutput") or {}).get("additionalContext")
             if selected_host == "codex" and isinstance(restore_text, str) and restore_text.strip():
                 pending_initial_input = (restore_text.strip() + "\n").encode("utf-8")
+            if fork_enabled and selected_host == "claude" and isinstance(restore_text, str) and restore_text.strip():
+                pending_extra_args = ["--append-system-prompt", restore_text.strip()]
 
             current_session_id = new_session_id_from_monitor or next_session_id
             rollover_index += 1
