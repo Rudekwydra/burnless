@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import subprocess
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 
 import pytest
 
 from burnless.pure_ask import (
     resolve_ask_model,
+    resolve_ask_provider,
     build_ask_command,
     run_ask,
+    run_ask_ollama,
     _DISALLOWED_TOOLS,
 )
 
@@ -239,3 +242,107 @@ class TestRunAsk:
                 assert "--model" in call_args
                 model_idx = call_args.index("--model")
                 assert call_args[model_idx + 1] == "claude-sonnet-5"
+
+
+class TestAskOllamaRouting:
+    """Test ollama/ollama-local routing in run_ask."""
+
+    def test_ollama_local_routing_bypasses_subprocess(self):
+        """When provider is ollama-local and no explicit model, route to run_ask_ollama."""
+        cfg = {
+            "agents": {
+                "bronze": {
+                    "provider": "ollama-local",
+                    "model": "gemma-4-eb",
+                }
+            }
+        }
+        prompt = "hi"
+
+        mock_response = MagicMock()
+        mock_response.__enter__ = lambda self: self
+        mock_response.__exit__ = lambda self, *args: None
+        mock_response.read.return_value = json.dumps({
+            "message": {"content": "GRIFO-77 / haiku"}
+        }).encode()
+
+        with patch.dict(os.environ, {"BURNLESS_LOCAL_API": "ollama"}):
+            with patch("burnless.pure_ask.urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
+                with patch("burnless.pure_ask.subprocess.run") as mock_subprocess:
+                    rc, stdout, stderr = run_ask("bronze", prompt, cfg)
+
+                    # Should NOT call subprocess.run
+                    mock_subprocess.assert_not_called()
+
+                    # Should call urlopen
+                    assert mock_urlopen.called
+                    rc_val, stdout_val, stderr_val = rc, stdout, stderr
+                    assert rc_val == 0
+                    assert stdout_val == "GRIFO-77 / haiku"
+                    assert stderr_val == ""
+
+    def test_ollama_local_payload_contains_think_false(self):
+        """Verify the JSON payload contains 'think': False."""
+        cfg = {
+            "agents": {
+                "bronze": {
+                    "provider": "ollama-local",
+                    "model": "gemma-4-eb",
+                }
+            }
+        }
+        prompt = "hi"
+
+        mock_response = MagicMock()
+        mock_response.__enter__ = lambda self: self
+        mock_response.__exit__ = lambda self, *args: None
+        mock_response.read.return_value = json.dumps({
+            "message": {"content": "test"}
+        }).encode()
+
+        with patch.dict(os.environ, {"BURNLESS_LOCAL_API": "ollama"}):
+            with patch("burnless.pure_ask.urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
+                with patch("burnless.pure_ask.subprocess.run"):
+                    run_ask("bronze", prompt, cfg)
+
+                    # Inspect the Request object passed to urlopen
+                    call_args = mock_urlopen.call_args
+                    request_obj = call_args[0][0]
+                    payload_data = request_obj.data
+                    payload = json.loads(payload_data.decode("utf-8"))
+
+                    # Check that 'think' is False
+                    assert "think" in payload
+                    assert payload["think"] is False
+
+    def test_resolve_ask_provider(self):
+        """Test resolve_ask_provider returns correct provider."""
+        cfg = {
+            "agents": {
+                "bronze": {"provider": "ollama-local", "model": "gemma-4-eb"},
+                "gold": {"provider": "anthropic", "model": "claude-opus-4-8"},
+            }
+        }
+        assert resolve_ask_provider("bronze", cfg) == "ollama-local"
+        assert resolve_ask_provider("gold", cfg) == "anthropic"
+
+    def test_resolve_ask_provider_defaults_to_anthropic(self):
+        """Test resolve_ask_provider defaults to anthropic."""
+        cfg = {
+            "agents": {
+                "silver": {"model": "claude-sonnet-5"},
+            }
+        }
+        assert resolve_ask_provider("silver", cfg) == "anthropic"
+
+    def test_ollama_model_resolution_error(self):
+        """When ollama provider has no model, raise ValueError."""
+        cfg = {
+            "agents": {
+                "bronze": {"provider": "ollama-local"},
+            }
+        }
+        prompt = "hi"
+
+        with pytest.raises(ValueError, match="could not resolve a local model"):
+            run_ask("bronze", prompt, cfg)
