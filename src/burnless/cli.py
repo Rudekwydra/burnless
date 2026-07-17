@@ -2625,6 +2625,11 @@ def _extract_rollover_meta(rollover_result):
     return last, prepared, last.get("new_session_id")
 
 
+def _pilot_rollover_circuit_open(rollover_ts_list, now_ts, *, max_rollovers: int = 3, window_s: float = 30.0) -> bool:
+    recent = [ts for ts in rollover_ts_list if now_ts - ts <= window_s]
+    return len(recent) >= max_rollovers
+
+
 def _pilot_yesno(value: object) -> str:
     return "yes" if bool(value) else "no"
 
@@ -2749,6 +2754,7 @@ def _run_pilot_cycle(
         if not enable_monitor:
             return
         stop_event = threading.Event()
+        spawn_ts = datetime.now(timezone.utc).isoformat()
 
         def _monitor() -> None:
             try:
@@ -2766,6 +2772,7 @@ def _run_pilot_cycle(
                     poll_interval_s=float(pilot_cfg.get("poll_interval_s", 0.5)),
                     stop_event=stop_event,
                     trusted_confidences=("exact", "estimated") if bool(pilot_cfg.get("trust_estimated_usage", False)) else ("exact",),
+                    since_ts=spawn_ts,
                 )
                 rollover_state["result"] = result
                 last = result.get("last") or {}
@@ -3056,6 +3063,7 @@ def cmd_pilot(args: argparse.Namespace) -> int:
     pending_initial_input: bytes | None = None
     pending_extra_args: list[str] = []
     fork_enabled = _pilot_fork_enabled(project_root)
+    rollover_ts_list: list[float] = []
 
     try:
         while True:
@@ -3086,6 +3094,16 @@ def cmd_pilot(args: argparse.Namespace) -> int:
             rollover = cycle.get("rollover") or {}
             last, prepared, new_session_id_from_monitor = _extract_rollover_meta(rollover)
             if last.get("status") != "prepared":
+                break
+
+            now_ts = time.time()
+            rollover_ts_list.append(now_ts)
+            if _pilot_rollover_circuit_open(rollover_ts_list, now_ts):
+                print(
+                    f"[pilot] circuit-breaker: {len(rollover_ts_list)} rollovers em 30s — "
+                    "abortando respawn (provável thrash)",
+                    file=sys.stderr,
+                )
                 break
 
             prepared_restore = (prepared.get("restore") or {}) or {}

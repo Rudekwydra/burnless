@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, is_dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -72,8 +73,26 @@ def read_events(root: Path, run_id: str, limit: int | None = None) -> list[dict]
     return rows
 
 
-def summarize_run_events(root: Path, run_id: str) -> dict:
+def _parse_ts(raw: object) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def summarize_run_events(root: Path, run_id: str, *, since_ts: str | None = None) -> dict:
     rows = read_events(root, run_id)
+    if since_ts is not None:
+        since_dt = _parse_ts(since_ts)
+        filtered: list[dict] = []
+        for row in rows:
+            row_dt = _parse_ts(row.get("ts"))
+            if row_dt is None or since_dt is None or row_dt < since_dt:
+                continue
+            filtered.append(row)
+        rows = filtered
     if not rows:
         return {"count": 0, "last_event": None, "idle": False, "state": "unknown"}
     last = rows[-1]

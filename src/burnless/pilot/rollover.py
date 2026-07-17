@@ -77,8 +77,9 @@ def prepare_rollover(
     run_id: str,
     new_session_id: str,
     budget_tokens: int = 2000,
+    since_ts: str | None = None,
 ) -> dict:
-    run_state = summarize_run_events(root, run_id)
+    run_state = summarize_run_events(root, run_id, since_ts=since_ts)
     if not run_state.get("idle", False):
         return {"status": "not_ready", "reason": "run_not_idle", "run_state": run_state}
 
@@ -125,8 +126,9 @@ def evaluate_rollover(
     rollover_at_pct: float = 0.65,
     delta_budget_tokens: int = 2000,
     trusted_confidences: tuple = ("exact",),
+    since_ts: str | None = None,
 ) -> dict:
-    run_state = summarize_run_events(root, run_id)
+    run_state = summarize_run_events(root, run_id, since_ts=since_ts)
     if not run_state.get("idle", False):
         return {"should_rollover": False, "reason": "run_not_idle", "run_state": run_state}
 
@@ -171,6 +173,7 @@ def evaluate_rollover(
         run_id=run_id,
         new_session_id=new_session_id,
         budget_tokens=delta_budget_tokens,
+        since_ts=since_ts,
     )
     return {
         "should_rollover": prepared.get("status") == "ready",
@@ -194,8 +197,9 @@ def should_rollover(
     rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
     trusted_confidences: tuple = ("exact",),
+    since_ts: str | None = None,
 ) -> dict:
-    run_state = summarize_run_events(root, run_id)
+    run_state = summarize_run_events(root, run_id, since_ts=since_ts)
     if not run_state.get("idle", False):
         return {"should_rollover": False, "reason": "run_not_idle", "run_state": run_state}
 
@@ -296,6 +300,7 @@ def monitor_rollover_once(
     rollover_at_pct: float = 0.65,
     delta_budget_tokens: int = 2000,
     trusted_confidences: tuple = ("exact",),
+    since_ts: str | None = None,
 ) -> dict:
     decision = should_rollover(
         root,
@@ -307,6 +312,7 @@ def monitor_rollover_once(
         rollover_at_tokens=rollover_at_tokens,
         rollover_at_pct=rollover_at_pct,
         trusted_confidences=trusted_confidences,
+        since_ts=since_ts,
     )
     if not decision.get("should_rollover"):
         return {"status": "not_ready", **decision}
@@ -332,6 +338,7 @@ def monitor_rollover_once(
         run_id=run_id,
         new_session_id=fresh_session_id,
         budget_tokens=delta_budget_tokens,
+        since_ts=since_ts,
     )
     return {
         "status": "prepared",
@@ -358,6 +365,7 @@ def monitor_rollover_loop(
     stop_event: threading.Event | None = None,
     max_checks: int | None = None,
     trusted_confidences: tuple = ("exact",),
+    since_ts: str | None = None,
 ) -> dict:
     stop_event = stop_event or threading.Event()
     checks = 0
@@ -377,6 +385,7 @@ def monitor_rollover_loop(
             rollover_at_pct=rollover_at_pct,
             delta_budget_tokens=delta_budget_tokens,
             trusted_confidences=trusted_confidences,
+            since_ts=since_ts,
         )
         if last.get("status") in {"armed", "prepared"}:
             stop_event.set()
