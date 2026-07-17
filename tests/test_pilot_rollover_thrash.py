@@ -76,8 +76,20 @@ def test_should_rollover_fresh_stop_arms(tmp_path):
     root = tmp_path / ".burnless"
     t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     since = t0
+    turn_start = t0 + timedelta(milliseconds=500)
     fresh_stop = t0 + timedelta(seconds=1)
 
+    append_event(
+        root,
+        "run-1",
+        {
+            "event": "turn_start",
+            "host": "claude",
+            "host_session_id": "new-sid",
+            "process_instance_id": "proc-1",
+            "ts": _iso(turn_start),
+        },
+    )
     append_event(
         root,
         "run-1",
@@ -87,6 +99,105 @@ def test_should_rollover_fresh_stop_arms(tmp_path):
             "host_session_id": "new-sid",
             "process_instance_id": "proc-1",
             "ts": _iso(fresh_stop),
+        },
+    )
+
+    decision = should_rollover(
+        root,
+        host="claude",
+        host_session_id="new-sid",
+        process_instance_id="proc-1",
+        run_id="run-1",
+        context_usage=ContextUsage(current=152333, limit=200000, confidence="estimated"),
+        rollover_at_tokens=40000,
+        rollover_at_pct=0.65,
+        trusted_confidences=("exact", "estimated"),
+        since_ts=_iso(since),
+    )
+    assert decision["should_rollover"] is True
+
+
+def test_no_turn_since_spawn_not_armed(tmp_path):
+    from burnless.pilot import append_event
+    from burnless.pilot.core import ContextUsage
+    from burnless.pilot.rollover import should_rollover
+
+    root = tmp_path / ".burnless"
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    since = t0
+    session_start = t0 + timedelta(seconds=1)
+
+    append_event(
+        root,
+        "run-1",
+        {
+            "event": "session_start",
+            "host": "claude",
+            "host_session_id": "new-sid",
+            "process_instance_id": "proc-1",
+            "ts": _iso(session_start),
+        },
+    )
+
+    decision = should_rollover(
+        root,
+        host="claude",
+        host_session_id="new-sid",
+        process_instance_id="proc-1",
+        run_id="run-1",
+        context_usage=ContextUsage(current=152333, limit=200000, confidence="estimated"),
+        rollover_at_tokens=40000,
+        rollover_at_pct=0.65,
+        trusted_confidences=("exact", "estimated"),
+        since_ts=_iso(since),
+    )
+    assert decision["should_rollover"] is False
+    assert decision["reason"] == "no_turn_since_spawn"
+
+
+def test_session_start_then_turn_arms(tmp_path):
+    from burnless.pilot import append_event
+    from burnless.pilot.core import ContextUsage
+    from burnless.pilot.rollover import should_rollover
+
+    root = tmp_path / ".burnless"
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    since = t0
+    session_start = t0 + timedelta(seconds=1)
+    turn_start = t0 + timedelta(seconds=2)
+    stop = t0 + timedelta(seconds=3)
+
+    append_event(
+        root,
+        "run-1",
+        {
+            "event": "session_start",
+            "host": "claude",
+            "host_session_id": "new-sid",
+            "process_instance_id": "proc-1",
+            "ts": _iso(session_start),
+        },
+    )
+    append_event(
+        root,
+        "run-1",
+        {
+            "event": "turn_start",
+            "host": "claude",
+            "host_session_id": "new-sid",
+            "process_instance_id": "proc-1",
+            "ts": _iso(turn_start),
+        },
+    )
+    append_event(
+        root,
+        "run-1",
+        {
+            "event": "stop",
+            "host": "claude",
+            "host_session_id": "new-sid",
+            "process_instance_id": "proc-1",
+            "ts": _iso(stop),
         },
     )
 
