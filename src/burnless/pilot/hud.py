@@ -38,6 +38,30 @@ def hud_title(project_root: str | Path, home: Path | None = None) -> str:
                     pass
 
         parts = ["burnless"]
+        try:
+            from .logs import claude_context_usage
+            _u = claude_context_usage(project_root)
+            _cur = getattr(_u, "current", None)
+            if _cur:
+                _rollover = 40000
+                try:
+                    from .. import config as _cfg
+                    _c = _cfg.load(Path(project_root) / ".burnless" / "config.yaml")
+                    _pv = (_c.get("pilot") or {}).get("rollover_at_tokens")
+                    if _pv:
+                        _rollover = int(_pv)
+                except Exception:
+                    pass
+                _seg = "ctx " + _fmt_tokens(int(_cur)) + "/" + _fmt_tokens(int(_rollover)) + " ▲"
+                _seed = home / ".burnless" / "state" / "pending_seed.md"
+                try:
+                    if _seed.exists() and (time.time() - _seed.stat().st_mtime) < 20:
+                        _seg += " ♻"
+                except Exception:
+                    pass
+                parts.append(_seg)
+        except Exception:
+            pass
         if tokens_total > 0:
             tokens_fmt = _fmt_tokens(tokens_total)
             parts.append(f"⚡{tokens_fmt} poupado")
