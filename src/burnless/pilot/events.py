@@ -94,7 +94,7 @@ def summarize_run_events(root: Path, run_id: str, *, since_ts: str | None = None
             filtered.append(row)
         rows = filtered
     if not rows:
-        return {"count": 0, "last_event": None, "idle": False, "state": "unknown"}
+        return {"count": 0, "last_event": None, "idle": False, "state": "unknown", "saw_active": False}
     last = rows[-1]
     last_event = str(last.get("event") or "")
     active_events = {"turn_start", "prompt_submitted", "input_pending", "assistant_stream", "assistant_delta"}
@@ -108,12 +108,14 @@ def summarize_run_events(root: Path, run_id: str, *, since_ts: str | None = None
     else:
         idle = False
         state = "unknown"
+    saw_active = any(str(r.get("event") or "") in active_events for r in rows)
     return {
         "count": len(rows),
         "last_event": last_event,
         "idle": idle,
         "state": state,
         "last": last,
+        "saw_active": saw_active,
     }
 
 

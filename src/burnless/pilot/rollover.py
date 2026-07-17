@@ -82,6 +82,8 @@ def prepare_rollover(
     run_state = summarize_run_events(root, run_id, since_ts=since_ts)
     if not run_state.get("idle", False):
         return {"status": "not_ready", "reason": "run_not_idle", "run_state": run_state}
+    if since_ts is not None and not run_state.get("saw_active", False):
+        return {"status": "not_ready", "reason": "no_turn_since_spawn", "run_state": run_state}
 
     handoff = recovery.write_handoff(
         root,
@@ -131,6 +133,8 @@ def evaluate_rollover(
     run_state = summarize_run_events(root, run_id, since_ts=since_ts)
     if not run_state.get("idle", False):
         return {"should_rollover": False, "reason": "run_not_idle", "run_state": run_state}
+    if since_ts is not None and not run_state.get("saw_active", False):
+        return {"should_rollover": False, "reason": "no_turn_since_spawn", "run_state": run_state}
 
     usage = context_usage or ContextUsage(current=None, limit=None, confidence="unknown")
     current = usage.current
@@ -202,6 +206,8 @@ def should_rollover(
     run_state = summarize_run_events(root, run_id, since_ts=since_ts)
     if not run_state.get("idle", False):
         return {"should_rollover": False, "reason": "run_not_idle", "run_state": run_state}
+    if since_ts is not None and not run_state.get("saw_active", False):
+        return {"should_rollover": False, "reason": "no_turn_since_spawn", "run_state": run_state}
 
     usage = context_usage or ContextUsage(current=None, limit=None, confidence="unknown")
     current = usage.current
