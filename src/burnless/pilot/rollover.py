@@ -3,11 +3,35 @@ from __future__ import annotations
 import os
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import recovery
 from .core import ContextUsage
 from .events import append_session_log, summarize_run_events
+
+
+@dataclass(frozen=True)
+class SessionIdentity:
+    host_session_id: str
+    process_instance_id: str
+    run_id: str
+
+
+def resolve_session_identity(root, run_id, *, since_ts=None, run_state=None):
+    """Autoridade única de identidade da geração atual do filho.
+    Lê o stream de eventos e devolve o SID/pid REAIS do filho, ou None quando
+    não há identidade real resolvível (falha ALTO — o chamador NUNCA deve cair
+    num placeholder run_id, que foi a causa-raiz do rollover com seed vazio)."""
+    state = run_state if run_state is not None else summarize_run_events(root, run_id, since_ts=since_ts)
+    ident = state.get("last_identity")
+    if not ident or not ident.get("host_session_id"):
+        return None
+    return SessionIdentity(
+        host_session_id=str(ident["host_session_id"]),
+        process_instance_id=str(ident.get("process_instance_id") or ident["host_session_id"]),
+        run_id=str(run_id),
+    )
 
 
 def claim_handoff(root: Path, *, host: str, process_instance_id: str, new_session_id: str) -> dict | None:
@@ -85,9 +109,11 @@ def prepare_rollover(
     if since_ts is not None and not run_state.get("saw_active", False):
         return {"status": "not_ready", "reason": "no_turn_since_spawn", "run_state": run_state}
 
-    last_evt = run_state.get("last") or {}
-    effective_sid = last_evt.get("host_session_id") or host_session_id
-    effective_pid = last_evt.get("process_instance_id") or process_instance_id
+    identity = resolve_session_identity(root, run_id, since_ts=since_ts, run_state=run_state)
+    if identity is None:
+        return {"status": "not_ready", "reason": "identity_unresolved", "restore": None, "handoff": None, "run_state": run_state}
+    effective_sid = identity.host_session_id
+    effective_pid = identity.process_instance_id
 
     handoff = recovery.write_handoff(
         root,
@@ -256,6 +282,7 @@ def arm_rollover(
     rollover_at_tokens: int = 40000,
     rollover_at_pct: float = 0.65,
     trusted_confidences: tuple = ("exact",),
+    since_ts: str | None = None,
 ) -> dict:
     decision = should_rollover(
         root,
@@ -267,13 +294,16 @@ def arm_rollover(
         rollover_at_tokens=rollover_at_tokens,
         rollover_at_pct=rollover_at_pct,
         trusted_confidences=trusted_confidences,
+        since_ts=since_ts,
     )
     if not decision.get("should_rollover"):
         return {"status": "not_ready", **decision}
 
-    _last = (decision.get("run_state") or {}).get("last") or {}
-    _sid = _last.get("host_session_id") or host_session_id
-    _pid = _last.get("process_instance_id") or process_instance_id
+    identity = resolve_session_identity(root, run_id, since_ts=since_ts, run_state=decision.get("run_state"))
+    if identity is None:
+        return {"status": "not_ready", "reason": "identity_unresolved", **decision}
+    _sid = identity.host_session_id
+    _pid = identity.process_instance_id
 
     handoff = recovery.write_handoff(
         root,
@@ -362,6 +392,7 @@ def monitor_rollover_once(
         rollover_at_tokens=rollover_at_tokens,
         rollover_at_pct=rollover_at_pct,
         trusted_confidences=trusted_confidences,
+        since_ts=since_ts,
     )
     return {
         "status": "prepared",

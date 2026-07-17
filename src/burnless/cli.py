@@ -2722,7 +2722,7 @@ def _run_pilot_cycle(
         if not (hasattr(adapter, "locate_session") and hasattr(adapter, "context_usage")):
             return type("U", (), {"current": None, "limit": None, "confidence": "unknown"})()
         try:
-            session = adapter.locate_session(host_session_id)
+            session = adapter.locate_session(run_id)
         except Exception:
             return type("U", (), {"current": None, "limit": None, "confidence": "unknown"})()
         if session is None:
