@@ -85,17 +85,21 @@ def prepare_rollover(
     if since_ts is not None and not run_state.get("saw_active", False):
         return {"status": "not_ready", "reason": "no_turn_since_spawn", "run_state": run_state}
 
+    last_evt = run_state.get("last") or {}
+    effective_sid = last_evt.get("host_session_id") or host_session_id
+    effective_pid = last_evt.get("process_instance_id") or process_instance_id
+
     handoff = recovery.write_handoff(
         root,
         host=host,
-        host_session_id=host_session_id,
-        process_instance_id=process_instance_id,
+        host_session_id=effective_sid,
+        process_instance_id=effective_pid,
     )
     restore = render_restore(
         root,
         host=host,
-        host_session_id=host_session_id,
-        process_instance_id=process_instance_id,
+        host_session_id=effective_sid,
+        process_instance_id=effective_pid,
         new_session_id=new_session_id,
         source="clear",
         budget_tokens=budget_tokens,
@@ -267,11 +271,15 @@ def arm_rollover(
     if not decision.get("should_rollover"):
         return {"status": "not_ready", **decision}
 
+    _last = (decision.get("run_state") or {}).get("last") or {}
+    _sid = _last.get("host_session_id") or host_session_id
+    _pid = _last.get("process_instance_id") or process_instance_id
+
     handoff = recovery.write_handoff(
         root,
         host=host,
-        host_session_id=host_session_id,
-        process_instance_id=process_instance_id,
+        host_session_id=_sid,
+        process_instance_id=_pid,
     )
     append_session_log(
         root,
