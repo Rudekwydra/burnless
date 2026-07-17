@@ -332,6 +332,25 @@ def monitor_rollover_once(
         return {"status": "not_ready", **decision}
 
     fresh_session_id = new_session_id or f"{run_id}-fresh"
+    prepared = prepare_rollover(
+        root,
+        host=host,
+        host_session_id=host_session_id,
+        process_instance_id=process_instance_id,
+        run_id=run_id,
+        new_session_id=fresh_session_id,
+        budget_tokens=delta_budget_tokens,
+        since_ts=since_ts,
+    )
+    if prepared.get("status") != "ready":
+        return {
+            "status": "not_ready",
+            "reason": "prepare_not_ready",
+            "decision": decision,
+            "prepared": prepared,
+            "new_session_id": fresh_session_id,
+        }
+
     armed = arm_rollover(
         root,
         host=host,
@@ -343,16 +362,6 @@ def monitor_rollover_once(
         rollover_at_tokens=rollover_at_tokens,
         rollover_at_pct=rollover_at_pct,
         trusted_confidences=trusted_confidences,
-    )
-    prepared = prepare_rollover(
-        root,
-        host=host,
-        host_session_id=host_session_id,
-        process_instance_id=process_instance_id,
-        run_id=run_id,
-        new_session_id=fresh_session_id,
-        budget_tokens=delta_budget_tokens,
-        since_ts=since_ts,
     )
     return {
         "status": "prepared",
