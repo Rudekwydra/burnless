@@ -183,6 +183,28 @@ fi
 
 **Pre-flight check:** Count semicolons in each line; collapse long commands with `||`, `&&`, but no `if/fi` or loops inside a single check.
 
+#### Rule 2b: No command-substitution `$(...)` or backticks in a check [GATED — cli.py blocks exit 6]
+
+A check that *looks* like one clean line still aborts if it contains `$(...)` or `` `...` ``. The runner executes each line via `/bin/sh -c`, and command-substitution expands unpredictably (nested quoting, whitespace, exit-code masking). The pre-flight blocks the whole dispatch with:
+`[BLOCK] burnless: bloco ## Verify usa backtick ou $(...) (command-substitution).`
+
+The gate is loud and clear — but this is the **single most recurrent authoring footgun** (blocked 4×: a literal backtick fence, then `test -z "$(grep ...)"`, then `test $(wc -l < FILE) -ge 40`). Two rules kill the whole class:
+
+1. **Absence** → `! grep -q 'PATTERN' /abs/file` (never `test -z "$(grep ...)"`, never `grep -c`).
+2. **Size / count / "at least N"** → assert *content that only exists when big enough*, not a number. Grep for a required late section/marker instead of counting lines/bytes.
+
+Verify cookbook (wrong → right):
+
+| Intent | ❌ Blocked (`$(...)`) | ✅ Single-line grep |
+|---|---|---|
+| file exists & non-empty | — | `test -s /abs/out.md` |
+| section present | — | `grep -q '## Section' /abs/out.md` |
+| absence of pattern | `test -z "$(grep -n X /abs/f)"` | `! grep -q 'X' /abs/f` |
+| "at least N lines/items" | `test $(wc -l < /abs/f) -ge 40` | grep the last required marker: `grep -q '## Final Section' /abs/f` |
+| count ≥ threshold | `test $(grep -c X /abs/f) -ge 3` | assert the 3 specific expected values each with its own `grep -q` line |
+
+**When you genuinely need computed logic** (real counting, math, JSON field assertions): put it in a `.py` file and call it from a single Verify line — `python3 /abs/check.py` — whose exit code is the boolean. Never inline the computation.
+
 ---
 
 ### Rule 3: All paths are absolute [GATED — cli.py blocks exit 6]
