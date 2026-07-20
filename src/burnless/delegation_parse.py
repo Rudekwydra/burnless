@@ -58,27 +58,68 @@ def parse_goal_from_delegation(md: str) -> str | None:
     return text or None
 
 
+_VERIFY_HEADING_RE = re.compile(r'^##+\s*(?:Verify|Validation)\b', re.IGNORECASE)
+_SHELL_FENCE_LANGS = ("", "sh", "bash", "shell", "verify")
+
+
 def extract_verify_block(md: str) -> list[str]:
     """Extract shell commands from the first fenced code block under a ## Verify section.
+
+    Fence-aware (2026-07-20, footgun 17/07): a `## Verify` line INSIDE a fenced
+    example in the spec body is ignored — only a heading outside any fence
+    starts the section. Within the section, non-shell fences (```md, ```js...)
+    are skipped; the first bare/sh/bash/shell/verify fence wins.
 
     Returns each non-blank, non-comment line as one command string (stripped).
     Returns [] when the section or a matching fenced block is absent.
     """
-    section_match = re.search(r'^##+\s*(?:Verify|Validation)\b', md, re.IGNORECASE | re.MULTILINE)
-    if not section_match:
+    lines = md.splitlines()
+    in_fence = False
+    fence_char = ""
+
+    # 1) Locate the ## Verify heading OUTSIDE any fence.
+    section_start = None
+    for i, line in enumerate(lines):
+        s = line.lstrip()
+        if s.startswith("```") or s.startswith("~~~"):
+            if not in_fence:
+                in_fence, fence_char = True, s[0]
+            elif s.startswith(fence_char * 3):
+                in_fence = False
+            continue
+        if not in_fence and _VERIFY_HEADING_RE.match(line):
+            section_start = i + 1
+            break
+    if section_start is None:
         return []
-    after = md[section_match.end():]
-    next_section = re.search(r'^##', after, re.MULTILINE)
-    block_scope = after[:next_section.start()] if next_section else after
-    fence_match = re.search(
-        r'^```(?:sh|bash|shell|verify)?\s*\n(.*?)^```',
-        block_scope,
-        re.MULTILINE | re.DOTALL,
-    )
-    if not fence_match:
-        return []
-    lines = fence_match.group(1).splitlines()
-    return [line.strip() for line in lines if line.strip() and not line.strip().startswith('#')]
+
+    # 2) Within the section (until the next heading outside a fence), take the
+    #    first shell-ish fenced block; skip fences of other languages.
+    cmds: list[str] = []
+    in_fence = False
+    collecting = False
+    for line in lines[section_start:]:
+        s = line.lstrip()
+        if not in_fence:
+            if s.startswith("```") or s.startswith("~~~"):
+                fence_char = s[0]
+                info = s.lstrip("`~").strip()
+                lang = info.split()[0].lower() if info else ""
+                in_fence = True
+                collecting = lang in _SHELL_FENCE_LANGS
+                continue
+            if line.startswith("##"):
+                break
+            continue
+        if s.startswith(fence_char * 3):
+            in_fence = False
+            if collecting:
+                return [c for c in cmds if c and not c.startswith('#')]
+            collecting = False
+            continue
+        if collecting:
+            cmds.append(line.strip())
+    return []
 
 
 from .codec.decoder import _coerce_to_list
