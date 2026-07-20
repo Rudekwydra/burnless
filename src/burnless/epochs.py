@@ -338,6 +338,108 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
         return None
 
 
+def orphan_base() -> Path:
+    """Base dir of the global orphan rolling-memory store."""
+    return Path.home() / ".burnless" / "orphans"
+
+
+def orphan_root_for(cwd) -> Path:
+    """Deterministic per-cwd orphan root: <slug>-<sha1(cwd)[:10]> under
+    ~/.burnless/orphans. Pure function (no filesystem side effects) so the
+    same cwd always maps to the same root — write-root == read-root by
+    construction, even across sessions."""
+    import hashlib
+    cwd_p = Path(cwd).expanduser() if isinstance(cwd, str) else Path(cwd)
+    try:
+        # resolve() (non-strict) canonicalizes symlinks — macOS /tmp vs
+        # /private/tmp must map to the SAME orphan root, or the hooks and
+        # `burnless init` (Path.cwd()) disagree and promotion never fires.
+        canonical = str(cwd_p.resolve())
+    except Exception:
+        canonical = str(cwd_p.absolute())
+    digest = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:10]
+    name = Path(canonical).name
+    slug = re.sub(r"[^A-Za-z0-9_-]", "_", name or "root")[:40] or "root"
+    return orphan_base() / f"{slug}-{digest}"
+
+
+def ensure_orphan_root(cwd) -> Path | None:
+    """Create (idempotently) the orphan rolling-memory root for ``cwd`` and
+    return it. Fail-open: returns None on any error, mirroring resolve_root.
+
+    Layout matches a normal project root (<root>/.burnless/...), so every
+    epoch command that takes --root works unchanged. A minimal config.yaml is
+    written so is_project_root() holds and config load merges defaults; an
+    orphan.json marker records the origin cwd for later promotion by
+    `burnless init`."""
+    try:
+        root = orphan_root_for(cwd)
+        b = root / ".burnless"
+        (b / "epochs" / "_rolling").mkdir(parents=True, exist_ok=True)
+        marker = b / "orphan.json"
+        if not marker.exists():
+            from datetime import datetime, timezone
+            marker.write_text(
+                json.dumps(
+                    {
+                        "origin_cwd": str(Path(cwd).expanduser().resolve()),
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "note": "auto-created rolling-memory fallback; run `burnless init` in origin_cwd to promote",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        cfgp = b / "config.yaml"
+        if not cfgp.exists():
+            cfgp.write_text(
+                "# burnless orphan rolling-memory store (auto-created; safe to delete)\n"
+                "# origin cwd in orphan.json — run `burnless init` there to promote.\n",
+                encoding="utf-8",
+            )
+        return root
+    except Exception as exc:
+        print(f"[burnless] ensure_orphan_root failed: {exc!r}", file=sys.stderr)
+        return None
+
+
+def promote_orphan_store(cwd, project_root) -> bool:
+    """If an orphan store exists for ``cwd``, migrate its rolling memory into
+    ``project_root``/.burnless and retire the orphan dir (renamed with a
+    .promoted-<ts> suffix, never deleted). Returns True when a migration
+    happened. Fail-open: returns False on any error."""
+    try:
+        orphan = orphan_root_for(cwd)
+        ob = orphan / ".burnless"
+        if not ob.exists():
+            return False
+        target_b = Path(project_root) / ".burnless"
+        migrated = False
+        for rel in ("epochs",):
+            src = ob / rel
+            if not src.exists():
+                continue
+            dst = target_b / rel
+            for item in src.rglob("*"):
+                r = item.relative_to(src)
+                out = dst / r
+                if item.is_dir():
+                    out.mkdir(parents=True, exist_ok=True)
+                else:
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    if not out.exists():
+                        shutil.copy2(item, out)
+                        migrated = True
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        orphan.rename(orphan.with_name(orphan.name + f".promoted-{ts}"))
+        return migrated
+    except Exception as exc:
+        print(f"[burnless] promote_orphan_store failed: {exc!r}", file=sys.stderr)
+        return False
+
+
 def freshest_project_root(workspace) -> Path | None:
     """Find project dir with newest .burnless/epochs/_rolling/seed.md.
 

@@ -124,6 +124,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     p["history"].write_text("# Burnless Chat History\n", encoding="utf-8")
+    if epochs_mod.promote_orphan_store(cwd, cwd):
+        print("Rolling memory: promoted orphan store from ~/.burnless/orphans into this project.")
     print(f"Burnless initialized at {root}")
     print(f"Project: {initial_state['project']}")
     print(f"\n{TAGLINE}")
@@ -1439,7 +1441,11 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         else:
             _fr = paths_mod.find_root()
             root_path = (_fr.parent if _fr else None)
-        if root_path is None:
+        if root_path is None and getattr(args, "epoch_cmd", None) not in ("resolve-root", "extract-exchange"):
+            # resolve-root handles its own None (incl. --orphan-fallback), and
+            # extract-exchange only reads the transcript (root never used) —
+            # the early exit here would kill both before they ever run (the
+            # hooks pass --cwd for envelope metadata, not for root resolution).
             _cwd_for_msg = cwd if cwd is not None else Path.cwd()
             print(
                 f"burnless epoch: no burnless project at {_cwd_for_msg} (no .burnless/config.yaml up-tree)",
@@ -1530,6 +1536,20 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         workspace = getattr(args, "workspace", None)
         transcript = getattr(args, "transcript", None)
         r = epochs_mod.resolve_root(cwd, workspace=workspace, transcript=transcript)
+        if (
+            r is None
+            and getattr(args, "orphan_fallback", False)
+            and str(cwd or "").strip()  # empty cwd must never mint an orphan
+            and not os.environ.get("BURNLESS_NO_ORPHAN")
+        ):
+            # Rolling-memory must survive /clear in ANY directory: fall back to
+            # the deterministic per-cwd orphan store under ~/.burnless/orphans.
+            # Same resolver on write (Stop/SessionEnd) and read (SessionStart)
+            # -> write-root == read-root by construction. Promote later with
+            # `burnless init` in this cwd.
+            r = epochs_mod.ensure_orphan_root(cwd)
+            if r is not None:
+                print(f"[burnless] orphan rolling-memory for cwd={cwd} -> {r}", file=_sys.stderr)
         print(str(r) if r else "")
         return 0
 
@@ -2504,6 +2524,8 @@ def build_parser() -> argparse.ArgumentParser:
     esp = epoch_sub.add_parser("status", parents=[epoch_common], help="show ON/OFF state + chat/summary count")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="status")
     esp = epoch_sub.add_parser("resolve-root", parents=[epoch_common], help="resolve project root from cwd")
+    esp.add_argument("--orphan-fallback", action="store_true", dest="orphan_fallback", default=False,
+                     help="when no project resolves, fall back to the deterministic per-cwd orphan store under ~/.burnless/orphans (rolling memory survives /clear anywhere); disable with BURNLESS_NO_ORPHAN=1")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="resolve-root")
     esp = epoch_sub.add_parser("resume", parents=[epoch_common], help="emit carry-forward chain")
     esp.set_defaults(func=cmd_epoch, epoch_cmd="resume")
