@@ -108,10 +108,19 @@ def autofix_relative_paths(text: str, project_root: Path) -> tuple[str, list[str
         return text, []
     root = str(project_root).rstrip("/")
     fixed = text
+    rewritten = []
     for rel in v.offending:
+        # Never rewrite `../`-prefixed paths (footgun d043, 2026-07-19): they
+        # are relative to the FILE that will contain them (ESM imports etc.),
+        # not to the project root — prepending root produces a path one level
+        # above the correct one. Leave them alone; the gate stays loud if they
+        # sit in an executed region.
+        if rel.startswith("../"):
+            continue
         pattern = re.compile(r"(?<![\w/.~\-])" + re.escape(rel))
         fixed = pattern.sub(root + "/" + rel, fixed)
-    return fixed, v.offending
+        rewritten.append(rel)
+    return fixed, rewritten
 
 
 def format_autofix_notice(rewritten: list[str], project_root: Path, lang: str = "pt-BR") -> str:
