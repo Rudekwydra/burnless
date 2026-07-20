@@ -54,7 +54,7 @@ PID=$(json_field process_instance_id)
 [[ -z "$PID" ]] && PID="$SID"
 [[ -z "$SID" || -z "$CWD" || -z "$TP" ]] && exit 0
 ROOT_ERR=$(mktemp)
-ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --transcript "$TP" 2>"$ROOT_ERR")
+ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --transcript "$TP" --orphan-fallback 2>"$ROOT_ERR")
 if [[ -z "$ROOT" ]]; then
   log_hook_error "resolve-root" "$(cat "$ROOT_ERR" 2>/dev/null)"
   rm -f "$ROOT_ERR"
@@ -82,5 +82,6 @@ rm -f "$JOURNAL_ERR"
 log_pilot_event
 {
   printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host claude --host-session-id "$SID" --process-instance-id "$PID" --source stop >/dev/null 2>&1
-} &
+} </dev/null >/dev/null 2>&1 &
+disown 2>/dev/null || true
 exit 0

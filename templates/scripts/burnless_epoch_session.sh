@@ -53,19 +53,28 @@ PID=$(json_field process_instance_id)
 [[ -z "$PID" ]] && PID=$(host_pid)
 [[ -z "$PID" ]] && PID="$SID"
 SOURCE=$(json_field source)
-[[ "$SOURCE" != "clear" ]] && exit 0
 [[ -z "$SID" || -z "$CWD" ]] && exit 0
 export PATH="$HOME/.local/bin:$PATH"
 BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
 ROOT_ERR=$(mktemp)
-ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" 2>"$ROOT_ERR")
+ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --orphan-fallback 2>"$ROOT_ERR")
 if [[ -z "$ROOT" ]]; then
   log_hook_error "resolve-root" "$(cat "$ROOT_ERR" 2>/dev/null)"
+  echo "[burnless] restore SKIPPED — cwd=$CWD resolves to no burnless project; cd into the project or run burnless init. Freshest handoff on disk may live elsewhere."
   rm -f "$ROOT_ERR"
   exit 0
 fi
 rm -f "$ROOT_ERR"
 [[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
+# Visibility banner (every session start, any source): when memory is bound to
+# the ORPHAN store (cwd outside any burnless project), say so on turn 1 —
+# never discover it only after a /clear.
+case "$ROOT" in
+  "$HOME/.burnless/orphans/"*)
+    echo "[burnless] rolling-memory em MODO ORFAO para este cwd ($CWD): memoria vive em $ROOT (global, sobrevive a /clear normalmente). Para promover a memoria pro projeto, rode 'burnless init' neste diretorio."
+    ;;
+esac
+[[ "$SOURCE" != "clear" ]] && exit 0
 log_pilot_event
 RESTORE_ERR=$(mktemp)
 # Budget resolves from config (epochs.restore_budget_tokens, default 4000);

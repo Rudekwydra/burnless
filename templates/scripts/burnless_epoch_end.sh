@@ -59,9 +59,10 @@ SOURCE=$(json_field source)
 [[ "$SOURCE" != "clear" ]] && exit 0
 [[ -z "$SID" || -z "$CWD" || -z "$TP" ]] && exit 0
 ROOT_ERR=$(mktemp)
-ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --transcript "$TP" 2>"$ROOT_ERR")
+ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --transcript "$TP" --orphan-fallback 2>"$ROOT_ERR")
 if [[ -z "$ROOT" ]]; then
   log_hook_error "resolve-root" "$(cat "$ROOT_ERR" 2>/dev/null)"
+  echo "[burnless] rolling-memory OFF for this session: no project root for cwd=$CWD" >&2
   rm -f "$ROOT_ERR"
   exit 0
 fi
@@ -92,6 +93,8 @@ rm -f "$Handoff_ERR"
 log_pilot_event
 {
   printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host claude --host-session-id "$SID" --process-instance-id "$PID" --source clear >/dev/null 2>&1
-  "$BB" epoch export --root "$ROOT" --host claude --host-session-id "$SID" >/dev/null 2>&1
-} &
+  mkdir -p "$HOME/.burnless/state"
+  "$BB" epoch export --root "$ROOT" --host claude --host-session-id "$SID" >/dev/null 2>>"$HOME/.burnless/state/epoch_export.log"
+} </dev/null >/dev/null 2>&1 &
+disown 2>/dev/null || true
 exit 0
