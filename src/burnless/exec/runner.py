@@ -301,7 +301,10 @@ def _apply_syntax_gate(
     file corruption even when the spec's ## Verify does not cover it.
     No-op unless status is OK. May only demote OK->PART; never promotes.
     """
-    if summary.get("status") != "OK":
+    if summary.get("status") not in ("OK", "PART"):
+        # Runs on worker-claimed PART too (never promotes; a syntax failure on
+        # a PART summary records the issue so reconcile_worker_status can
+        # refuse the d042 promotion).
         return summary
     files = summary.get("files_touched") or []
     if not files:
@@ -370,11 +373,14 @@ def _apply_verify_gate(
 ) -> dict:
     """Re-execute the spec's ## Verify commands after the worker exits.
 
-    No-op if verify_cmds is empty or summary status is not OK.
-    May only demote OK→PART; never promotes any status.
+    No-op if verify_cmds is empty or summary status is not OK/PART.
+    May only demote OK→PART; never promotes any status — but it DOES run on a
+    worker-claimed PART so the independent "verify: N/N checks passed" marker
+    exists for reconcile_worker_status to arbitrate (d042: worker-invented
+    checks must not gate when the spec's own ## Verify is fully green).
     Full stdout/stderr appended to log_path; only short tail enters summary.
     """
-    if not verify_cmds or summary.get("status") != "OK":
+    if not verify_cmds or summary.get("status") not in ("OK", "PART"):
         return summary
     verify_log = "\n--- VERIFY ---\n"
     passed = 0
@@ -469,6 +475,68 @@ def _verify_badge(summary: dict) -> str:
         if m:
             return f"✓ runner-verified ({m.group(1)}/{m.group(2)})"
     return "⚠ unverified — no ## Verify gate ran (worker-claimed OK)"
+
+
+def reconcile_worker_status(summary: dict) -> dict:
+    """Promote PART→OK if worker self-reported PART but runner's ## Verify gate passed all checks.
+
+    Worker may emit PART with false checks (checks invented outside the spec's ## Verify).
+    Runner re-executes the spec's ## Verify independently. If all spec checks pass, the
+    worker's PART is overridden to OK; worker-invented issues are prefixed 'worker_selfcheck:'
+    for visibility but do not gate.
+
+    Rule:
+    1. If status == "PART" AND validated contains marker "verify: N/N checks passed" where N > 0:
+       - Promote status to "OK"
+       - Add marker "runner-override: worker self-reported PART but spec ## Verify passed N/N; worker-invented checks ignored"
+       - Prefix all issues with "worker_selfcheck: " (informational only, not gating)
+    2. Otherwise: return summary unchanged (PART without marker, partial marker like "2/3", other statuses)
+    """
+    import re as _re
+    if str(summary.get("status") or "").upper() != "PART":
+        return summary
+
+    # Search for "verify: N/N checks passed" marker in validated
+    _validated = summary.get("validated") or []
+    _marker_match = None
+    for item in _validated:
+        _m = _re.search(r"verify:\s*(\d+)\s*/\s*(\d+)\s*checks passed", str(item))
+        if _m:
+            _passed = int(_m.group(1))
+            _total = int(_m.group(2))
+            if _passed == _total and _total > 0:
+                _marker_match = (_passed, _total)
+                break
+
+    if _marker_match is None:
+        return summary
+
+    # Never promote over the runner's OWN gate findings: a syntax_failed or
+    # verify_failed issue means the runner itself saw breakage — worker
+    # self-report is overridable, runner evidence is not.
+    for iss in (summary.get("issues") or []):
+        if "syntax_failed" in str(iss) or "verify_failed" in str(iss):
+            return summary
+
+    _passed, _total = _marker_match
+    summary = dict(summary)
+
+    summary["status"] = "OK"
+
+    _val = list(summary.get("validated") or [])
+    _val.append(f"runner-override: worker self-reported PART but spec ## Verify passed {_passed}/{_total}; worker-invented checks ignored")
+    summary["validated"] = _val
+
+    _issues = list(summary.get("issues") or [])
+    _prefixed_issues = []
+    for iss in _issues:
+        iss_str = str(iss)
+        if not iss_str.startswith("worker_selfcheck:"):
+            iss_str = f"worker_selfcheck: {iss_str}"
+        _prefixed_issues.append(iss_str)
+    summary["issues"] = _prefixed_issues
+
+    return summary
 
 def _build_runner_done_report(did, status_str, summary, include_summary=True):
     """Build a one-line DoneReport from the worker summary envelope."""
@@ -1015,6 +1083,8 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         cwd=root.parent, did=did, log_path=log_path,
         timeout=cfg.get("validation", {}).get("verify_timeout_s", 120),
     )
+    # ── Reconcile worker status: PART→OK if spec ## Verify passed (before badge/retry) ──
+    summary = reconcile_worker_status(summary)
     if _verify_cmds:
         _vb = _verify_badge(summary)
         events_mod.append_event(root, "verify_gate_passed" if _vb.startswith("\u2713") else "verify_gate_failed", {"id": did, "badge": _vb}, actor="cli")
