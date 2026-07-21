@@ -2158,6 +2158,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--follow", action="store_true", help="follow the current transcript")
     sp.add_argument("--json", action="store_true", help="emit turn events as JSONL")
     sp.add_argument("--verbose", action="store_true", help="show tool names in rendered turns")
+    sp.add_argument("--serve", nargs="?", const=8760, type=int, metavar="PORT", help="serve live HTML viewer (default port: 8760)")
     sp.set_defaults(func=cmd_chat)
 
     sp = sub.add_parser("metrics", help="show counters and estimated cost avoided")
