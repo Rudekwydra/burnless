@@ -33,6 +33,44 @@ class EconomyReport:
             "worker-output not yet metered",
         ]
     )
+    accounted_total: int = 0
+    monetizable_subtotal: int = 0
+    excluded_categories: list = field(default_factory=list)
+
+
+def _buckets_from_by_source(by: dict) -> list[Bucket]:
+    """Same 4-bucket formulas compute_economy has always used, factored out so
+    compute_economy_snapshot can reuse them against a LedgerSnapshot's by_source."""
+    def n(k: str) -> float:
+        try:
+            v = by.get(k, 0) or 0
+            return max(float(v), 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    b1_tok = n("capsule_compression")
+    b1_usd = b1_tok * P("opus", "input")
+
+    b2_compact = n("compact_state")
+    b2_decomp = n("output_decompression_avoided")
+    b2_tok = b2_compact + b2_decomp
+    b2_usd = b2_compact * P("opus", "input") + b2_decomp * P("opus", "output")
+
+    b3_tok = n("expensive_model_avoided")
+    b3_usd = b3_tok * (P("opus", "input") - P("haiku", "input"))
+    b3_note = "worker output not yet instrumented (v2)"
+
+    b4_repeated = n("repeated_context_avoided")
+    b4_keepalive = n("keepalive_cache_renewed")
+    b4_tok = b4_repeated + b4_keepalive
+    b4_usd = b4_tok * (P("opus", "input") - P("opus", "cache_read"))
+
+    return [
+        Bucket(name="Input compression (encoder)", tokens=b1_tok, usd=b1_usd),
+        Bucket(name="Maestro history/cache linearization", tokens=b2_tok, usd=b2_usd),
+        Bucket(name="Worker tier downgrade", tokens=b3_tok, usd=b3_usd, note=b3_note),
+        Bucket(name="Cache hits", tokens=b4_tok, usd=b4_usd),
+    ]
 
 
 def compute_economy(metrics: dict, cfg: dict | None = None) -> EconomyReport:
@@ -42,63 +80,28 @@ def compute_economy(metrics: dict, cfg: dict | None = None) -> EconomyReport:
     Formulas follow spec verbatim.
     """
     by = metrics.get("by_source", {}) or {}
-
-    def n(k: str) -> float:
-        """Clamp token source to [0, ∞)."""
-        try:
-            v = by.get(k, 0) or 0
-            return max(float(v), 0.0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    # Bucket 1: Input compression (encoder)
-    b1_tok = n("capsule_compression")
-    b1_usd = b1_tok * P("opus", "input")
-
-    # Bucket 2: Maestro history/cache linearization
-    b2_compact = n("compact_state")
-    b2_decomp = n("output_decompression_avoided")
-    b2_tok = b2_compact + b2_decomp
-    b2_usd = b2_compact * P("opus", "input") + b2_decomp * P("opus", "output")
-
-    # Bucket 3: Worker tier downgrade (expensive_model_avoided = opus->haiku substitution)
-    b3_tok = n("expensive_model_avoided")
-    b3_usd = b3_tok * (P("opus", "input") - P("haiku", "input"))
-    b3_note = "worker output not yet instrumented (v2)"
-
-    # Bucket 4: Cache hits (repeated_context_avoided + keepalive_cache_renewed)
-    b4_repeated = n("repeated_context_avoided")
-    b4_keepalive = n("keepalive_cache_renewed")
-    b4_tok = b4_repeated + b4_keepalive
-    b4_usd = b4_tok * (P("opus", "input") - P("opus", "cache_read"))
-
-    buckets = [
-        Bucket(name="Input compression (encoder)", tokens=b1_tok, usd=b1_usd),
-        Bucket(
-            name="Maestro history/cache linearization",
-            tokens=b2_tok,
-            usd=b2_usd,
-        ),
-        Bucket(
-            name="Worker tier downgrade",
-            tokens=b3_tok,
-            usd=b3_usd,
-            note=b3_note,
-        ),
-        Bucket(
-            name="Cache hits",
-            tokens=b4_tok,
-            usd=b4_usd,
-        ),
-    ]
-
+    buckets = _buckets_from_by_source(by)
     total_tok = sum(b.tokens for b in buckets)
     total_usd = sum(b.usd for b in buckets)
+    return EconomyReport(buckets=buckets, total_tokens=total_tok, total_usd=total_usd)
 
+
+def compute_economy_snapshot(snapshot, cfg: dict | None = None) -> EconomyReport:
+    """Compute the same 4-bucket economy report from a ledger_projector.LedgerSnapshot,
+    plus the reconciliation numbers the design doc's 'raw_logs_isolated na UI' section requires:
+    accounted_total (all saving categories), monetizable_subtotal (accounted minus excluded),
+    and excluded_categories (nominal list of what was excluded and why)."""
+    by = dict(snapshot.by_source or {})
+    buckets = _buckets_from_by_source(by)
+    total_tok = sum(b.tokens for b in buckets)
+    total_usd = sum(b.usd for b in buckets)
     return EconomyReport(
         buckets=buckets,
         total_tokens=total_tok,
         total_usd=total_usd,
+        accounted_total=int(snapshot.accounted_total_tokens),
+        monetizable_subtotal=int(snapshot.monetizable_tokens),
+        excluded_categories=list(snapshot.excluded_categories or []),
     )
 
 
