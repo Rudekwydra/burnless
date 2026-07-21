@@ -861,7 +861,7 @@ def _append_spend_for_result(*, cwd: Path | None, tier: str, result: dict) -> No
             return
         burnless_root = Path(cwd) / ".burnless"
         metrics_mod.append_spend(
-            burnless_root / "spend.jsonl",
+            burnless_root / "audit.jsonl",
             ts=result.get("ended_at") or datetime.now(timezone.utc).isoformat(),
             delegation_id=result.get("delegation_id"),
             tier=tier,

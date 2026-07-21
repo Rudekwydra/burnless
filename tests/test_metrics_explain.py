@@ -8,9 +8,9 @@ from pathlib import Path
 def test_append_and_read_spend_roundtrip(tmp_path):
     from burnless import metrics
 
-    spend_path = tmp_path / ".burnless" / "spend.jsonl"
+    audit_path = tmp_path / ".burnless" / "audit.jsonl"
     metrics.append_spend(
-        spend_path,
+        audit_path,
         ts="2026-07-02T00:00:00Z",
         delegation_id="d1",
         tier="silver",
@@ -22,10 +22,12 @@ def test_append_and_read_spend_roundtrip(tmp_path):
         retry_count=0,
     )
 
-    rows = metrics.read_spend(spend_path)
+    rows = metrics.read_audit(audit_path)
     assert len(rows) == 1
+    assert rows[0]["schema"] == "usage_event/v1"
+    assert rows[0]["kind"] == "spend"
     assert rows[0]["delegation_id"] == "d1"
-    assert rows[0]["usage"]["output_tokens"] == 20
+    assert rows[0]["tokens"]["output"] == 20
 
 
 def test_metrics_explain_renders_audit_and_spend(tmp_path, capsys, monkeypatch):
@@ -114,7 +116,8 @@ def test_agents_run_persists_spend(tmp_path, monkeypatch):
     result = agents.run(agent_cfg, "hello", cwd=tmp_path, tier="bronze")
     assert result["usage"]["output_tokens"] == 9
 
-    spend_rows = metrics.read_spend(tmp_path / ".burnless" / "spend.jsonl")
+    audit_rows = metrics.read_audit(tmp_path / ".burnless" / "audit.jsonl")
+    spend_rows = [r for r in audit_rows if r.get("kind") == "spend"]
     assert len(spend_rows) == 1
     assert spend_rows[0]["tier"] == "bronze"
-    assert spend_rows[0]["usage"]["input_tokens"] == 7
+    assert spend_rows[0]["tokens"]["input"] == 7

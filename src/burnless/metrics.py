@@ -7,9 +7,11 @@ This is the difference between a real product and a Duolingo XP gimmick.
 """
 from __future__ import annotations
 import json
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 from .state import _exclusive_lock
+from .pricing import PRICING_VERSION, family_for_model, rate_versioned
 
 DEFAULT_METRICS: dict = {
     "burnless_tokens": 0,
@@ -126,6 +128,8 @@ def record(
     extra: dict | None = None,
     usd_per_million: float = 15.0,
     basis: str = "estimated",
+    tier: str | None = None,
+    call_kind: str | None = None,
 ) -> dict:
     if source not in VALID_SOURCES:
         raise ValueError(f"unknown source: {source}")
@@ -154,14 +158,21 @@ def record(
 
         save(metrics_path, metrics)
 
+    resolved_call_kind = call_kind or ("delegation_capsule" if source == "capsule_compression" else None)
     entry = {
+        "schema": "usage_event/v1",
+        "event_id": uuid.uuid4().hex,
+        "kind": "saving",
         "ts": datetime.now(timezone.utc).isoformat(),
         "source": source,
         "amount": amount,
         "reason": reason,
         "delegation_id": delegation_id,
-        "basis": basis,
+        "tier": tier or "unknown",
+        "basis": {"amount": basis},
     }
+    if resolved_call_kind:
+        entry["call_kind"] = resolved_call_kind
     if extra:
         entry["extra"] = extra
     audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -189,6 +200,7 @@ def record_encoder_call(
     raw_input_chars: int,
     capsule_output_tokens: int,
     chars_per_token: float = _CHARS_PER_TOKEN_PT,
+    tier: str | None = None,
 ) -> dict:
     """Record one encoder call: raw user message → capsule.
 
@@ -219,6 +231,11 @@ def record_encoder_call(
         save(metrics_path, metrics)
     if saved > 0:
         entry = {
+            "schema": "usage_event/v1",
+            "event_id": uuid.uuid4().hex,
+            "kind": "saving",
+            "tier": tier or "unknown",
+            "call_kind": "chat_encoder",
             "ts": datetime.now(timezone.utc).isoformat(),
             "source": "capsule_compression",
             "amount": saved,
@@ -242,6 +259,7 @@ def record_decoder_call(
     *,
     capsule_input_tokens: int,
     expanded_output_tokens: int,
+    tier: str | None = None,
 ) -> dict:
     """Record one decoder call: Maestro capsule → expanded prose.
 
@@ -278,6 +296,11 @@ def record_decoder_call(
         save(metrics_path, metrics)
     if avoided > 0:
         entry = {
+            "schema": "usage_event/v1",
+            "event_id": uuid.uuid4().hex,
+            "kind": "saving",
+            "tier": tier or "unknown",
+            "call_kind": "chat_decoder",
             "ts": datetime.now(timezone.utc).isoformat(),
             "source": "output_decompression_avoided",
             "amount": avoided,
@@ -303,6 +326,7 @@ def record_brain_call(
     input_tokens: int,
     output_tokens: int,
     model: str = "unknown",
+    tier: str | None = None,
 ) -> dict:
     """Record one Maestro API call with its full usage breakdown.
 
@@ -341,6 +365,11 @@ def record_brain_call(
         save(metrics_path, metrics)
     if saved > 0:
         entry = {
+            "schema": "usage_event/v1",
+            "event_id": uuid.uuid4().hex,
+            "kind": "saving",
+            "tier": tier or "unknown",
+            "call_kind": "brain",
             "ts": datetime.now(timezone.utc).isoformat(),
             "source": "repeated_context_avoided",
             "amount": saved,
@@ -492,8 +521,39 @@ def read_audit(audit_path: Path, limit: int | None = None) -> list[dict]:
     return out
 
 
+def tokens_from_usage(usage: dict | None) -> dict:
+    """Extract {input, output, cache_read, cache_write} ints from a raw provider usage dict.
+    Handles both the flat cache_creation_input_tokens shape and the nested
+    cache_creation.{ephemeral_1h_input_tokens,ephemeral_5m_input_tokens} shape."""
+    usage = usage or {}
+    cache_write = usage.get("cache_creation_input_tokens")
+    if cache_write is None:
+        cc = usage.get("cache_creation") or {}
+        cache_write = int(cc.get("ephemeral_1h_input_tokens", 0) or 0) + int(
+            cc.get("ephemeral_5m_input_tokens", 0) or 0
+        )
+    return {
+        "input": int(usage.get("input_tokens", 0) or 0),
+        "output": int(usage.get("output_tokens", 0) or 0),
+        "cache_read": int(usage.get("cache_read_input_tokens", 0) or 0),
+        "cache_write": int(cache_write or 0),
+    }
+
+
+def cost_for_tokens(model: str | None, tokens: dict) -> float:
+    """USD cost of a tokens dict at the current PRICING_VERSION, family-mapped from model."""
+    fam = family_for_model(model)
+    usd = (
+        tokens.get("input", 0) * rate_versioned(fam, "input")
+        + tokens.get("output", 0) * rate_versioned(fam, "output")
+        + tokens.get("cache_read", 0) * rate_versioned(fam, "cache_read")
+        + tokens.get("cache_write", 0) * rate_versioned(fam, "cache_write")
+    )
+    return round(usd, 6)
+
+
 def append_spend(
-    spend_path: Path,
+    audit_path: Path,
     *,
     ts: str,
     delegation_id: str | None,
@@ -505,21 +565,34 @@ def append_spend(
     backend: str | None = None,
     retry_count: int | None = None,
 ) -> None:
-    """Append one actual-usage record to spend.jsonl. Fail-open."""
+    """Append one usage_event/v1 kind=spend line to audit.jsonl. Fail-open.
+    audit.jsonl is now the single ledger for spend — spend.jsonl no longer receives writes."""
     try:
+        tokens = tokens_from_usage(usage)
+        cost_usd = cost_for_tokens(model, tokens)
         entry = {
+            "schema": "usage_event/v1",
+            "event_id": uuid.uuid4().hex,
             "ts": ts,
-            "delegation_id": delegation_id,
-            "tier": tier,
+            "kind": "spend",
             "provider": provider,
-            "model": model,
-            "usage": usage or {},
-            "duration_s": duration_s,
-            "backend": backend,
-            "retry_count": retry_count,
+            "model": model or "unknown",
+            "tier": tier or "unknown",
+            "delegation_id": delegation_id,
+            "tokens": tokens,
+            "cost": {"usd": cost_usd, "basis": "pricing_table", "pricing_version": PRICING_VERSION},
+            "basis": {
+                "input": "observed",
+                "output": "observed",
+                "cache_read": "observed",
+                "cache_write": "observed",
+                "cost.usd": "pricing_table",
+            },
+            "reason": f"{tier or 'unknown'} {provider or 'unknown'} spend",
+            "extra": {"duration_s": duration_s, "backend": backend, "retry_count": retry_count},
         }
-        spend_path.parent.mkdir(parents=True, exist_ok=True)
-        with spend_path.open("a", encoding="utf-8") as f:
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with audit_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception:
         pass

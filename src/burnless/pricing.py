@@ -87,3 +87,18 @@ def rate_versioned(family: str, field: str, version: str = PRICING_VERSION) -> f
     """Version-aware wrapper around rate(). Only the "2026-01" table exists today,
     so any version string (known or not) falls back to it. Never raises."""
     return rate(family, field)
+
+
+def family_for_model(model: str | None) -> str:
+    """Map a raw model id/name to a pricing family key (one of _PRICING_FAMILIES).
+    Falls back to BASELINE_MODEL when nothing matches — conservative, mirrors rate()'s
+    own unknown-model fallback."""
+    low = (model or "").lower()
+    if not low:
+        return BASELINE_MODEL
+    if "codex" in low:
+        return "gpt"
+    for fam in _PRICING_FAMILIES:
+        if fam in low:
+            return fam
+    return BASELINE_MODEL
