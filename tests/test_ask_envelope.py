@@ -12,7 +12,7 @@ from burnless import config as config_mod
 from burnless import cli
 from burnless import pure_ask as pure_ask_mod
 from burnless.pure_ask import build_ask_envelope, normalize_ask_error
-from burnless.providers.contracts import AskRequest, ProviderResult
+from burnless.providers.contracts import AskRequest, ProviderResult, UsageRecord
 from burnless.providers.anthropic_adapter import AnthropicAdapter
 from burnless.providers.codex_adapter import CodexAdapter
 
@@ -256,3 +256,61 @@ class TestCmdAskDryRunExplain:
             AskRequest(prompt="SECRET-MARKER-X", tier="silver", provider="codex"), cfg
         )
         assert "SECRET-MARKER-X" not in target.redacted_command
+
+
+_ANTHROPIC_PARSE_USAGE = "burnless.providers.anthropic_adapter.AnthropicAdapter.parse_usage"
+
+
+class TestCmdAskBudgetPreflight:
+    def test_preflight_blocks_before_provider_call_when_input_exceeds_max_total(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_burnless_project(tmp_path)
+
+        with patch(_ANTHROPIC_INVOKE) as mock_invoke:
+            rc = cli.cmd_ask(_ask_args(text="x" * 400, max_total_tokens=1, output_format="json"))
+
+        assert rc == 1
+        mock_invoke.assert_not_called()
+        captured = capsys.readouterr()
+        envelope = json.loads(captured.out)
+        assert envelope["error_kind"] == "budget_exceeded_preflight"
+
+    def test_preflight_blocks_dry_run_too(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        burnless = _init_burnless_project(tmp_path)
+
+        with patch(_ANTHROPIC_INVOKE) as mock_invoke:
+            rc = cli.cmd_ask(_ask_args(
+                text="x" * 400, max_total_tokens=1, dry_run=True, output_format="json",
+            ))
+
+        assert rc == 1
+        mock_invoke.assert_not_called()
+
+        events_file = burnless / "events.jsonl"
+        lines = [json.loads(l) for l in events_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+        event_types = [e["event_type"] for e in lines]
+        assert "ask.dry_run" not in event_types
+        failed = [e for e in lines if e["event_type"] == "ask.failed"]
+        assert failed
+        assert failed[-1]["data"]["error_kind"] == "budget_exceeded_preflight"
+
+
+class TestCmdAskBudgetOverageWarning:
+    def test_post_call_overage_warns_but_does_not_fail(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        burnless = _init_burnless_project(tmp_path)
+
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=0, stdout="answer text", stderr="")):
+            with patch(_ANTHROPIC_PARSE_USAGE, return_value=UsageRecord(input_tokens=10, output_tokens=500, basis="observed")):
+                rc = cli.cmd_ask(_ask_args(max_output_tokens=100, output_format="json"))
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        envelope = json.loads(captured.out)
+        assert "budget_overage" in envelope["warnings"]
+
+        events_file = burnless / "events.jsonl"
+        lines = [json.loads(l) for l in events_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+        event_types = [e["event_type"] for e in lines]
+        assert "ask.budget_warning" in event_types

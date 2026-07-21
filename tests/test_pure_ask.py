@@ -8,14 +8,17 @@ from unittest.mock import patch, MagicMock, ANY
 
 import pytest
 
+from burnless import estimator
 from burnless.pure_ask import (
     resolve_ask_model,
     resolve_ask_provider,
     build_ask_command,
+    compute_budget_plan,
     run_ask,
     run_ask_ollama,
     _DISALLOWED_TOOLS,
 )
+from burnless.providers.contracts import AskRequest, ProviderCapabilities
 
 
 class TestBuildAskCommand:
@@ -355,3 +358,47 @@ class TestAskOllamaRouting:
 
         with pytest.raises(ValueError, match="could not resolve a local model"):
             run_ask("bronze", prompt, cfg)
+
+
+class TestComputeBudgetPlan:
+    """Test compute_budget_plan preflight estimation + enforcement decision."""
+
+    def test_no_budget_flags_soft_only_and_estimate_matches(self):
+        request = AskRequest(prompt="hello world" * 10, tier="silver")
+        caps = ProviderCapabilities()
+        plan = compute_budget_plan(request, "claude-sonnet-5", caps)
+        assert plan.enforcement == "soft_only"
+        assert plan.estimated_input_tokens == estimator.estimate_tokens(request.prompt)
+
+    def test_hard_policy_with_spend_cap_and_budget_usd_is_hard(self):
+        request = AskRequest(
+            prompt="hello",
+            tier="silver",
+            budget_policy="hard",
+            max_budget_usd=1.0,
+        )
+        caps = ProviderCapabilities(hard_spend_cap=True)
+        plan = compute_budget_plan(request, "claude-sonnet-5", caps)
+        assert plan.enforcement == "hard"
+
+    def test_hard_policy_without_capability_stays_soft_only(self):
+        request = AskRequest(
+            prompt="hello",
+            tier="silver",
+            budget_policy="hard",
+            max_budget_usd=1.0,
+        )
+        caps = ProviderCapabilities(hard_spend_cap=False)
+        plan = compute_budget_plan(request, "claude-sonnet-5", caps)
+        assert plan.enforcement == "soft_only"
+
+    def test_hard_policy_with_only_max_output_tokens_stays_soft_only(self):
+        request = AskRequest(
+            prompt="hello",
+            tier="silver",
+            budget_policy="hard",
+            max_output_tokens=100,
+        )
+        caps = ProviderCapabilities(hard_spend_cap=True)
+        plan = compute_budget_plan(request, "claude-sonnet-5", caps)
+        assert plan.enforcement == "soft_only"

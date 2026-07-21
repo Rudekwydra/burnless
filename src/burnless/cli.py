@@ -1376,6 +1376,54 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
     target = adapter.resolve(request, cfg)
 
+    estimated_input_tokens = target.budget.estimated_input_tokens
+    over_total = (
+        request.max_total_tokens is not None
+        and estimated_input_tokens is not None
+        and estimated_input_tokens > request.max_total_tokens
+    )
+    over_input = (
+        request.max_input_tokens is not None
+        and estimated_input_tokens is not None
+        and estimated_input_tokens > request.max_input_tokens
+    )
+    if over_total or over_input:
+        limit_kind = "max_total_tokens" if over_total else "max_input_tokens"
+        limit_value = request.max_total_tokens if over_total else request.max_input_tokens
+        error_message = (
+            f"estimated input tokens ({estimated_input_tokens}) exceed "
+            f"--{limit_kind.replace('_', '-')} ({limit_value}) before any provider call"
+        )
+        events_mod.append_event(root, "ask.failed", {
+            "request_id": request_id,
+            "error_kind": "budget_exceeded_preflight",
+            "error_message": error_message,
+        })
+        if args.output_format == "json":
+            envelope = pure_ask_mod.build_ask_envelope(
+                request_id=request_id,
+                requested_tier=target.requested_tier,
+                effective_tier=target.effective_tier,
+                provider=target.provider,
+                model=target.model,
+                effort=target.effort,
+                route_source="explicit",
+                route_reason=route_reason,
+                route_signals=(),
+                returncode=1,
+                stdout="",
+                stderr=error_message,
+                dry_run=request.dry_run,
+                warnings=tuple(warn_list),
+            )
+            envelope["status"] = "error"
+            envelope["error_kind"] = "budget_exceeded_preflight"
+            envelope["error_message"] = error_message
+            print(json.dumps(envelope, indent=2, ensure_ascii=False))
+        else:
+            print(f"burnless ask: {error_message}", file=sys.stderr)
+        return 1
+
     if request.dry_run:
         explain_dict = pure_ask_mod.render_ask_explain(target, request, route_reason=route_reason)
         ok = events_mod.append_event(root, "ask.dry_run", {
@@ -1422,6 +1470,27 @@ def cmd_ask(args: argparse.Namespace) -> int:
         return 1
 
     usage = adapter.parse_usage(result, target)
+
+    actual_total_tokens = usage.input_tokens + usage.output_tokens
+    over_output = (
+        request.max_output_tokens is not None
+        and usage.output_tokens > request.max_output_tokens
+    )
+    over_total_actual = (
+        request.max_total_tokens is not None
+        and actual_total_tokens > request.max_total_tokens
+    )
+    if over_output or over_total_actual:
+        warn_list.append("budget_overage")
+        ok = events_mod.append_event(root, "ask.budget_warning", {
+            "request_id": request_id,
+            "max_output_tokens": request.max_output_tokens,
+            "max_total_tokens": request.max_total_tokens,
+            "actual_output_tokens": usage.output_tokens,
+            "actual_total_tokens": actual_total_tokens,
+        })
+        if not ok:
+            warn_list.append("telemetry_write_failed")
 
     envelope = pure_ask_mod.build_ask_envelope(
         request_id=request_id,

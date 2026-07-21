@@ -44,8 +44,9 @@ class OllamaAdapter:
             capabilities=ProviderCapabilities(),
         )
         caps = self.capabilities(partial)
+        budget = pure_ask.compute_budget_plan(request, model, caps)
         redacted = f"http POST local model={model} stream=false"
-        return dataclasses.replace(partial, capabilities=caps, redacted_command=redacted)
+        return dataclasses.replace(partial, capabilities=caps, budget=budget, redacted_command=redacted)
 
     def explain(self, target: ResolvedAskTarget) -> dict:
         return {
