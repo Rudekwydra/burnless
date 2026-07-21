@@ -59,6 +59,35 @@ Qualquer perda de fio não-resolvida na semana 3, ou tester travando na instala�
 
 ---
 
+## TRILHO PARALELO · 21/07 — Ask control plane + capabilities de host
+
+Este trilho nasceu do dogfood real no `rw-editorial-engine`. Ele não reabre nem substitui os gates do lançamento acima. O volante detalhado continua em `docs/plans/2026-07-21-EXECUCAO_CONTROL_PLANE.md`; aqui ficam apenas estado comprovado e fricções que não podem se perder.
+
+### Ask control plane — checkpoint comprovado no HEAD
+
+- [x] **M0 — `--effort` por provider** — 21/07, commit `8920d43`, 25 testes focados verdes
+- [x] **M1a — contratos do ask** — 21/07, commit `c96b69a`, dataclasses + protocolo `AskAdapter`, sem mudança de I/O
+- [x] **M1b — adapters Anthropic/Ollama/Codex explícitos** — 21/07, commit `c70861b`, fallback silencioso provider desconhecido→Claude removido; 25 testes legados + 25 novos; suíte cheia 1512 passed, mesmos 11 fails do baseline
+- [ ] **M1c — envelope `burnless.ask/v1`, eventos e erro normalizado** — próximo marco do plano de execução
+- [ ] **M2–M7 + G1–G3** — seguir a ordem e os gates Gold definidos no volante; não duplicar escopo neste arquivo
+
+### P11 — Capability-aware delegation (`--chrome` foi o caso revelador)
+
+- [x] **Reprodução do gap** — 21/07: `burnless do/run` com worker Claude não herdou Claude-in-Chrome e devolveu bloqueio sem navegador; tier/provider/modelo, sozinhos, não descrevem a tool surface real
+- [x] **Prova de viabilidade** — 21/07: `burnless pilot --host claude` abriu Claude interativo com Chrome funcional quando `pilot.extra_args: ["--chrome"]` foi aplicado temporariamente e a sessão recebeu as permissões de host necessárias; config restaurada para `extra_args: []` após o teste
+- [x] **Root cause do footgun de argv** — 21/07: `pilot` usa `argparse.REMAINDER` e encaminha `extra_args` literalmente; `burnless pilot ... -- --chrome` preserva o separador `--`, então Claude trata `--chrome` como prompt em vez de opção
+- [ ] **P11.1 — passthrough correto no `pilot`**: remover o separador sintático antes de montar argv e oferecer `--chrome` como capability explícita do host Claude; aceite: argv contém `--chrome`, nunca o `--` intermediário, sem editar config
+- [ ] **P11.2 — capability request em `do/run`**: permitir solicitar Chrome/tool surface explicitamente; se o worker resolvido não puder entregar, rerotear de forma autorizada ou falhar loud ANTES da chamada paga — nunca dispatch sem a capability pedida
+- [ ] **P11.3 — preflight observável**: `--dry-run/--explain` deve mostrar provider, modelo real, executável/comando, modo interativo ou `-p`, capabilities disponíveis/requeridas, fonte de autenticação em termos não secretos e permissões de sandbox/host necessárias
+- [ ] **P11.4 — resolução por capability**: tier é custo/risco, não garantia de ferramenta. O router deve cruzar tier + provider + modelo + host capabilities; aliases não podem esconder que outro CLI/modelo será executado
+- [ ] **P11.5 — auth e sandbox sem magia**: distinguir login interativo, credencial de API e native host do navegador; detectar bloqueio de sessão/env antes do worker e explicar a correção, sem expor tokens nem elevar permissões automaticamente
+- [ ] **P11.6 — telemetria**: registrar capability solicitada, target resolvido, preflight, reroute/recusa e capability efetivamente entregue; nunca registrar prompt, conteúdo da página, cookie ou segredo
+- [ ] **P11.7 — regressões obrigatórias**: testes para `pilot --chrome`, `pilot -- --chrome`, `do/run` com capability incompatível, auth ausente, sandbox bloqueado, reroute permitido e zero chamada paga em falha de preflight
+
+**Regra operacional até P11 fechar:** tarefa que depende da sessão Chrome já autenticada deve usar o host interativo que comprovadamente possui essa sessão. `ask` continua text-only; `do/run` só pode prometer ferramenta depois de capability preflight positivo.
+
+---
+
 ## Diário (LLMs preenchem, 1 linha por evento)
 
 | Data | Evento | Evidência |
@@ -119,3 +148,5 @@ Qualquer perda de fio não-resolvida na semana 3, ou tester travando na instala�
 | 20/07 | **d042 FECHADO (runner é o árbitro)**: worker d950 (silver, OK verify 6/6) criou reconcile_worker_status() — PART→OK quando o ## Verify da spec passa N/N; MAS a auditoria no disco pegou dead-code: _apply_verify_gate era no-op com status PART, então o marker nunca existiria no cenário real (os 6/6 checks do d950 passaram testando a função isolada — exatamente a classe de armadilha deste Diário). Patch por cima (Fable): gates de verify e syntax rodam também em worker-claimed PART (nunca promovem), reconcile promove só com marker N/N e NUNCA por cima de syntax_failed/verify_failed do próprio runner, e roda antes do badge/retry (mata o retry 2× do d042 original). 14 testes reconcile + vizinhos = 54 passed | d950 OK + patch auditado; runner.py:304/383/1087 |
 | 20/07 | Higiene: hook_errors.log rotacionado (.bak-20260720; C9 limpa — 3 entradas living_rewriter de 17/07 + 2 do teste de hoje). Suite completa 1454 passed / 11 failed — provado via worktree baseline (34f534b) que os 11 são PRÉ-EXISTENTES/ambientais: warm/* nem coleta no baseline (ModuleNotFoundError burnless._pro), doctor_idempotency+encoder_fallback já falhavam. Zero regressão dos commits de hoje. Triagem dos 11 fica pendente pré-launch (não marcados xfail às cegas — subsistema warm/_pro é decisão do dono) | /tmp/pytest_full.log; baseline worktree |
 | 20/07 | **ARRUMADO (a pedido do Roberto, "falta instrução clara, custa tempo, 4-5x diamond deu erro"): a doc não proibia `$(...)`/backtick explicitamente.** Root cause confirmado: a Rule 2 do DOCTRINE + minha checklist global só diziam "1 linha, sem if/fi/loop" — nunca nomeavam command-substitution, que é um gate SEPARADO (cli.py exit 6, mensagem própria). Por isso reincidiu 4× (linhas 73/91/99/107). **Fix (3 arquivos .md, additivo):** (1) DOCTRINE `docs/DOCTRINE.md` ganhou **Rule 2b** com a proibição explícita + Verify cookbook (tabela wrong→right dos 3 casos: ausência=`! grep -q`, tamanho=grep do marcador final, contagem=`python3 /abs/check.py`); (2) `~/.claude/CLAUDE.md` ganhou **linha 2b** na tabela de enforcement (carrega no contexto toda sessão); (3) este Diário. **NÃO arrumado (honestidade — segunda classe que Roberto contou como "diamond deu erro"):** o policy-exit0 do BURNLESS_HARDCORE (linha 108, `--tier diamond` acima da rota sai exit 0 fantasma, precisa `--force`) segue candidato P10+ a fix de CÓDIGO — hoje só tem contorno (`--force`), não foi resolvido. Diamond falha por DUAS causas distintas; só a de autoria (## Verify) foi fechada na doc | DOCTRINE.md Rule 2b + ~/.claude/CLAUDE.md linha 2b commitáveis; policy-exit0 ainda workaround |
+| 21/07 | **Ask control plane M0→M1b comprovado no HEAD**: effort passthrough, contratos e adapters explícitos Anthropic/Ollama/Codex entregues; fallback desconhecido→Claude morto. Próximo marco M1c | commits `8920d43`, `c96b69a`, `c70861b`; `docs/plans/2026-07-21-EXECUCAO_CONTROL_PLANE.md` |
+| 21/07 | **Dogfood Codex→Burnless→Claude revelou gap de capability passthrough**: `do/run` não herdou Claude-in-Chrome; `pilot` funcionou com `--chrome` via config temporária + permissões de host. `argparse.REMAINDER` preserva `--` e converte a flag em prompt. Aberto P11 para tratar capability como parte da rota, com preflight, auth/sandbox explícitos e telemetria | reprodução d006–d009 + pilot Claude/Sonnet com Chrome; seção P11 acima |
