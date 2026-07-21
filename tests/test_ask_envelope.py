@@ -15,6 +15,7 @@ from burnless.pure_ask import build_ask_envelope, normalize_ask_error
 from burnless.providers.contracts import AskRequest, ProviderResult, UsageRecord
 from burnless.providers.anthropic_adapter import AnthropicAdapter
 from burnless.providers.codex_adapter import CodexAdapter
+from burnless.providers.ollama_adapter import OllamaAdapter
 
 
 class TestNormalizeAskError:
@@ -294,6 +295,66 @@ class TestCmdAskBudgetPreflight:
         failed = [e for e in lines if e["event_type"] == "ask.failed"]
         assert failed
         assert failed[-1]["data"]["error_kind"] == "budget_exceeded_preflight"
+
+
+class TestExplainDryRunReconciliation:
+    """Proves the sec-10 invariant with tests: --dry-run and --explain render
+    the SAME ResolvedAskTarget, never two independently-resolved ones."""
+
+    def test_dry_run_and_explain_produce_identical_resolution_fields(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_burnless_project(tmp_path)
+
+        rc = cli.cmd_ask(_ask_args(dry_run=True, output_format="json"))
+        assert rc == 0
+        dry_run_dict = json.loads(capsys.readouterr().out)
+
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=0, stdout="answer text", stderr="")):
+            rc = cli.cmd_ask(_ask_args(explain=True, output_format="json"))
+        assert rc == 0
+        envelope = json.loads(capsys.readouterr().out)
+        explain_dict = envelope["explain"]
+
+        for field in ("provider", "model", "effective_tier", "adapter_key", "cache_mode", "capabilities", "redacted_command"):
+            assert dry_run_dict[field] == explain_dict[field], field
+
+        # request_id is a fresh uuid4 minted per cmd_ask() call (see cli.cmd_ask),
+        # so two separate invocations can never share one — that is by design,
+        # not a resolution divergence, so it is asserted unequal instead of equal.
+        assert dry_run_dict["request_id"] != explain_dict["request_id"]
+
+        # budget.estimate is a pure function of the prompt text alone
+        # (estimator.estimate_tokens), so with the same deterministic
+        # _ask_args() prompt both calls must agree exactly.
+        assert dry_run_dict["budget"]["estimate"] == explain_dict["budget"]["estimate"]
+
+    def test_capabilities_differ_correctly_per_adapter(self, tmp_path):
+        burnless = _init_burnless_project(tmp_path)
+        cfg = config_mod.load(burnless / "config.yaml")
+        request = AskRequest(prompt="hi there", tier="silver")
+
+        anthropic_target = AnthropicAdapter().resolve(request, cfg)
+        ollama_target = OllamaAdapter().resolve(request, cfg)
+        codex_target = CodexAdapter().resolve(request, cfg)
+
+        assert anthropic_target.capabilities.hard_spend_cap is True
+        assert ollama_target.capabilities.hard_spend_cap is False
+        assert codex_target.capabilities.hard_spend_cap is False
+
+        assert anthropic_target.capabilities.supported_efforts == ("low", "medium", "high", "xhigh", "max")
+        assert codex_target.capabilities.supported_efforts == ("low", "medium", "high")
+        assert ollama_target.capabilities.supported_efforts == ()
+        assert len(anthropic_target.capabilities.supported_efforts) == 5
+        assert len(codex_target.capabilities.supported_efforts) == 3
+        assert len(ollama_target.capabilities.supported_efforts) == 0
+
+    def test_ollama_redacted_command_never_contains_prompt(self, tmp_path):
+        burnless = _init_burnless_project(tmp_path)
+        cfg = config_mod.load(burnless / "config.yaml")
+        target = OllamaAdapter().resolve(
+            AskRequest(prompt="SECRET-MARKER-X", tier="silver", provider="ollama"), cfg
+        )
+        assert "SECRET-MARKER-X" not in target.redacted_command
 
 
 class TestCmdAskBudgetOverageWarning:
