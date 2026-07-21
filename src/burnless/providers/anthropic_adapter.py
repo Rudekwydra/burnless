@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shlex
 import subprocess
 import tempfile
 import time
@@ -48,7 +49,15 @@ class AnthropicAdapter:
             capabilities=ProviderCapabilities(),
         )
         caps = self.capabilities(partial)
-        return dataclasses.replace(partial, capabilities=caps)
+        cmd = pure_ask.build_ask_command(
+            model,
+            output_format=request.output_format,
+            system=request.system,
+            max_budget_usd=request.max_budget_usd,
+            effort=request.effort,
+        )
+        redacted = shlex.join(cmd)
+        return dataclasses.replace(partial, capabilities=caps, redacted_command=redacted)
 
     def explain(self, target: ResolvedAskTarget) -> dict:
         return {
