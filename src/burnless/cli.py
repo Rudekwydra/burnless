@@ -39,6 +39,7 @@ from .report_kind import (
 from . import init_claude_code as _init_claude_code_mod
 from . import epochs as epochs_mod
 from . import recovery as recovery_mod
+from . import chat as chat_mod
 from . import audit_graph
 from . import retrieve as retrieve_mod
 from . import events as events_mod
@@ -1863,6 +1864,8 @@ def cmd_epoch(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_chat(args: argparse.Namespace) -> int:
+    return chat_mod.main(args)
 
 
 
@@ -2148,6 +2151,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("status", help="show project state + headline metric")
     sp.set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("chat", help="view a chain as one continuous chat timeline")
+    sp.add_argument("--chain", metavar="ID", help="chain id (default: newest live chain)")
+    sp.add_argument("--list", action="store_true", help="list live chains for this project")
+    sp.add_argument("--follow", action="store_true", help="follow the current transcript")
+    sp.add_argument("--json", action="store_true", help="emit turn events as JSONL")
+    sp.add_argument("--verbose", action="store_true", help="show tool names in rendered turns")
+    sp.set_defaults(func=cmd_chat)
 
     sp = sub.add_parser("metrics", help="show counters and estimated cost avoided")
     metrics_sub = sp.add_subparsers(dest="metrics_cmd")
