@@ -1287,7 +1287,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         st["last_delegation"] = did
         st["last_capsule"] = did
         st["last_capsule_mode"] = "faithful"
-        st["next"] = capsule.next or None
+        state_mod.set_next(st, capsule.next or "", plan_id=did, revision=1, source="worker")
         st["turn_counter"] = int(st.get("turn_counter", 0) or 0) + 1
         st["last_status"] = f"{summary.get('status', '?')}:{did}"
 

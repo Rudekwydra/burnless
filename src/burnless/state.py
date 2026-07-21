@@ -9,6 +9,10 @@ DEFAULT_STATE: dict = {
     "project": "Project",
     "last_delegation": None,
     "next": None,
+    "next_plan_id": None,
+    "next_revision": None,
+    "next_updated_at": None,
+    "next_source": None,
     "delegation_counter": 0,
     "turn_counter": 0,  # For savings footer per-turn tracking
     "active_tier": None,  # None = auto routing; "gold"|"silver"|"bronze" = sticky
@@ -152,3 +156,46 @@ def touch_activity(state: dict, idle_threshold_s: int = 3000, now: datetime | No
         now = datetime.now(timezone.utc)
     state["last_activity_ts"] = now.isoformat()
     state["next_keepalive_ts"] = (now + timedelta(seconds=idle_threshold_s)).isoformat()
+
+
+def set_next(
+    state: dict,
+    text: str,
+    *,
+    plan_id: str,
+    revision: int = 1,
+    source: str = "worker",
+    now: datetime | None = None,
+) -> None:
+    """Mutate state in-place with a new Next, guarding against out-of-order writes.
+
+    A write for the SAME plan_id with a revision lower than what's already recorded is
+    ignored (a late/out-of-order completion must never clobber a newer revision's Next).
+    A write for a DIFFERENT plan_id always supersedes the previous plan's Next outright
+    (a new plan takes over). Caller is responsible for calling save()/update_locked after
+    this, matching every other mutator in this module.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    current_plan_id = state.get("next_plan_id")
+    current_revision = state.get("next_revision")
+    if plan_id == current_plan_id and current_revision is not None and int(revision) < int(current_revision):
+        return
+    state["next"] = text or None
+    state["next_plan_id"] = plan_id
+    state["next_revision"] = int(revision)
+    state["next_updated_at"] = now.isoformat()
+    state["next_source"] = source
+
+
+def invalidate_next(state: dict, *, plan_id: str | None = None) -> None:
+    """Clear Next. If plan_id is given, only clears when it still matches the current
+    next_plan_id (a stale invalidate call must never wipe out a newer, different plan's
+    Next that has since taken over). Caller is responsible for calling save()/update_locked."""
+    if plan_id is not None and state.get("next_plan_id") != plan_id:
+        return
+    state["next"] = None
+    state["next_plan_id"] = None
+    state["next_revision"] = None
+    state["next_updated_at"] = None
+    state["next_source"] = None
