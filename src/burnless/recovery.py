@@ -1812,12 +1812,40 @@ def migrate_legacy_handoff_pool(root, *, host: str = "claude") -> dict[str, Any]
 
 
 CHAIN_GC_TTL_SECONDS = 7 * 86400
+CHAIN_STALE_TTL_SECONDS = 3600  # 1h — no heartbeat/last_seen update within this window => stale
 
 
-def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
+def classify_chain_state(meta: dict, *, now: float | None = None) -> str:
+    """Classify a chain meta dict into "active"/"stale"/"dead"/"unknown".
+
+    Never returns "archived" — archived chains live under chains/_archived/
+    and are not passed to this function.
+    """
+    now = now if now is not None else time.time()
+    pid_value = str(meta.get("pid") or "")
+    os_pid = _extract_os_pid(pid_value)
+    if os_pid is None:
+        return "unknown"
+    if _pid_is_dead_or_reused(pid_value, str(meta.get("pid_proc_name") or "")):
+        return "dead"
+    last_seen = str(meta.get("last_seen") or "")
+    try:
+        last_seen_epoch = time.mktime(time.strptime(last_seen, "%Y-%m-%dT%H:%M:%SZ"))
+    except Exception:
+        return "unknown"
+    if (now - last_seen_epoch) > CHAIN_STALE_TTL_SECONDS:
+        return "stale"
+    return "active"
+
+
+def gc_dead_chains(root, *, host: str = "claude", dry_run: bool = False) -> dict[str, Any]:
     """Thermal GC: chain with dead PID AND last_seen > CHAIN_GC_TTL_SECONDS
     is sealed via `exporting.export_epoch` (its consolidated state goes to
-    cold storage, never deleted raw) and moved to chains/_archived/."""
+    cold storage, never deleted raw) and moved to chains/_archived/.
+
+    When `dry_run` is True, compute the same candidate set but perform no
+    filesystem writes, no export, and no event logging; returns
+    {"would_archive": [...]} instead of {"archived": [...]}."""
     from . import exporting
 
     root_path = _root_path(root)
@@ -1825,7 +1853,7 @@ def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
     archived_root = chains_root / "_archived"
     archived: list[str] = []
     if not chains_root.exists():
-        return {"archived": archived}
+        return {"would_archive": archived} if dry_run else {"archived": archived}
     now = time.time()
     for meta_path in sorted(chains_root.glob("*/" + CHAIN_META_NAME)):
         chain_dir = meta_path.parent
@@ -1850,6 +1878,9 @@ def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
         if _extract_os_pid(pid_value) is not None and not _pid_is_dead_or_reused(pid_value, str(meta.get("pid_proc_name") or "")):
             continue
         chain_id = str(meta.get("chain_id") or chain_dir.name)
+        if dry_run:
+            archived.append(chain_id)
+            continue
         handoff_path = chain_dir / CHAIN_HANDOFF_NAME
         export_result = {"status": "export_skipped", "reason": "no_handoff"}
         if handoff_path.exists():
@@ -1873,7 +1904,7 @@ def gc_dead_chains(root, *, host: str = "claude") -> dict[str, Any]:
                 "export_status": export_result.get("status"),
             },
         )
-    return {"archived": archived}
+    return {"would_archive": archived} if dry_run else {"archived": archived}
 
 
 def list_chains(root, *, host: str = "claude") -> list[dict[str, Any]]:
@@ -1917,6 +1948,7 @@ def list_chains(root, *, host: str = "claude") -> list[dict[str, Any]]:
                 "chain_id": chain_id,
                 "pid": pid,
                 "alive": not _pid_is_dead(pid),
+                "state": classify_chain_state(meta),
                 "last_seen": meta.get("last_seen"),
                 "generation": meta.get("generation"),
                 "cwd": meta.get("cwd"),
