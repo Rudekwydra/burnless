@@ -447,7 +447,7 @@ def main(args: Any) -> int:
         print("burnless chat: could not resolve a project root for this cwd", file=sys.stderr)
         return 1
 
-    host = HOST
+    host = getattr(args, "host", None) or HOST
 
     if getattr(args, "list", False):
         return _cmd_list(root, host=host)
@@ -475,7 +475,7 @@ def main(args: Any) -> int:
     seq = max((ev["seq"] for ev in events if ev["kind"] == "turn"), default=0)
     sessions = sessions_for_chain(root, chain_id, host=host)
     offsets: dict[str, int] = {}
-    if sessions:
+    if sessions and host == "claude":
         last_sid = sessions[-1]["session_id"]
         last_path = find_transcript(last_sid)
         if last_path is not None:
