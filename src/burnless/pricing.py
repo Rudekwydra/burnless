@@ -78,3 +78,12 @@ def rate(model: str, kind: str) -> float:
         return max(float(MODEL_PRICES[m].get(kind, 0) or 0), 0.0) / 1_000_000
     except (TypeError, ValueError):
         return 0.0
+
+
+PRICING_VERSION = "2026-01"
+
+
+def rate_versioned(family: str, field: str, version: str = PRICING_VERSION) -> float:
+    """Version-aware wrapper around rate(). Only the "2026-01" table exists today,
+    so any version string (known or not) falls back to it. Never raises."""
+    return rate(family, field)
