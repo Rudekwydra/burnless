@@ -140,6 +140,46 @@ def build_ask_command(
     return cmd
 
 
+def _run_ask_codex(
+    tier: str,
+    prompt: str,
+    cfg: dict,
+    system: str | None,
+    output_format: str,
+    timeout: int,
+    model: str | None,
+    max_budget_usd: float | None,
+    effort: str | None,
+) -> tuple[int, str, str]:
+    """Build a minimal AskRequest/ResolvedAskTarget and invoke CodexAdapter.
+
+    Deferred import: pure_ask.providers.{anthropic,ollama}_adapter import this
+    module back (`from .. import pure_ask`) to reuse build_ask_command /
+    run_ask_ollama, so importing the providers package at module load time
+    here would cycle. By the time run_ask() actually calls this helper, this
+    module has already finished importing — the lazy import just resolves the
+    already-loaded module from sys.modules.
+    """
+    from .providers.codex_adapter import CodexAdapter
+    from .providers.contracts import AskRequest
+
+    request = AskRequest(
+        prompt=prompt,
+        tier=tier,
+        provider="codex",
+        model=model,
+        system=system,
+        effort=effort,
+        output_format=output_format,
+        timeout_s=timeout,
+        max_budget_usd=max_budget_usd,
+    )
+    adapter = CodexAdapter()
+    target = adapter.resolve(request, cfg)
+    result = adapter.invoke_text(request, target)
+    return result.returncode, result.stdout, result.stderr
+
+
 def run_ask(
     tier: str,
     prompt: str,
@@ -150,6 +190,7 @@ def run_ask(
     model: str | None = None,
     max_budget_usd: float | None = None,
     effort: str | None = None,
+    provider: str | None = None,
 ) -> tuple[int, str, str]:
     """Run a pure completion call. Returns (returncode, stdout, stderr).
 
@@ -162,9 +203,22 @@ def run_ask(
 
     When model is not provided, first checks the tier's provider: if ollama or
     ollama-local, routes to run_ask_ollama instead of claude CLI.
+
+    `provider` disambiguates an explicit `model` across transports (an
+    explicit model alone does not say which CLI/API it belongs to). When
+    `provider` is None or "anthropic", the claude-CLI path is used — this
+    preserves the historic default. Without an explicit model, the tier's
+    configured provider always decides the transport; unsupported providers
+    raise instead of silently falling back to the claude CLI.
     """
     if model:
-        # Explicit model: use claude-CLI path
+        if provider in ("ollama", "ollama-local"):
+            return run_ask_ollama(model, prompt, system=system, timeout=timeout)
+        if provider == "codex":
+            return _run_ask_codex(
+                tier, prompt, cfg, system, output_format, timeout, model, max_budget_usd, effort
+            )
+        # provider is None or "anthropic": use claude-CLI path
         cmd = build_ask_command(
             model,
             output_format=output_format,
@@ -182,29 +236,37 @@ def run_ask(
         )
         return result.returncode, result.stdout, result.stderr
 
-    # No explicit model: check provider
-    provider = resolve_ask_provider(tier, cfg)
-    if provider in ("ollama", "ollama-local"):
+    # No explicit model: resolve provider from tier config
+    resolved_provider = resolve_ask_provider(tier, cfg)
+    if resolved_provider in ("ollama", "ollama-local"):
         local_model = ((cfg.get("agents") or {}).get(tier) or {}).get("model")
         if not local_model:
             raise ValueError(f"burnless ask: could not resolve a local model for tier '{tier}'")
         return run_ask_ollama(local_model, prompt, system=system, timeout=timeout)
-
-    # Anthropic provider (or other): use claude-CLI path
-    resolved_model = resolve_ask_model(tier, cfg)
-    cmd = build_ask_command(
-        resolved_model,
-        output_format=output_format,
-        system=system,
-        max_budget_usd=max_budget_usd,
-        effort=effort,
-    )
-    result = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=tempfile.gettempdir(),
-    )
-    return result.returncode, result.stdout, result.stderr
+    elif resolved_provider == "anthropic":
+        resolved_model = resolve_ask_model(tier, cfg)
+        cmd = build_ask_command(
+            resolved_model,
+            output_format=output_format,
+            system=system,
+            max_budget_usd=max_budget_usd,
+            effort=effort,
+        )
+        result = subprocess.run(
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=tempfile.gettempdir(),
+        )
+        return result.returncode, result.stdout, result.stderr
+    elif resolved_provider == "codex":
+        return _run_ask_codex(
+            tier, prompt, cfg, system, output_format, timeout, model, max_budget_usd, effort
+        )
+    else:
+        raise ValueError(
+            f"burnless ask: unsupported provider {resolved_provider!r} for tier {tier!r} — "
+            "no adapter registered"
+        )
