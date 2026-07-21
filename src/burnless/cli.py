@@ -1314,6 +1314,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             model=getattr(args, "model", None),
             max_budget_usd=getattr(args, "max_budget_usd", None),
+            effort=getattr(args, "effort", None),
         )
     except ValueError as exc:
         print(f"burnless ask: {exc}", file=sys.stderr)
@@ -2315,6 +2316,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--output-format", choices=["text", "json"], default="text")
     sp.add_argument("--timeout", type=int, default=120)
     sp.add_argument("--max-budget-usd", type=float, default=None, help="hard per-call spend ceiling in USD (forwarded to claude -p)")
+    sp.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default=None, help="reasoning effort forwarded to the resolved model")
     sp.set_defaults(func=cmd_ask)
 
     sp = sub.add_parser("setup", help="detect CLIs/keys and write a sensible config")

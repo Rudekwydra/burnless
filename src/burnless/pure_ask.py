@@ -113,7 +113,13 @@ def run_ask_ollama(model: str, prompt: str, system: str | None = None, timeout: 
         return 1, "", str(e)
 
 
-def build_ask_command(model: str, output_format: str = "text", system: str | None = None, max_budget_usd: float | None = None) -> list[str]:
+def build_ask_command(
+    model: str,
+    output_format: str = "text",
+    system: str | None = None,
+    max_budget_usd: float | None = None,
+    effort: str | None = None,
+) -> list[str]:
     """Build the pure-completion `claude -p` command — no tools, no CLAUDE.md.
 
     NEVER add --permission-mode/--allowedTools here — this must stay the
@@ -129,6 +135,8 @@ def build_ask_command(model: str, output_format: str = "text", system: str | Non
     ]
     if max_budget_usd is not None:
         cmd += ["--max-budget-usd", str(max_budget_usd)]
+    if effort is not None:
+        cmd += ["--effort", effort]
     return cmd
 
 
@@ -141,6 +149,7 @@ def run_ask(
     timeout: int = 120,
     model: str | None = None,
     max_budget_usd: float | None = None,
+    effort: str | None = None,
 ) -> tuple[int, str, str]:
     """Run a pure completion call. Returns (returncode, stdout, stderr).
 
@@ -156,7 +165,13 @@ def run_ask(
     """
     if model:
         # Explicit model: use claude-CLI path
-        cmd = build_ask_command(model, output_format=output_format, system=system, max_budget_usd=max_budget_usd)
+        cmd = build_ask_command(
+            model,
+            output_format=output_format,
+            system=system,
+            max_budget_usd=max_budget_usd,
+            effort=effort,
+        )
         result = subprocess.run(
             cmd,
             input=prompt,
@@ -177,7 +192,13 @@ def run_ask(
 
     # Anthropic provider (or other): use claude-CLI path
     resolved_model = resolve_ask_model(tier, cfg)
-    cmd = build_ask_command(resolved_model, output_format=output_format, system=system, max_budget_usd=max_budget_usd)
+    cmd = build_ask_command(
+        resolved_model,
+        output_format=output_format,
+        system=system,
+        max_budget_usd=max_budget_usd,
+        effort=effort,
+    )
     result = subprocess.run(
         cmd,
         input=prompt,
