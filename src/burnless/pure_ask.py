@@ -348,6 +348,7 @@ def render_ask_explain(
             },
         },
         "prefix_hash": target.prefix_hash,
+        "cache_key": request.cache_key,
         "redacted_command": target.redacted_command,
         "dry_run": request.dry_run,
     }
@@ -404,6 +405,7 @@ def build_ask_envelope(
     usage: "UsageRecord | None" = None,
     cache_mode: str = "none",
     prefix_hash: str | None = None,
+    cache_key: str | None = None,
     dry_run: bool = False,
     warnings: tuple[str, ...] = (),
 ) -> dict:
@@ -431,6 +433,7 @@ def build_ask_envelope(
         duration_ms=duration_ms,
         cache_mode=cache_mode,
         prefix_hash=prefix_hash,
+        cache_key=cache_key,
         dry_run=dry_run,
         error_kind=error_kind,
         error_message=error_message,
@@ -466,6 +469,7 @@ def build_ask_envelope(
         "duration_ms": result.duration_ms,
         "cache_mode": result.cache_mode,
         "prefix_hash": result.prefix_hash,
+        "cache_key": result.cache_key,
         "dry_run": result.dry_run,
         "error_kind": result.error_kind,
         "error_message": result.error_message,

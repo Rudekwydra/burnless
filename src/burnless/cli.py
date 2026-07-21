@@ -1379,6 +1379,21 @@ def cmd_ask(args: argparse.Namespace) -> int:
     route_reason = "explicit --tier flag (or default)"
     warn_list: list[str] = []
 
+    prefix_file = getattr(args, "prefix_file", None)
+    prefix_content = None
+    if prefix_file:
+        try:
+            prefix_content = Path(prefix_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            error_message = f"burnless ask: --prefix-file unreadable: {prefix_file} ({exc.__class__.__name__})"
+            events_mod.append_event(root, "ask.failed", {
+                "request_id": request_id,
+                "error_kind": "config_error",
+                "error_message": error_message,
+            })
+            print(error_message, file=sys.stderr)
+            return 1
+
     provider = getattr(args, "provider", None) or coreconfig_resolver.resolve_agent(args.tier, cfg).provider
 
     request = AskRequest(
@@ -1397,6 +1412,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
         max_total_tokens=getattr(args, "max_total_tokens", None),
         max_budget_usd=getattr(args, "max_budget_usd", None),
         budget_policy=getattr(args, "budget_policy", "soft"),
+        prefix_file=prefix_file,
+        cache_key=getattr(args, "cache_key", None),
         request_id=request_id,
     )
 
@@ -1411,7 +1428,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         print(f"burnless ask: {error_message}", file=sys.stderr)
         return 1
 
-    target = adapter.resolve(request, cfg)
+    target = adapter.resolve(request, cfg, prefix_content=prefix_content)
 
     estimated_input_tokens = target.budget.estimated_input_tokens
     over_total = (
@@ -1483,6 +1500,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         "requested_tier": target.requested_tier,
         "provider": target.provider,
         "model": target.model,
+        "cache_key": request.cache_key,
     })
     if not ok:
         warn_list.append("telemetry_write_failed")
@@ -1496,7 +1514,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         warn_list.append("telemetry_write_failed")
 
     try:
-        result = adapter.invoke_text(request, target)
+        result = adapter.invoke_text(request, target, prefix_content=prefix_content)
     except subprocess.TimeoutExpired:
         events_mod.append_event(root, "ask.failed", {
             "request_id": request_id,
@@ -1548,6 +1566,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         usage=usage,
         cache_mode=target.cache_mode,
         prefix_hash=target.prefix_hash,
+        cache_key=request.cache_key,
         dry_run=False,
         warnings=tuple(warn_list),
     )
@@ -2594,6 +2613,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-output-tokens", type=int, default=None, dest="max_output_tokens")
     sp.add_argument("--max-total-tokens", type=int, default=None, dest="max_total_tokens")
     sp.add_argument("--budget-policy", choices=["hard", "soft"], default="soft", dest="budget_policy", help="hard: block when a capability proves it can enforce the cap; soft: estimate + warn only")
+    sp.add_argument("--prefix-file", default=None, dest="prefix_file", help="path to a stable, versioned prefix appended to the system prompt (cache-friendly, hash-only telemetry)")
+    sp.add_argument("--cache-key", default=None, dest="cache_key", help="opaque label for correlating prefix-cache calls in telemetry (not used for validation)")
     sp.set_defaults(func=cmd_ask)
 
     sp = sub.add_parser("setup", help="detect CLIs/keys and write a sensible config")
@@ -2860,6 +2881,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     sp.add_argument("--fix", action="store_true",
                     help="auto-remediate safe issues (write config, wire hooks, copy managed files, register MCP) then re-check")
+    sp.add_argument("--prefix-file", default=None, dest="prefix_file", help="scan this ask --prefix-file path for secret-shaped content (soft warning, not a hard failure)")
     sp.set_defaults(func=cmd_doctor)
 
     return p
@@ -2867,7 +2889,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     from . import doctor as doctor_mod
-    checks = doctor_mod.run_checks(fix=bool(getattr(args, "fix", False)))
+    checks = doctor_mod.run_checks(
+        fix=bool(getattr(args, "fix", False)),
+        prefix_file=getattr(args, "prefix_file", None),
+    )
     if getattr(args, "json", False):
         print(json.dumps(doctor_mod.render_json(checks), indent=2, ensure_ascii=False))
     else:

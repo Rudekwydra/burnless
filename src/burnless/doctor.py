@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -64,24 +65,28 @@ class Check:
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def run_checks(*, home: Path | None = None, cwd: Path | None = None,
-               fix: bool = False) -> list[Check]:
+               fix: bool = False, prefix_file: str | None = None) -> list[Check]:
     """Run all checks. Read-only unless ``fix=True``.
 
     With ``fix=True``: collect once, apply every auto-fixable WARN/FAIL fixer in
     safe order, then re-collect so the result reflects the remediated state.
+
+    ``prefix_file``, when given, adds one extra check (F2) scanning that single
+    file for secret-shaped content (sec 14 rule 7) — no historical audit-log
+    scanning, just the one path the caller names.
     """
     if home is None:
         home = Path.home()
 
-    checks = _collect(home=home, cwd=cwd)
+    checks = _collect(home=home, cwd=cwd, prefix_file=prefix_file)
     if not fix:
         return checks
 
     _apply_fixes(checks)
-    return _collect(home=home, cwd=cwd)
+    return _collect(home=home, cwd=cwd, prefix_file=prefix_file)
 
 
-def _collect(*, home: Path, cwd: Path | None) -> list[Check]:
+def _collect(*, home: Path, cwd: Path | None, prefix_file: str | None = None) -> list[Check]:
     checks: list[Check] = []
     _check_a(checks)
     _check_b(checks, cwd=cwd)
@@ -89,9 +94,45 @@ def _collect(*, home: Path, cwd: Path | None) -> list[Check]:
     _check_d(checks)
     _check_e(checks, cwd=cwd)
     _check_f(checks)
+    if prefix_file:
+        c = check_prefix_file_secrets(prefix_file)
+        if c is not None:
+            checks.append(c)
     _check_g(checks, cwd=cwd)
     _check_h(checks, home=home, cwd=cwd)
     return checks
+
+
+# ── Prefix-file secret scan (sec 14 rule 7) — opt-in, one file, one check ────
+
+_SECRET_PATTERNS = (
+    re.compile(r"AKIA[0-9A-Z]{16}"),
+    re.compile(r"sk-[a-zA-Z0-9]{20,}"),
+    re.compile(r"-----BEGIN.*PRIVATE KEY-----"),
+)
+
+
+def check_prefix_file_secrets(path: str) -> Check | None:
+    """Scan a single `--prefix-file` path for secret-shaped content.
+
+    Soft WARN only (never FAIL) — this is a heuristic nudge, not a security
+    boundary. Reports the line number only; the matched text itself is never
+    included in the check detail."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        return Check("F2", "F", "WARN", f"prefix file unreadable: {path} ({exc.__class__.__name__})")
+
+    hit_lines = [
+        i for i, line in enumerate(text.splitlines(), start=1)
+        if any(p.search(line) for p in _SECRET_PATTERNS)
+    ]
+    if hit_lines:
+        lines_str = ", ".join(str(n) for n in hit_lines)
+        return Check("F2", "F", "WARN",
+                     f"prefix file {path} has secret-shaped content at line(s): {lines_str}",
+                     "remove secrets from the prefix file — it is concatenated into every ask system prompt")
+    return Check("F2", "F", "PASS", f"prefix file {path}: no secret-shaped content found")
 
 
 def _apply_fixes(checks: list[Check]) -> list[str]:
