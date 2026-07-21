@@ -357,6 +357,44 @@ class TestExplainDryRunReconciliation:
         assert "SECRET-MARKER-X" not in target.redacted_command
 
 
+class TestCmdAskPrefixCache:
+    def test_missing_prefix_file_errors_cleanly(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_burnless_project(tmp_path)
+
+        rc = cli.cmd_ask(_ask_args(prefix_file=str(tmp_path / "does-not-exist.txt")))
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert str(tmp_path / "does-not-exist.txt") in captured.err
+        assert "unreadable" in captured.err
+
+    def test_cache_key_recorded_in_ask_started_event(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        burnless = _init_burnless_project(tmp_path)
+
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=0, stdout="answer text", stderr="")):
+            cli.cmd_ask(_ask_args(output_format="json", cache_key="my-label"))
+
+        events_file = burnless / "events.jsonl"
+        lines = [json.loads(l) for l in events_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+        started = next(e for e in lines if e["event_type"] == "ask.started")
+        assert started["data"]["cache_key"] == "my-label"
+
+    def test_prefix_file_content_reaches_system_prompt_via_cli(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_burnless_project(tmp_path)
+        prefix_path = tmp_path / "prefix.txt"
+        prefix_path.write_text("CLI PREFIX MARKER", encoding="utf-8")
+
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=0, stdout="answer text", stderr="")) as mock_invoke:
+            rc = cli.cmd_ask(_ask_args(output_format="json", prefix_file=str(prefix_path)))
+
+        assert rc == 0
+        _, kwargs = mock_invoke.call_args
+        assert kwargs["prefix_content"] == "CLI PREFIX MARKER"
+
+
 class TestCmdAskBudgetOverageWarning:
     def test_post_call_overage_warns_but_does_not_fail(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)

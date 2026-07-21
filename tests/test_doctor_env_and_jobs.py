@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import pytest
 
-from burnless.doctor import _check_f, _check_g, Check
+from burnless.doctor import _check_f, _check_g, Check, check_prefix_file_secrets
 
 
 class TestCheckF:
@@ -42,6 +42,30 @@ class TestCheckF:
         assert c.band == "F"
         # May be PASS or WARN depending on whether ollama is running; just check it's not FAIL
         assert c.status in ("PASS", "WARN")
+
+
+class TestCheckPrefixFileSecrets:
+    """M6 wave A — burnless doctor --prefix-file secret-shaped scan (sec 14 rule 7)."""
+
+    def test_doctor_warns_on_secret_shaped_prefix_file(self, tmp_path):
+        path = tmp_path / "prefix.txt"
+        path.write_text("line one\nAKIAABCDEFGHIJKLMNOP\nline three\n", encoding="utf-8")
+
+        check = check_prefix_file_secrets(str(path))
+
+        assert check is not None
+        assert check.status == "WARN"
+        assert "2" in check.detail
+        assert "AKIAABCDEFGHIJKLMNOP" not in check.detail
+
+    def test_doctor_silent_on_clean_prefix_file(self, tmp_path):
+        path = tmp_path / "prefix.txt"
+        path.write_text("just a normal stable prefix, no secrets here\n", encoding="utf-8")
+
+        check = check_prefix_file_secrets(str(path))
+
+        assert check is not None
+        assert check.status != "WARN"
 
 
 class TestCheckG:

@@ -13,6 +13,7 @@ spawn another codex process.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import os
 import shlex
 import shutil
@@ -33,10 +34,15 @@ from .contracts import (
 
 
 class CodexAdapter:
-    def resolve(self, request: AskRequest, cfg: dict) -> ResolvedAskTarget:
+    def resolve(
+        self, request: AskRequest, cfg: dict, *, prefix_content: str | None = None
+    ) -> ResolvedAskTarget:
         agent = resolver.resolve_agent(request.tier, cfg)
         model = request.model if request.model else resolver.resolve_model(request.tier, cfg)
         cache_mode = resolver.resolve_cache_mode(agent, cfg)
+        prefix_hash = None
+        if prefix_content:
+            prefix_hash = "sha256:" + hashlib.sha256(prefix_content.encode("utf-8")).hexdigest()
         partial = ResolvedAskTarget(
             effective_tier=request.tier,
             requested_tier=request.tier,
@@ -54,6 +60,7 @@ class CodexAdapter:
                 policy=request.budget_policy,
             ),
             capabilities=ProviderCapabilities(),
+            prefix_hash=prefix_hash,
         )
         caps = self.capabilities(partial)
         budget = pure_ask.compute_budget_plan(request, model, caps)
@@ -72,7 +79,7 @@ class CodexAdapter:
         return dataclasses.replace(partial, capabilities=caps, budget=budget, redacted_command=redacted)
 
     def explain(self, target: ResolvedAskTarget) -> dict:
-        return {
+        result = {
             "provider": target.provider,
             "model": target.model,
             "effective_tier": target.effective_tier,
@@ -80,8 +87,13 @@ class CodexAdapter:
             "cache_mode": target.cache_mode,
             "capabilities": dataclasses.asdict(target.capabilities),
         }
+        if target.prefix_hash is not None:
+            result["prefix_cache_status"] = "supported" if target.capabilities.prefix_cache else "unsupported"
+        return result
 
-    def invoke_text(self, request: AskRequest, target: ResolvedAskTarget) -> ProviderResult:
+    def invoke_text(
+        self, request: AskRequest, target: ResolvedAskTarget, *, prefix_content: str | None = None
+    ) -> ProviderResult:
         if os.environ.get("BURNLESS_ASK_ACTIVE_PROVIDER") == "codex":
             return ProviderResult(
                 returncode=1,
@@ -102,13 +114,20 @@ class CodexAdapter:
         if binary is None:
             return ProviderResult(returncode=1, stderr="burnless ask: codex binary not found in PATH")
 
+        # codex exec has no separate system-prompt channel — the prefix (when
+        # present) is prepended to the outbound prompt text so it still reaches
+        # the model (sec 14 decision 4); request.prompt itself stays untouched.
+        prompt_payload = request.prompt
+        if prefix_content:
+            prompt_payload = f"{prefix_content}\n\n{request.prompt}"
+
         cmd = [
             binary, "exec",
             "--skip-git-repo-check",
             "--sandbox", "read-only",
             "--json",
             "-m", target.model,
-            request.prompt,
+            prompt_payload,
         ]
         if request.effort:
             cmd += ["-c", f'model_reasoning_effort="{request.effort}"']

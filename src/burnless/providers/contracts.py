@@ -186,6 +186,7 @@ class AskResult:
     duration_ms: int = 0
     cache_mode: str = "none"
     prefix_hash: str | None = None
+    cache_key: str | None = None
     dry_run: bool = False
     error_kind: str | None = None        # normalized error, never a bare rc=1
     error_message: str | None = None
@@ -200,9 +201,16 @@ class AskResult:
 # ---------------------------------------------------------------------------
 @runtime_checkable
 class AskAdapter(Protocol):
-    def resolve(self, request: AskRequest, cfg: dict) -> ResolvedAskTarget:
+    def resolve(
+        self, request: AskRequest, cfg: dict, *, prefix_content: str | None = None
+    ) -> ResolvedAskTarget:
         """Turn a request into a ResolvedAskTarget using coreconfig.resolver and
-        the capability registry. No provider call, no I/O."""
+        the capability registry. No provider call, no I/O.
+
+        `prefix_content` is the already-read text of `request.prefix_file` (sec
+        14) — resolved once by the caller, never re-read here — used only to
+        compute `ResolvedAskTarget.prefix_hash`; the content itself is never
+        stored on the target."""
         ...
 
     def explain(self, target: ResolvedAskTarget) -> dict:
@@ -210,9 +218,14 @@ class AskAdapter(Protocol):
         no token/key. Same object for --explain and --dry-run."""
         ...
 
-    def invoke_text(self, request: AskRequest, target: ResolvedAskTarget) -> ProviderResult:
+    def invoke_text(
+        self, request: AskRequest, target: ResolvedAskTarget, *, prefix_content: str | None = None
+    ) -> ProviderResult:
         """Execute the pure text completion against the resolved provider and
-        return the raw transport result (stdout/stderr/exit/signal/parse)."""
+        return the raw transport result (stdout/stderr/exit/signal/parse).
+
+        `prefix_content`, when present, is appended to the effective system
+        prompt (sec 14 decision 1) — never to `request.prompt`."""
         ...
 
     def parse_usage(self, result: ProviderResult, target: ResolvedAskTarget) -> UsageRecord:

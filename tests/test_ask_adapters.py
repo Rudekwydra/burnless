@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -249,3 +250,107 @@ class TestRunAskProviderDispatch:
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "claude"
         assert rc == 0
+
+
+class TestPrefixCache:
+    """M6 wave A — `--prefix-file`/`--cache-key` core wiring (sec 14)."""
+
+    def test_prefix_hash_computed_from_file_content(self, tmp_path):
+        content = "STABLE PREFIX CONTENT\nline two"
+        path = tmp_path / "prefix.txt"
+        path.write_text(content, encoding="utf-8")
+
+        cfg = {"agents": {"gold": {"provider": "anthropic", "model": "claude-opus-4-8"}}}
+        request = AskRequest(prompt="hi", tier="gold", prefix_file=str(path))
+        target = AnthropicAdapter().resolve(request, cfg, prefix_content=content)
+
+        expected = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+        assert target.prefix_hash == expected
+        assert len(target.prefix_hash.split(":", 1)[1]) == 64
+
+    def test_prefix_hash_none_when_no_prefix_file(self):
+        cfg = {"agents": {"gold": {"provider": "anthropic", "model": "claude-opus-4-8"}}}
+        request = AskRequest(prompt="hi", tier="gold")
+        target = AnthropicAdapter().resolve(request, cfg)
+        assert target.prefix_hash is None
+
+    def test_prefix_content_appended_to_system_not_prompt(self):
+        adapter = AnthropicAdapter()
+        request = AskRequest(prompt="THE VARIABLE PAYLOAD", tier="gold", system="base")
+        target = ResolvedAskTarget(effective_tier="gold", provider="anthropic", model="claude-opus-4-8")
+        with patch("burnless.providers.anthropic_adapter.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            adapter.invoke_text(request, target, prefix_content="PREFIX TEXT")
+
+        cmd = mock_run.call_args[0][0]
+        system_idx = cmd.index("--system-prompt") + 1
+        assert "base" in cmd[system_idx]
+        assert "PREFIX TEXT" in cmd[system_idx]
+        assert mock_run.call_args[1]["input"] == "THE VARIABLE PAYLOAD"
+
+    def test_cache_key_recorded_not_validated(self):
+        """Same --cache-key label, different prefix content: both calls succeed
+        and each hash reflects that call's own current content — no gate."""
+        cfg = {"agents": {"gold": {"provider": "anthropic", "model": "claude-opus-4-8"}}}
+        adapter = AnthropicAdapter()
+
+        request1 = AskRequest(prompt="hi", tier="gold", cache_key="same-label")
+        target1 = adapter.resolve(request1, cfg, prefix_content="version one")
+
+        request2 = AskRequest(prompt="hi", tier="gold", cache_key="same-label")
+        target2 = adapter.resolve(request2, cfg, prefix_content="version two")
+
+        assert target1.prefix_hash != target2.prefix_hash
+        assert request1.cache_key == request2.cache_key == "same-label"
+
+    def test_explain_reports_supported_for_anthropic_with_prefix(self):
+        target = ResolvedAskTarget(
+            effective_tier="gold", provider="anthropic", model="claude-opus-4-8",
+            prefix_hash="sha256:" + "a" * 64,
+        )
+        target = dataclasses_replace_caps(target, prefix_cache=True)
+        explain = AnthropicAdapter().explain(target)
+        assert explain["prefix_cache_status"] == "supported"
+
+    def test_explain_reports_unsupported_for_codex_with_prefix(self):
+        target = ResolvedAskTarget(
+            effective_tier="diamond", provider="codex", model="gpt-5.6-sol",
+            prefix_hash="sha256:" + "a" * 64,
+        )
+        target = dataclasses_replace_caps(target, prefix_cache=False)
+        explain = CodexAdapter().explain(target)
+        assert explain["prefix_cache_status"] == "unsupported"
+
+    def test_explain_omits_status_when_no_prefix_used(self):
+        target = ResolvedAskTarget(effective_tier="gold", provider="anthropic", model="claude-opus-4-8")
+        explain = AnthropicAdapter().explain(target)
+        assert "prefix_cache_status" not in explain or explain.get("prefix_cache_status") is None
+
+    def test_codex_receives_prefix_content_functionally(self):
+        adapter = CodexAdapter()
+        request = AskRequest(prompt="hi", tier="diamond")
+        target = ResolvedAskTarget(effective_tier="diamond", provider="codex", model="gpt-5.6-sol", auth="subscription")
+        with patch("burnless.providers.codex_adapter.shutil.which", return_value="/usr/local/bin/codex"):
+            with patch("burnless.providers.codex_adapter.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+                adapter.invoke_text(request, target, prefix_content="CODEX PREFIX MARKER")
+        cmd = mock_run.call_args[0][0]
+        assert any("CODEX PREFIX MARKER" in part for part in cmd)
+
+    def test_ollama_receives_prefix_content_functionally(self):
+        adapter = OllamaAdapter()
+        request = AskRequest(prompt="hi", tier="bronze")
+        target = ResolvedAskTarget(effective_tier="bronze", provider="ollama", model="gemma-4-eb")
+        with patch(
+            "burnless.providers.ollama_adapter.pure_ask.run_ask_ollama",
+            return_value=(0, "hello", ""),
+        ) as mock_ollama:
+            adapter.invoke_text(request, target, prefix_content="OLLAMA PREFIX MARKER")
+        assert "OLLAMA PREFIX MARKER" in mock_ollama.call_args[1]["system"]
+
+
+def dataclasses_replace_caps(target, *, prefix_cache: bool):
+    import dataclasses
+    return dataclasses.replace(
+        target, capabilities=dataclasses.replace(target.capabilities, prefix_cache=prefix_cache)
+    )

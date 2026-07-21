@@ -7,6 +7,7 @@ delegated to `coreconfig.resolver`; this adapter does not re-derive any of it.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import shlex
 import subprocess
@@ -26,10 +27,15 @@ from .contracts import (
 
 
 class AnthropicAdapter:
-    def resolve(self, request: AskRequest, cfg: dict) -> ResolvedAskTarget:
+    def resolve(
+        self, request: AskRequest, cfg: dict, *, prefix_content: str | None = None
+    ) -> ResolvedAskTarget:
         agent = resolver.resolve_agent(request.tier, cfg)
         model = request.model if request.model else resolver.resolve_model(request.tier, cfg)
         cache_mode = resolver.resolve_cache_mode(agent, cfg)
+        prefix_hash = None
+        if prefix_content:
+            prefix_hash = "sha256:" + hashlib.sha256(prefix_content.encode("utf-8")).hexdigest()
         partial = ResolvedAskTarget(
             effective_tier=request.tier,
             requested_tier=request.tier,
@@ -47,6 +53,7 @@ class AnthropicAdapter:
                 policy=request.budget_policy,
             ),
             capabilities=ProviderCapabilities(),
+            prefix_hash=prefix_hash,
         )
         caps = self.capabilities(partial)
         budget = pure_ask.compute_budget_plan(request, model, caps)
@@ -61,7 +68,7 @@ class AnthropicAdapter:
         return dataclasses.replace(partial, capabilities=caps, budget=budget, redacted_command=redacted)
 
     def explain(self, target: ResolvedAskTarget) -> dict:
-        return {
+        result = {
             "provider": target.provider,
             "model": target.model,
             "effective_tier": target.effective_tier,
@@ -69,12 +76,20 @@ class AnthropicAdapter:
             "cache_mode": target.cache_mode,
             "capabilities": dataclasses.asdict(target.capabilities),
         }
+        if target.prefix_hash is not None:
+            result["prefix_cache_status"] = "supported" if target.capabilities.prefix_cache else "unsupported"
+        return result
 
-    def invoke_text(self, request: AskRequest, target: ResolvedAskTarget) -> ProviderResult:
+    def invoke_text(
+        self, request: AskRequest, target: ResolvedAskTarget, *, prefix_content: str | None = None
+    ) -> ProviderResult:
+        effective_system = request.system or pure_ask.DEFAULT_ASK_SYSTEM
+        if prefix_content:
+            effective_system = f"{effective_system}\n\n{prefix_content}"
         cmd = pure_ask.build_ask_command(
             target.model,
             output_format=request.output_format,
-            system=request.system,
+            system=effective_system,
             max_budget_usd=request.max_budget_usd,
             effort=request.effort,
         )
