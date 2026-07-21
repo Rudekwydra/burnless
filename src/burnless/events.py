@@ -8,7 +8,7 @@ from datetime import datetime
 from datetime import timezone
 
 
-def append_event(root, event_type, data, scope=None, actor="cli") -> None:
+def append_event(root, event_type, data, scope=None, actor="cli") -> bool:
 	try:
 		root_path = pathlib.Path(root)
 		root_path.mkdir(parents=True, exist_ok=True)
@@ -36,8 +36,9 @@ def append_event(root, event_type, data, scope=None, actor="cli") -> None:
 
 		with open(events_file, 'a', encoding='utf-8') as f:
 			f.write(json.dumps(envelope) + '\n')
+		return True
 	except Exception:
-		pass
+		return False
 
 
 def read_events(root, event_type=None, limit=None) -> list[dict]:

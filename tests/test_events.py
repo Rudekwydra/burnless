@@ -80,4 +80,4 @@ def test_never_raises(tmp_path):
 	fake_root.write_text("i am a file", encoding='utf-8')
 
 	result = append_event(fake_root, "event", {})
-	assert result is None
+	assert result is False
