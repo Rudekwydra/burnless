@@ -12,6 +12,9 @@ CHAIN_ID = "chain-1"
 SESSION_1 = "session-one"
 SESSION_2 = "session-two"
 
+CODEX_CHAIN_ID = "chain-codex-1"
+CODEX_SESSION_1 = "codex-session-one"
+
 
 def _turn(role: str, text: str, ts: str) -> str:
     return json.dumps(
@@ -88,6 +91,60 @@ def chat_artifacts(tmp_path: Path) -> dict[str, Path]:
         "projects_root": projects_root,
         "transcript_1": transcript_1,
         "transcript_2": transcript_2,
+    }
+
+
+@pytest.fixture
+def chat_artifacts_codex(tmp_path: Path) -> dict[str, Path]:
+    project_root = tmp_path / "project"
+    burnless_root = project_root / ".burnless"
+    chain_dir = burnless_root / "epochs" / "_rolling" / "chains" / CODEX_CHAIN_ID
+    chain_dir.mkdir(parents=True)
+    (chain_dir / "chain.json").write_text(
+        json.dumps(
+            {
+                "chain_id": CODEX_CHAIN_ID,
+                "host": "codex",
+                "created": "2026-07-21T10:00:00Z",
+                "last_seen": "2026-07-21T10:01:00Z",
+                "sessions": [CODEX_SESSION_1],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sessions_root = burnless_root / "epochs" / "sessions" / "codex"
+    session_dir = sessions_root / CODEX_SESSION_1
+    session_dir.mkdir(parents=True)
+    (session_dir / "checkpoint.json").write_text(
+        json.dumps(
+            {
+                "chain_id": CODEX_CHAIN_ID,
+                "host_session_id": CODEX_SESSION_1,
+                "updated_at": "2026-07-21T10:00:30Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    projects_root = tmp_path / "codex-projects"
+    transcript_dir = projects_root / "synthetic-project"
+    transcript_dir.mkdir(parents=True)
+    transcript = transcript_dir / f"{CODEX_SESSION_1}.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                _turn("user", "pergunta codex", "2026-07-21T10:00:00Z"),
+                _turn("assistant", "resposta codex", "2026-07-21T10:00:30Z"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "project_root": project_root,
+        "projects_root": projects_root,
+        "transcript": transcript,
     }
 
 
@@ -207,3 +264,110 @@ def test_cli_chat_subcommand_is_reachable(monkeypatch):
     assert observed["follow"] is False
     assert observed["json"] is False
     assert observed["verbose"] is False
+    assert observed["host"] == "claude"
+
+
+def test_chat_default_host_is_claude(chat_artifacts, monkeypatch, capsys):
+    monkeypatch.setattr(chat, "resolve_chat_root", lambda _cwd: chat_artifacts["project_root"])
+    original_find = chat.find_transcript
+    monkeypatch.setattr(
+        chat,
+        "find_transcript",
+        lambda session_id, projects_root=None: original_find(
+            session_id, projects_root=chat_artifacts["projects_root"]
+        ),
+    )
+
+    # No `host` attribute at all on args — main() must fall back to HOST ("claude").
+    rc = chat.main(
+        Namespace(chain=CHAIN_ID, list=False, follow=False, json=True, verbose=False, cwd=None)
+    )
+
+    assert rc == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [row["text"] for row in rows] == [
+        "primeira pergunta",
+        "primeira resposta",
+        "segunda pergunta",
+        "segunda resposta",
+    ]
+
+
+def test_chat_explicit_host_codex(chat_artifacts_codex, monkeypatch, capsys):
+    monkeypatch.setattr(chat, "resolve_chat_root", lambda _cwd: chat_artifacts_codex["project_root"])
+    original_find = chat.find_transcript
+    monkeypatch.setattr(
+        chat,
+        "find_transcript",
+        lambda session_id, projects_root=None: original_find(
+            session_id, projects_root=chat_artifacts_codex["projects_root"]
+        ),
+    )
+
+    rc = chat.main(
+        Namespace(
+            host="codex",
+            chain=CODEX_CHAIN_ID,
+            list=False,
+            follow=False,
+            json=True,
+            verbose=False,
+            cwd=None,
+        )
+    )
+
+    assert rc == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [row["text"] for row in rows] == ["pergunta codex", "resposta codex"]
+
+
+def test_chat_host_flag_wired_in_cli(monkeypatch):
+    observed = {}
+
+    def fake_chat_main(args):
+        observed.update(vars(args))
+        return 0
+
+    monkeypatch.setattr(cli.chat_mod, "main", fake_chat_main)
+
+    assert cli.main(["chat", "--host", "codex"]) == 0
+    assert observed["host"] == "codex"
+
+
+def test_chat_follow_skips_find_transcript_for_non_claude_host(chat_artifacts_codex, monkeypatch):
+    monkeypatch.setattr(chat, "resolve_chat_root", lambda _cwd: chat_artifacts_codex["project_root"])
+
+    find_transcript_calls = []
+    original_find = chat.find_transcript
+
+    def spy_find_transcript(session_id, projects_root=None):
+        find_transcript_calls.append(session_id)
+        return original_find(session_id, projects_root=chat_artifacts_codex["projects_root"])
+
+    monkeypatch.setattr(chat, "find_transcript", spy_find_transcript)
+
+    captured_offsets = {}
+
+    def fake_follow(root, chain_id, host, as_json, verbose, seq_start, initial_offsets):
+        captured_offsets.update(initial_offsets)
+        return 0
+
+    monkeypatch.setattr(chat, "_follow", fake_follow)
+
+    rc = chat.main(
+        Namespace(
+            host="codex",
+            chain=CODEX_CHAIN_ID,
+            list=False,
+            follow=True,
+            json=True,
+            verbose=False,
+            cwd=None,
+        )
+    )
+
+    assert rc == 0
+    # Only the initial render (stitch_events) calls find_transcript — the
+    # --follow byte-offset optimization must be skipped for non-claude hosts.
+    assert find_transcript_calls == [CODEX_SESSION_1]
+    assert captured_offsets == {}

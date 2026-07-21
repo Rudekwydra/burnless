@@ -2416,6 +2416,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_gc)
 
     sp = sub.add_parser("chat", help="view a chain as one continuous chat timeline")
+    sp.add_argument("--host", default="claude", help="host filter (default: claude)")
     sp.add_argument("--chain", metavar="ID", help="chain id (default: newest live chain)")
     sp.add_argument("--list", action="store_true", help="list live chains for this project")
     sp.add_argument("--follow", action="store_true", help="follow the current transcript")
