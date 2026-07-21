@@ -4,6 +4,17 @@ Data: 2026-07-21
 Status: proposta para execução  
 Origem: dogfooding no `rw-editorial-engine`
 
+## Checkpoint de implementação — 2026-07-21
+
+- **M0 concluído:** commit `8920d43` encaminha `--effort`, adiciona os planos e
+  mantém os testes focados verdes.
+- **M1a concluído:** commit `c96b69a` cria os contratos imutáveis do `ask` e o
+  protocolo `AskAdapter`, com testes e sem mudar I/O/runtime.
+- **Próximo marco:** M1b — adapters explícitos Anthropic, Ollama e
+  Codex/OpenAI; remover o fallback silencioso de provider desconhecido para Claude.
+- Os itens 1–7 abaixo não devem ser considerados concluídos apenas pela existência
+  dos contratos; cada marco precisa de wiring alcançável e verificação própria.
+
 ## Decisão
 
 `burnless ask` passa a ser o caminho obrigatório para trabalho **somente cognitivo** em Gold e Diamond: entendimento, planejamento, arquitetura, crítica, arbitragem e segunda opinião.
