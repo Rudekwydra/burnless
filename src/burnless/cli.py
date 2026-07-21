@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
@@ -1304,6 +1305,29 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if not prompt or not prompt.strip():
         print("burnless ask: empty prompt", file=sys.stderr)
         return 1
+
+    request_id = uuid.uuid4().hex
+    route_reason = "explicit --tier flag (or default)"
+
+    ok = events_mod.append_event(root, "ask.started", {
+        "request_id": request_id,
+        "requested_tier": args.tier,
+        "provider": getattr(args, "provider", None),
+        "model": getattr(args, "model", None),
+    })
+    warn_list: list[str] = []
+    if not ok:
+        warn_list.append("telemetry_write_failed")
+    ok = events_mod.append_event(root, "ask.routed", {
+        "request_id": request_id,
+        "effective_tier": args.tier,
+        "route_source": "explicit",
+        "route_reason": route_reason,
+    })
+    if not ok:
+        warn_list.append("telemetry_write_failed")
+
+    started = time.monotonic()
     try:
         rc, stdout, stderr = pure_ask_mod.run_ask(
             args.tier,
@@ -1318,11 +1342,56 @@ def cmd_ask(args: argparse.Namespace) -> int:
             provider=getattr(args, "provider", None),
         )
     except ValueError as exc:
+        events_mod.append_event(root, "ask.failed", {
+            "request_id": request_id,
+            "error_kind": "config_error",
+            "error_message": str(exc),
+        })
         print(f"burnless ask: {exc}", file=sys.stderr)
         return 1
     except subprocess.TimeoutExpired:
+        events_mod.append_event(root, "ask.failed", {
+            "request_id": request_id,
+            "error_kind": "timeout",
+            "error_message": f"timed out after {args.timeout}s",
+        })
         print(f"burnless ask: timed out after {args.timeout}s", file=sys.stderr)
         return 1
+    duration_ms = int((time.monotonic() - started) * 1000)
+
+    envelope = pure_ask_mod.build_ask_envelope(
+        request_id=request_id,
+        requested_tier=args.tier,
+        effective_tier=args.tier,
+        provider=(getattr(args, "provider", None) or "anthropic"),
+        model=(getattr(args, "model", None) or ""),
+        effort=getattr(args, "effort", None),
+        route_source="explicit",
+        route_reason=route_reason,
+        route_signals=(),
+        returncode=rc,
+        stdout=stdout,
+        stderr=stderr,
+        duration_ms=duration_ms,
+        cache_mode="none",
+        dry_run=False,
+        warnings=tuple(warn_list),
+    )
+
+    lifecycle_event = "ask.completed" if envelope["status"] == "ok" else "ask.failed"
+    ok = events_mod.append_event(root, lifecycle_event, {
+        "request_id": request_id,
+        "status": envelope["status"],
+        "error_kind": envelope["error_kind"],
+    })
+    if not ok:
+        warn_list.append("telemetry_write_failed")
+        envelope["warnings"] = list(warn_list)
+
+    if args.output_format == "json":
+        print(json.dumps(envelope, indent=2, ensure_ascii=False))
+        return 0 if envelope["status"] == "ok" else 1
+
     if rc != 0:
         print(stderr, file=sys.stderr)
         return rc

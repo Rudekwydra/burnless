@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import urllib.request
 
+from .providers.contracts import AskResult, UsageRecord
+
 
 DEFAULT_ASK_SYSTEM = (
     "You are a plain text-completion function. Answer only in the requested "
@@ -270,3 +272,117 @@ def run_ask(
             f"burnless ask: unsupported provider {resolved_provider!r} for tier {tier!r} — "
             "no adapter registered"
         )
+
+
+def normalize_ask_error(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    timed_out: bool = False,
+    signal: int | None = None,
+) -> tuple[str | None, str | None]:
+    """Turn a raw (returncode, stdout, stderr) transport result into a
+    normalized (error_kind, error_message) pair. rc=0 -> (None, None); a bare
+    rc!=0 with empty stderr becomes an explicit "empty_error" instead of a
+    silent CLI failure (doc Sol sec 8 item 7)."""
+    if returncode == 0:
+        return None, None
+    if timed_out:
+        return "timeout", f"provider call timed out (rc={returncode})"
+    if signal is not None:
+        return "signal", f"provider process killed by signal {signal} (rc={returncode})"
+    if stderr.strip():
+        return "provider_error", stderr.strip()
+    return (
+        "empty_error",
+        f"provider exited rc={returncode} with no stderr/stdout — likely a silent CLI failure",
+    )
+
+
+def build_ask_envelope(
+    *,
+    request_id: str,
+    requested_tier: str | None,
+    effective_tier: str,
+    provider: str,
+    model: str,
+    effort: str | None,
+    route_source: str,
+    route_reason: str,
+    route_signals: tuple[str, ...],
+    returncode: int,
+    stdout: str,
+    stderr: str,
+    timed_out: bool = False,
+    signal: int | None = None,
+    duration_ms: int = 0,
+    usage: "UsageRecord | None" = None,
+    cache_mode: str = "none",
+    prefix_hash: str | None = None,
+    dry_run: bool = False,
+    warnings: tuple[str, ...] = (),
+) -> dict:
+    """Build the burnless.ask/v1 envelope (doc Sol sec 8) from a raw provider
+    transport result. Never receives/holds the prompt; content/error_message
+    are the only text derived from stdout/stderr, and only one of the two is
+    populated depending on status."""
+    error_kind, error_message = normalize_ask_error(returncode, stdout, stderr, timed_out, signal)
+    status = "ok" if error_kind is None else "error"
+    content = stdout.strip() if status == "ok" else None
+
+    result = AskResult(
+        request_id=request_id,
+        status=status,
+        content=content,
+        requested_tier=requested_tier,
+        effective_tier=effective_tier,
+        provider=provider,
+        model=model,
+        effort=effort,
+        route_source=route_source,
+        route_reason=route_reason,
+        route_signals=route_signals,
+        usage=usage or UsageRecord(),
+        duration_ms=duration_ms,
+        cache_mode=cache_mode,
+        prefix_hash=prefix_hash,
+        dry_run=dry_run,
+        error_kind=error_kind,
+        error_message=error_message,
+        warnings=warnings,
+    )
+
+    return {
+        "schema": result.schema,
+        "request_id": result.request_id,
+        "status": result.status,
+        "content": result.content,
+        "requested_tier": result.requested_tier,
+        "effective_tier": result.effective_tier,
+        "provider": result.provider,
+        "model": result.model,
+        "effort": result.effort,
+        "route": {
+            "source": result.route_source,
+            "reason": result.route_reason,
+            "signals": list(result.route_signals),
+        },
+        "usage": {
+            "input_tokens": result.usage.input_tokens,
+            "output_tokens": result.usage.output_tokens,
+            "cache_read_tokens": result.usage.cache_read_tokens,
+            "cache_write_tokens": result.usage.cache_write_tokens,
+            "basis": result.usage.basis,
+        },
+        "cost": {
+            "usd": result.usage.cost_usd,
+            "basis": result.usage.cost_basis,
+        },
+        "duration_ms": result.duration_ms,
+        "cache_mode": result.cache_mode,
+        "prefix_hash": result.prefix_hash,
+        "dry_run": result.dry_run,
+        "error_kind": result.error_kind,
+        "error_message": result.error_message,
+        "warnings": list(result.warnings),
+    }
