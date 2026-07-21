@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import owner_loop
+from . import transcript_sources
 from .markers import EXCHANGE_MARKER_LINES, to_en_markers, to_pt_markers, SECTION_PT_TO_EN
 
 SESSION_ROOT_NAME = "sessions"
@@ -30,11 +31,6 @@ CHAIN_HANDOFF_NAME = "handoff.json"
 COMPACTION_LEASE_NAME = "compact.lease.json"
 
 _RESTORE_PREFIX = "[BURNLESS RESTORE]"
-_IGNORED_RESTORE_MARKERS = (
-    _RESTORE_PREFIX,
-    "## Trocas ainda não consolidadas",
-    "[BURNLESS SEED]",
-)
 
 # RM-4C.4: when the host cannot provide a stable process_instance_id, an
 # unclaimed handoff for the same project may still be claimed if fresh enough.
@@ -432,9 +428,7 @@ def _content_text(content: Any) -> str:
     return ""
 
 
-def _is_restore_noise(text: str) -> bool:
-    blob = text or ""
-    return any(marker in blob for marker in _IGNORED_RESTORE_MARKERS)
+_is_restore_noise = transcript_sources._is_restore_noise
 
 
 def _extract_files_from_content(content: Any) -> set[str]:
@@ -529,50 +523,38 @@ def extract_exchange(
 ) -> dict[str, Any]:
     path = Path(transcript_path)
     transcript_found = path.exists()
-    entries: list[dict[str, Any]] = []
+    turns: list[dict[str, Any]] = []
     if transcript_found:
-        with path.open("r", encoding="utf-8", errors="ignore") as f:
-            for line_no, line in enumerate(f):
-                text = line.strip()
-                if not text:
-                    continue
-                try:
-                    obj = json.loads(text)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(obj, dict):
-                    continue
-                obj["_line_no"] = line_no
-                entries.append(obj)
+        turns = list(transcript_sources.iter_turns(host="claude", path=path))
 
     selected_user: dict[str, Any] | None = None
     selected_assistant: dict[str, Any] | None = None
     pending_user: dict[str, Any] | None = None
     files: set[str] = set()
 
-    for obj in entries:
-        message = obj.get("message") if isinstance(obj.get("message"), dict) else {}
-        role = str(message.get("role") or obj.get("role") or obj.get("type") or "").strip().lower()
+    for turn in turns:
+        message = turn.get("message") if isinstance(turn.get("message"), dict) else {}
+        role = turn.get("role", "")
         content = message.get("content")
-        text = _content_text(content)
+        text = turn.get("text", "")
 
         if _is_restore_noise(text):
             continue
-        if obj.get("isSidechain") or message.get("isSidechain"):
+        if turn.get("isSidechain") or message.get("isSidechain"):
             continue
 
         files |= _extract_files_from_content(content)
 
         if role == "user" and text.strip():
-            pending_user = obj
+            pending_user = turn
             continue
         if role == "assistant" and text.strip():
             selected_user = pending_user
-            selected_assistant = obj
+            selected_assistant = turn
 
     if selected_user is None or selected_assistant is None:
-        selected_user = selected_user or (entries[-2] if len(entries) >= 2 else None)
-        selected_assistant = selected_assistant or (entries[-1] if entries else None)
+        selected_user = selected_user or (turns[-2] if len(turns) >= 2 else None)
+        selected_assistant = selected_assistant or (turns[-1] if turns else None)
 
     user_msg = selected_user.get("message", {}) if selected_user else {}
     assistant_msg = selected_assistant.get("message", {}) if selected_assistant else {}
