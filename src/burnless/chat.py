@@ -457,6 +457,10 @@ def main(args: Any) -> int:
         print("burnless chat: no chains found for this project", file=sys.stderr)
         return 1
 
+    if getattr(args, "serve", None) is not None:
+        from . import chat_serve
+        return chat_serve.serve_chat(root, chain_id, args.serve)
+
     as_json = bool(getattr(args, "json", False))
     verbose = bool(getattr(args, "verbose", False))
     follow = bool(getattr(args, "follow", False))
