@@ -347,11 +347,31 @@ def _cmd_run_body(args: argparse.Namespace) -> int:
 
 
 
+def _ledger_snapshot(p: dict):
+    from . import ledger_projector
+    return ledger_projector.project(ledger_projector.read_ledger(p["audit"]))
+
+
+def _metrics_with_ledger_totals(p: dict) -> dict:
+    """metrics.json merged with the ledger-derived authoritative totals, so status/metrics/economy
+    reconcile on the same window. Legacy-only scalars (legacy_run_calls, keepalive_*, compression
+    ratio, session_snapshots) still come from metrics.json — they have no ledger equivalent yet."""
+    m = metrics_mod.load(p["metrics"])
+    snap = _ledger_snapshot(p)
+    m["burnless_tokens"] = int(snap.accounted_total_tokens)
+    m["by_source"] = dict(snap.by_source)
+    m["encoder_calls"] = int(snap.encoder_calls)
+    m["decoder_calls"] = int(snap.decoder_calls)
+    m["brain_calls"] = int(snap.brain_calls)
+    m["estimated_cost_avoided_usd"] = round(float(snap.saving_usd), 4)
+    return m
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     state = state_mod.load(p["state"])
-    m = metrics_mod.load(p["metrics"])
+    m = _metrics_with_ledger_totals(p)
     print(dashboard.render_status(state, m))
     from .integrity import scan_orphans
     project_root = root.parent
@@ -601,9 +621,18 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         print(dashboard.render_session_diff(diff))
         return 0
 
-    m = metrics_mod.load(p["metrics"])
+    m = _metrics_with_ledger_totals(p)
     show_cost = bool(cfg.get("metrics", {}).get("show_estimated_cost", True))
     print(dashboard.render_metrics(m, show_cost=show_cost))
+    return 0
+
+
+def cmd_metrics_migrate(args: argparse.Namespace) -> int:
+    from . import ledger_migrate
+    root = paths_mod.require_root()
+    project_root = root.parent if root.name == ".burnless" else root
+    result = ledger_migrate.migrate(project_root)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -1952,11 +1981,10 @@ def cmd_economy(args: argparse.Namespace) -> int:
     root = paths_mod.require_root()
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
-    metrics = metrics_mod.load(p["metrics"])
     from . import economy
-    r = economy.compute_economy(metrics, cfg)
+    snap = _ledger_snapshot(p)
+    r = economy.compute_economy_snapshot(snap, cfg)
     if getattr(args, "json", False):
-        # Convert EconomyReport to dict for JSON output
         buckets_dicts = [
             {"name": b.name, "tokens": b.tokens, "usd": b.usd, "note": b.note}
             for b in r.buckets
@@ -1965,6 +1993,9 @@ def cmd_economy(args: argparse.Namespace) -> int:
             "buckets": buckets_dicts,
             "total_tokens": r.total_tokens,
             "total_usd": r.total_usd,
+            "accounted_total": r.accounted_total,
+            "monetizable_subtotal": r.monetizable_subtotal,
+            "excluded_categories": r.excluded_categories,
             "assumptions": r.assumptions,
         }
         print(json.dumps(output, indent=2, ensure_ascii=False))
@@ -2236,6 +2267,8 @@ def build_parser() -> argparse.ArgumentParser:
     metrics_sub = sp.add_subparsers(dest="metrics_cmd")
     dsp = metrics_sub.add_parser("desktop", help="show desktop turn metrics from ~/.burnless/desktop/turns.jsonl")
     dsp.set_defaults(func=cmd_metrics_desktop)
+    msp = metrics_sub.add_parser("migrate", help="one-time idempotent backfill: freeze metrics.json, re-emit spend.jsonl as usage_event/v1 kind=spend, emit legacy_snapshot")
+    msp.set_defaults(func=cmd_metrics_migrate)
     sp.add_argument(
         "--snapshot",
         metavar="LABEL",

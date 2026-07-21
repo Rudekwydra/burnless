@@ -129,7 +129,11 @@ def render_audit(entries: list[dict]) -> str:
         amt = fmt_int(int(e.get("amount", 0)))
         src = e.get("source", "?")
         did = e.get("delegation_id") or "-"
-        basis = e.get("basis") or "?"
+        basis_raw = e.get("basis")
+        if isinstance(basis_raw, dict):
+            basis = ",".join(f"{k}={v}" for k, v in basis_raw.items()) or "?"
+        else:
+            basis = basis_raw or "?"
         reason = e.get("reason", "")
         out.append(f"{ts}  +{amt:>10}  {src:<24}  {basis:<10}  {did:<6}  {reason}")
     return "\n".join(out)
@@ -144,7 +148,7 @@ def render_economy(r, *, show_cost: bool = True) -> str:
     """Render EconomyReport as human-readable string.
 
     Per-bucket line: name <tokens>tok $<usd> (note)
-    Followed by TOTAL line and assumptions.
+    Followed by TOTAL line, the accounted/monetizable/excluded reconciliation block, and assumptions.
     """
     lines = []
     for b in r.buckets:
@@ -156,6 +160,19 @@ def render_economy(r, *, show_cost: bool = True) -> str:
     tot_tok_str = fmt_int(int(r.total_tokens))
     tot_usd_str = f"{r.total_usd:.2f}"
     lines.append(f"{'TOTAL':<40} {tot_tok_str:>12}tok  ${tot_usd_str:>10}")
+    lines.append("")
+    lines.append(f"Accounted total:      {fmt_int(int(r.accounted_total)):>12}tok")
+    lines.append(f"Monetizable subtotal: {fmt_int(int(r.monetizable_subtotal)):>12}tok")
+    excluded = list(r.excluded_categories or [])
+    if excluded:
+        excl_str = ", ".join(f"{src}: {fmt_int(int(tok))}" for src, tok in excluded)
+        lines.append(f"Excluded:             {excl_str}")
+        lines.append(
+            f"(diferença = accounted_total - monetizable_subtotal = "
+            f"{fmt_int(int(r.accounted_total) - int(r.monetizable_subtotal))} = soma dos excluded acima)"
+        )
+    else:
+        lines.append("Excluded:             (none)")
     lines.append("")
     lines.append("assumptions: " + "; ".join(r.assumptions))
     return "\n".join(lines)
