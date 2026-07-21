@@ -525,7 +525,7 @@ def extract_exchange(
     transcript_found = path.exists()
     turns: list[dict[str, Any]] = []
     if transcript_found:
-        turns = list(transcript_sources.iter_turns(host="claude", path=path))
+        turns = list(transcript_sources.iter_turns(host=host, path=path))
 
     selected_user: dict[str, Any] | None = None
     selected_assistant: dict[str, Any] | None = None
@@ -558,8 +558,17 @@ def extract_exchange(
 
     user_msg = selected_user.get("message", {}) if selected_user else {}
     assistant_msg = selected_assistant.get("message", {}) if selected_assistant else {}
-    user_text = _content_text(user_msg.get("content")) if isinstance(user_msg, dict) else ""
-    assistant_text = _content_text(assistant_msg.get("content")) if isinstance(assistant_msg, dict) else ""
+    # Codex turns carry no "message" wrapper (iter_turns yields flat
+    # {"role", "text"} dicts) — fall back to the pre-computed turn text
+    # instead of re-deriving from a Claude-shaped message.content list.
+    if isinstance(user_msg, dict) and user_msg.get("content") is not None:
+        user_text = _content_text(user_msg.get("content"))
+    else:
+        user_text = (selected_user or {}).get("text", "")
+    if isinstance(assistant_msg, dict) and assistant_msg.get("content") is not None:
+        assistant_text = _content_text(assistant_msg.get("content"))
+    else:
+        assistant_text = (selected_assistant or {}).get("text", "")
 
     if _is_restore_noise(user_text):
         user_text = ""

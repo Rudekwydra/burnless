@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "./burnless_epoch_session.sh"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "./burnless_epoch_stop.sh"}]}
+    ]
+  }
+}
