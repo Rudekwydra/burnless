@@ -1317,9 +1317,33 @@ def cmd_route(args: argparse.Namespace) -> int:
     p = paths_mod.paths_for(root)
     cfg = config_mod.load(p["config"])
     if getattr(args, "explain", False):
-        decision = routing_mod.decide_route(args.text, getattr(args, "tier", None), cfg["routing"])
+        task_kind = getattr(args, "task_kind", None)
+        impact = getattr(args, "impact", None)
+        tools_required = getattr(args, "tools_required", None)
+        reversibility = getattr(args, "reversibility", None)
+        context = None
+        if task_kind is not None or impact is not None or tools_required is not None or reversibility is not None:
+            context = routing_mod.RouteContext(
+                task_kind=task_kind or "implement",
+                impact=impact or "internal",
+                tools_required=True if tools_required is None else tools_required,
+                reversibility=reversibility or "reversible",
+            )
+        try:
+            decision = routing_mod.decide_route(
+                args.text, getattr(args, "tier", None), cfg["routing"], context=context
+            )
+        except ValueError as exc:
+            print(f"burnless route: {exc}", file=sys.stderr)
+            return 1
         agent = cfg["agents"].get(decision.effective_tier, {})
         print(routing_mod.format_route_explain(decision, agent.get("name", ""), agent.get("command", "")))
+        if context is not None and context.task_kind == "architect" and context.tools_required is False:
+            print(
+                f"   suggestion:     tools_required=False + task_kind=architect -> "
+                f"consider `burnless ask --tier {decision.effective_tier} \"...\"` instead of "
+                f"`do` (no file/shell access needed)"
+            )
         return 0
     info = routing_mod.explain_route(args.text, cfg["routing"])
     agent = cfg["agents"][info["tier"]]
@@ -2520,6 +2544,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("text")
     sp.add_argument("--explain", action="store_true", help="show full scored route decision + escalation policy")
     sp.add_argument("--tier", choices=["diamond", "gold", "silver", "bronze"], help="test routing a requested-tier upgrade against the natural route")
+    sp.add_argument("--task-kind", choices=["read", "classify", "create", "implement", "architect", "audit"], default=None, dest="task_kind", help="structured task shape — combines with --explain to test a routing.policies tier floor")
+    sp.add_argument("--impact", choices=["internal", "public", "client", "production", "irreversible"], default=None, dest="impact", help="blast radius of the task — combines with --explain to test a routing.policies tier floor")
+    sp.add_argument("--tools-required", dest="tools_required", action="store_true", default=None, help="task needs file/shell tool access (default when any context flag is set)")
+    sp.add_argument("--no-tools-required", dest="tools_required", action="store_false", help="task needs no file/shell tool access (e.g. pure reasoning/drafting)")
+    sp.add_argument("--reversibility", choices=["reversible", "hard_to_reverse", "irreversible"], default=None, dest="reversibility", help="how hard it is to undo the task's effects")
     sp.set_defaults(func=cmd_route)
 
     sp = sub.add_parser("ask", help="pure LLM completion — no tools, no CLAUDE.md, no agency (text in, text out). NOT do/delegate/run.")
