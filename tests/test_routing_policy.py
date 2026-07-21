@@ -1,3 +1,7 @@
+import argparse
+
+from burnless import cli
+from burnless import config as config_mod
 from burnless.routing import (
     RouteContext,
     decide_route,
@@ -180,3 +184,95 @@ class TestDecideRoutePolicyFloor:
         out = format_route_explain(d)
         assert "policy floor:" in out
         assert "public_editorial_gate" in out
+
+
+def _init_project(tmp_path, policies=None):
+    burnless = tmp_path / ".burnless"
+    for d in ("delegations", "logs", "temp", "capsules", "archive", "chat", "runs"):
+        (burnless / d).mkdir(parents=True, exist_ok=True)
+    config_path = burnless / "config.yaml"
+    config_mod.write_default(config_path)
+    if policies is not None:
+        cfg = config_mod.load(config_path)
+        cfg["routing"]["policies"] = policies
+        config_mod.save(config_path, cfg)
+    return burnless
+
+
+def _route_args(**overrides):
+    defaults = dict(
+        text="hi",
+        explain=True,
+        tier=None,
+        task_kind=None,
+        impact=None,
+        tools_required=None,
+        reversibility=None,
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+_PUBLIC_EDITORIAL_GATE = [
+    {
+        "id": "public_editorial_gate",
+        "when": {"task_kind": "classify", "impact": "public"},
+        "min_tier": "gold",
+    }
+]
+
+
+class TestCmdRouteContext:
+    def test_context_flags_trigger_policy_floor(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_project(tmp_path, policies=_PUBLIC_EDITORIAL_GATE)
+
+        rc = cli.cmd_route(_route_args(
+            text="classificar copy para publicação",
+            task_kind="classify",
+            impact="public",
+        ))
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "policy floor:" in out
+        assert "gold" in out
+
+    def test_architect_no_tools_prints_suggestion(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_project(tmp_path)
+
+        rc = cli.cmd_route(_route_args(
+            text="desenha a arquitetura de X",
+            task_kind="architect",
+            tools_required=False,
+        ))
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "suggestion:" in out
+        assert "burnless ask" in out
+
+    def test_plain_invocation_unchanged_no_new_lines(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_project(tmp_path)
+
+        rc = cli.cmd_route(_route_args(text="hi"))
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "policy floor:" not in out
+        assert "suggestion:" not in out
+
+    def test_invalid_routing_policies_returns_clean_error(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_project(tmp_path, policies=[
+            {"id": "bad", "when": {"bogus_field": "x"}, "min_tier": "gold"},
+        ])
+
+        rc = cli.cmd_route(_route_args(text="hi", task_kind="classify"))
+
+        assert rc != 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.strip()
