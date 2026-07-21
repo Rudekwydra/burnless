@@ -43,6 +43,7 @@ from .report_kind import (
 from . import init_claude_code as _init_claude_code_mod
 from . import epochs as epochs_mod
 from . import recovery as recovery_mod
+from . import transcript_sources as transcript_sources_mod
 from . import chat as chat_mod
 from . import audit_graph
 from . import retrieve as retrieve_mod
@@ -1823,6 +1824,12 @@ def cmd_epoch(args: argparse.Namespace) -> int:
 
     elif epoch_cmd == "extract-exchange":
         transcript = getattr(args, "transcript", None)
+        if not transcript:
+            transcript = transcript_sources_mod.resolve_path(
+                host=getattr(args, "host", "claude") or "claude",
+                sid=getattr(args, "host_session_id", None) or getattr(args, "session_id", None) or "",
+                cwd=getattr(args, "cwd", None),
+            )
         if not transcript:
             print("")
             return 0
