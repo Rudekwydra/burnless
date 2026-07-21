@@ -10,7 +10,7 @@ import urllib.request
 
 from . import estimator
 from . import pricing
-from .providers.contracts import AskRequest, AskResult, ResolvedAskTarget, UsageRecord
+from .providers.contracts import AskRequest, AskResult, BudgetPlan, ResolvedAskTarget, UsageRecord
 
 
 DEFAULT_ASK_SYSTEM = (
@@ -351,6 +351,37 @@ def render_ask_explain(
         "redacted_command": target.redacted_command,
         "dry_run": request.dry_run,
     }
+
+
+def compute_budget_plan(request: "AskRequest", model: str, capabilities: "ProviderCapabilities") -> "BudgetPlan":
+    """Preflight budget resolution — sec 11. Estimates input tokens from the
+    prompt; decides hard vs soft_only enforcement from what the adapter PROVES
+    it can enforce (never assume). Never calls the provider."""
+    estimated_input_tokens = estimator.estimate_tokens(request.prompt)
+    family = pricing.family_for_model(model)
+    in_rate = pricing.rate_versioned(family, "input")
+    estimated_cost_usd = round(estimated_input_tokens * in_rate, 6) if in_rate else None
+
+    enforcement = "soft_only"
+    if (
+        request.budget_policy == "hard"
+        and capabilities.hard_spend_cap
+        and request.max_budget_usd is not None
+    ):
+        enforcement = "hard"
+
+    return BudgetPlan(
+        max_input_tokens=request.max_input_tokens,
+        max_output_tokens=request.max_output_tokens,
+        max_total_tokens=request.max_total_tokens,
+        max_budget_usd=request.max_budget_usd,
+        policy=request.budget_policy,
+        enforcement=enforcement,
+        estimated_input_tokens=estimated_input_tokens,
+        estimated_output_tokens=None,
+        estimated_cost_usd=estimated_cost_usd,
+        basis="estimate",
+    )
 
 
 def build_ask_envelope(

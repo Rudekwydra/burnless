@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import time
 
+from .. import pure_ask
 from ..coreconfig import resolver
 from ..warm_session_codex import _parse_codex_usage
 from .contracts import (
@@ -55,6 +56,7 @@ class CodexAdapter:
             capabilities=ProviderCapabilities(),
         )
         caps = self.capabilities(partial)
+        budget = pure_ask.compute_budget_plan(request, model, caps)
         binary = shutil.which("codex") or "codex"
         cmd = [
             binary, "exec",
@@ -67,7 +69,7 @@ class CodexAdapter:
         if request.effort:
             cmd += ["-c", f'model_reasoning_effort="{request.effort}"']
         redacted = shlex.join(cmd)
-        return dataclasses.replace(partial, capabilities=caps, redacted_command=redacted)
+        return dataclasses.replace(partial, capabilities=caps, budget=budget, redacted_command=redacted)
 
     def explain(self, target: ResolvedAskTarget) -> dict:
         return {

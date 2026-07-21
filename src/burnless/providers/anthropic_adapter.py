@@ -49,6 +49,7 @@ class AnthropicAdapter:
             capabilities=ProviderCapabilities(),
         )
         caps = self.capabilities(partial)
+        budget = pure_ask.compute_budget_plan(request, model, caps)
         cmd = pure_ask.build_ask_command(
             model,
             output_format=request.output_format,
@@ -57,7 +58,7 @@ class AnthropicAdapter:
             effort=request.effort,
         )
         redacted = shlex.join(cmd)
-        return dataclasses.replace(partial, capabilities=caps, redacted_command=redacted)
+        return dataclasses.replace(partial, capabilities=caps, budget=budget, redacted_command=redacted)
 
     def explain(self, target: ResolvedAskTarget) -> dict:
         return {
