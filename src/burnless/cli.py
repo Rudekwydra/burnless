@@ -24,6 +24,9 @@ from . import routing as routing_mod
 from . import agents as agents_mod
 from . import delegations as deleg_mod
 from . import pure_ask as pure_ask_mod
+from . import providers as providers_mod
+from .coreconfig import resolver as coreconfig_resolver
+from .providers.contracts import AskRequest
 from . import compression as compression_mod
 from . import lifetime as lifetime_mod
 from . import claude_integration
@@ -1337,47 +1340,78 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
     request_id = uuid.uuid4().hex
     route_reason = "explicit --tier flag (or default)"
+    warn_list: list[str] = []
+
+    provider = getattr(args, "provider", None) or coreconfig_resolver.resolve_agent(args.tier, cfg).provider
+
+    request = AskRequest(
+        prompt=prompt,
+        tier=args.tier,
+        provider=provider,
+        model=getattr(args, "model", None),
+        system=args.system,
+        effort=getattr(args, "effort", None),
+        output_format=args.output_format,
+        timeout_s=args.timeout,
+        explain=getattr(args, "explain", False),
+        dry_run=getattr(args, "dry_run", False),
+        max_input_tokens=getattr(args, "max_input_tokens", None),
+        max_output_tokens=getattr(args, "max_output_tokens", None),
+        max_total_tokens=getattr(args, "max_total_tokens", None),
+        max_budget_usd=getattr(args, "max_budget_usd", None),
+        budget_policy=getattr(args, "budget_policy", "soft"),
+        request_id=request_id,
+    )
+
+    adapter = providers_mod.get_adapter(provider)
+    if adapter is None:
+        error_message = f"unsupported provider {provider!r} — no adapter registered"
+        events_mod.append_event(root, "ask.failed", {
+            "request_id": request_id,
+            "error_kind": "config_error",
+            "error_message": error_message,
+        })
+        print(f"burnless ask: {error_message}", file=sys.stderr)
+        return 1
+
+    target = adapter.resolve(request, cfg)
+
+    if request.dry_run:
+        explain_dict = pure_ask_mod.render_ask_explain(target, request, route_reason=route_reason)
+        ok = events_mod.append_event(root, "ask.dry_run", {
+            "request_id": request_id,
+            "effective_tier": target.effective_tier,
+            "provider": target.provider,
+            "model": target.model,
+        })
+        if not ok:
+            warn_list.append("telemetry_write_failed")
+        if args.output_format == "json":
+            print(json.dumps(explain_dict, indent=2, ensure_ascii=False))
+        else:
+            for key, value in explain_dict.items():
+                print(f"{key}: {value}")
+        return 0
 
     ok = events_mod.append_event(root, "ask.started", {
         "request_id": request_id,
-        "requested_tier": args.tier,
-        "provider": getattr(args, "provider", None),
-        "model": getattr(args, "model", None),
+        "requested_tier": target.requested_tier,
+        "provider": target.provider,
+        "model": target.model,
     })
-    warn_list: list[str] = []
     if not ok:
         warn_list.append("telemetry_write_failed")
     ok = events_mod.append_event(root, "ask.routed", {
         "request_id": request_id,
-        "effective_tier": args.tier,
+        "effective_tier": target.effective_tier,
         "route_source": "explicit",
         "route_reason": route_reason,
     })
     if not ok:
         warn_list.append("telemetry_write_failed")
 
-    started = time.monotonic()
     try:
-        rc, stdout, stderr = pure_ask_mod.run_ask(
-            args.tier,
-            prompt,
-            cfg,
-            system=args.system,
-            output_format=args.output_format,
-            timeout=args.timeout,
-            model=getattr(args, "model", None),
-            max_budget_usd=getattr(args, "max_budget_usd", None),
-            effort=getattr(args, "effort", None),
-            provider=getattr(args, "provider", None),
-        )
-    except ValueError as exc:
-        events_mod.append_event(root, "ask.failed", {
-            "request_id": request_id,
-            "error_kind": "config_error",
-            "error_message": str(exc),
-        })
-        print(f"burnless ask: {exc}", file=sys.stderr)
-        return 1
+        result = adapter.invoke_text(request, target)
     except subprocess.TimeoutExpired:
         events_mod.append_event(root, "ask.failed", {
             "request_id": request_id,
@@ -1386,26 +1420,34 @@ def cmd_ask(args: argparse.Namespace) -> int:
         })
         print(f"burnless ask: timed out after {args.timeout}s", file=sys.stderr)
         return 1
-    duration_ms = int((time.monotonic() - started) * 1000)
+
+    usage = adapter.parse_usage(result, target)
 
     envelope = pure_ask_mod.build_ask_envelope(
         request_id=request_id,
-        requested_tier=args.tier,
-        effective_tier=args.tier,
-        provider=(getattr(args, "provider", None) or "anthropic"),
-        model=(getattr(args, "model", None) or ""),
-        effort=getattr(args, "effort", None),
+        requested_tier=target.requested_tier,
+        effective_tier=target.effective_tier,
+        provider=target.provider,
+        model=target.model,
+        effort=target.effort,
         route_source="explicit",
         route_reason=route_reason,
         route_signals=(),
-        returncode=rc,
-        stdout=stdout,
-        stderr=stderr,
-        duration_ms=duration_ms,
-        cache_mode="none",
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        timed_out=result.timed_out,
+        signal=result.signal,
+        duration_ms=result.duration_ms,
+        usage=usage,
+        cache_mode=target.cache_mode,
+        prefix_hash=target.prefix_hash,
         dry_run=False,
         warnings=tuple(warn_list),
     )
+
+    if request.explain:
+        envelope["explain"] = pure_ask_mod.render_ask_explain(target, request, route_reason=route_reason)
 
     lifecycle_event = "ask.completed" if envelope["status"] == "ok" else "ask.failed"
     ok = events_mod.append_event(root, lifecycle_event, {
@@ -1421,10 +1463,10 @@ def cmd_ask(args: argparse.Namespace) -> int:
         print(json.dumps(envelope, indent=2, ensure_ascii=False))
         return 0 if envelope["status"] == "ok" else 1
 
-    if rc != 0:
-        print(stderr, file=sys.stderr)
-        return rc
-    print(stdout.strip())
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+        return result.returncode
+    print(result.stdout.strip())
     return 0
 
 
@@ -2421,6 +2463,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=int, default=120)
     sp.add_argument("--max-budget-usd", type=float, default=None, help="hard per-call spend ceiling in USD (forwarded to claude -p)")
     sp.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default=None, help="reasoning effort forwarded to the resolved model")
+    sp.add_argument("--explain", action="store_true", help="show the resolved target (tier/provider/model/capabilities/budget/redacted command) alongside the result")
+    sp.add_argument("--dry-run", action="store_true", dest="dry_run", help="resolve everything and show what WOULD run, without calling the provider or writing spend")
+    sp.add_argument("--max-input-tokens", type=int, default=None, dest="max_input_tokens")
+    sp.add_argument("--max-output-tokens", type=int, default=None, dest="max_output_tokens")
+    sp.add_argument("--max-total-tokens", type=int, default=None, dest="max_total_tokens")
+    sp.add_argument("--budget-policy", choices=["hard", "soft"], default="soft", dest="budget_policy", help="hard: block when a capability proves it can enforce the cap; soft: estimate + warn only")
     sp.set_defaults(func=cmd_ask)
 
     sp = sub.add_parser("setup", help="detect CLIs/keys and write a sensible config")

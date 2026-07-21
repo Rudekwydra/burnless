@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shlex
@@ -7,7 +8,9 @@ import subprocess
 import tempfile
 import urllib.request
 
-from .providers.contracts import AskResult, UsageRecord
+from . import estimator
+from . import pricing
+from .providers.contracts import AskRequest, AskResult, ResolvedAskTarget, UsageRecord
 
 
 DEFAULT_ASK_SYSTEM = (
@@ -297,6 +300,57 @@ def normalize_ask_error(
         "empty_error",
         f"provider exited rc={returncode} with no stderr/stdout — likely a silent CLI failure",
     )
+
+
+def render_ask_explain(
+    target: "ResolvedAskTarget",
+    request: "AskRequest",
+    *,
+    route_source: str = "explicit",
+    route_reason: str = "",
+    route_signals: tuple[str, ...] = (),
+) -> dict:
+    """Render a ResolvedAskTarget for --explain/--dry-run — sec 10. Never calls
+    the provider; never receives/holds prompt content beyond a length-based
+    token estimate. Same target object as real execution (no parallel resolve)."""
+    estimated_input_tokens = estimator.estimate_tokens(request.prompt)
+    family = pricing.family_for_model(target.model)
+    in_rate = pricing.rate_versioned(family, "input")
+    estimated_cost_usd = round(estimated_input_tokens * in_rate, 6) if in_rate else None
+
+    return {
+        "schema": "burnless.ask.explain/v1",
+        "request_id": request.request_id or "",
+        "requested_tier": target.requested_tier,
+        "effective_tier": target.effective_tier,
+        "provider": target.provider,
+        "model": target.model,
+        "effort": target.effort,
+        "auth": target.auth,
+        "adapter_key": target.adapter_key,
+        "cache_mode": target.cache_mode,
+        "route": {"source": route_source, "reason": route_reason, "signals": list(route_signals)},
+        "capabilities": dataclasses.asdict(target.capabilities),
+        "budget": {
+            "requested": {
+                "max_input_tokens": target.budget.max_input_tokens,
+                "max_output_tokens": target.budget.max_output_tokens,
+                "max_total_tokens": target.budget.max_total_tokens,
+                "max_budget_usd": target.budget.max_budget_usd,
+                "policy": target.budget.policy,
+            },
+            "enforcement": target.budget.enforcement,
+            "estimate": {
+                "input_tokens": estimated_input_tokens,
+                "output_tokens": None,
+                "cost_usd": estimated_cost_usd,
+                "basis": "estimate",
+            },
+        },
+        "prefix_hash": target.prefix_hash,
+        "redacted_command": target.redacted_command,
+        "dry_run": request.dry_run,
+    }
 
 
 def build_ask_envelope(

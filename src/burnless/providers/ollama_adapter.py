@@ -44,7 +44,8 @@ class OllamaAdapter:
             capabilities=ProviderCapabilities(),
         )
         caps = self.capabilities(partial)
-        return dataclasses.replace(partial, capabilities=caps)
+        redacted = f"http POST local model={model} stream=false"
+        return dataclasses.replace(partial, capabilities=caps, redacted_command=redacted)
 
     def explain(self, target: ResolvedAskTarget) -> dict:
         return {

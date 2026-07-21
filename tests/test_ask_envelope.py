@@ -12,6 +12,9 @@ from burnless import config as config_mod
 from burnless import cli
 from burnless import pure_ask as pure_ask_mod
 from burnless.pure_ask import build_ask_envelope, normalize_ask_error
+from burnless.providers.contracts import AskRequest, ProviderResult
+from burnless.providers.anthropic_adapter import AnthropicAdapter
+from burnless.providers.codex_adapter import CodexAdapter
 
 
 class TestNormalizeAskError:
@@ -126,9 +129,18 @@ def _ask_args(**overrides) -> argparse.Namespace:
         timeout=120,
         max_budget_usd=None,
         effort=None,
+        explain=False,
+        dry_run=False,
+        max_input_tokens=None,
+        max_output_tokens=None,
+        max_total_tokens=None,
+        budget_policy="soft",
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
+
+
+_ANTHROPIC_INVOKE = "burnless.providers.anthropic_adapter.AnthropicAdapter.invoke_text"
 
 
 class TestCmdAskEnvelope:
@@ -136,7 +148,7 @@ class TestCmdAskEnvelope:
         monkeypatch.chdir(tmp_path)
         _init_burnless_project(tmp_path)
 
-        with patch.object(pure_ask_mod, "run_ask", return_value=(0, "answer text", "")):
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=0, stdout="answer text", stderr="")):
             rc = cli.cmd_ask(_ask_args(output_format="json"))
 
         assert rc == 0
@@ -149,7 +161,7 @@ class TestCmdAskEnvelope:
         monkeypatch.chdir(tmp_path)
         _init_burnless_project(tmp_path)
 
-        with patch.object(pure_ask_mod, "run_ask", return_value=(0, "answer text", "")):
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=0, stdout="answer text", stderr="")):
             rc = cli.cmd_ask(_ask_args(output_format="text"))
 
         assert rc == 0
@@ -160,7 +172,7 @@ class TestCmdAskEnvelope:
         monkeypatch.chdir(tmp_path)
         burnless = _init_burnless_project(tmp_path)
 
-        with patch.object(pure_ask_mod, "run_ask", return_value=(0, "answer text", "")):
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=0, stdout="answer text", stderr="")):
             cli.cmd_ask(_ask_args(output_format="json"))
 
         events_file = burnless / "events.jsonl"
@@ -181,7 +193,7 @@ class TestCmdAskEnvelope:
         monkeypatch.chdir(tmp_path)
         burnless = _init_burnless_project(tmp_path)
 
-        with patch.object(pure_ask_mod, "run_ask", return_value=(1, "", "boom")):
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=1, stdout="", stderr="boom")):
             rc = cli.cmd_ask(_ask_args(output_format="json"))
 
         assert rc == 1
@@ -193,3 +205,54 @@ class TestCmdAskEnvelope:
         lines = [json.loads(l) for l in events_file.read_text(encoding="utf-8").splitlines() if l.strip()]
         event_types = [e["event_type"] for e in lines]
         assert "ask.failed" in event_types
+
+
+class TestCmdAskDryRunExplain:
+    def test_dry_run_prints_explain_schema_and_skips_lifecycle_events(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        burnless = _init_burnless_project(tmp_path)
+
+        with patch(_ANTHROPIC_INVOKE) as mock_invoke:
+            rc = cli.cmd_ask(_ask_args(output_format="json", dry_run=True))
+
+        assert rc == 0
+        mock_invoke.assert_not_called()
+        captured = capsys.readouterr()
+        explain_dict = json.loads(captured.out)
+        assert explain_dict["schema"] == "burnless.ask.explain/v1"
+
+        events_file = burnless / "events.jsonl"
+        lines = [json.loads(l) for l in events_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+        event_types = [e["event_type"] for e in lines]
+        assert "ask.started" not in event_types
+        assert "ask.completed" not in event_types
+        assert "ask.dry_run" in event_types
+
+    def test_explain_combined_with_execution_shares_effective_tier(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_burnless_project(tmp_path)
+
+        with patch(_ANTHROPIC_INVOKE, return_value=ProviderResult(returncode=0, stdout="answer text", stderr="")):
+            rc = cli.cmd_ask(_ask_args(output_format="json", explain=True))
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        envelope = json.loads(captured.out)
+        assert envelope["explain"]["schema"] == "burnless.ask.explain/v1"
+        assert envelope["explain"]["effective_tier"] == envelope["effective_tier"]
+
+    def test_anthropic_redacted_command_never_contains_prompt(self, tmp_path):
+        burnless = _init_burnless_project(tmp_path)
+        cfg = config_mod.load(burnless / "config.yaml")
+        target = AnthropicAdapter().resolve(
+            AskRequest(prompt="SECRET-MARKER-X", tier="silver"), cfg
+        )
+        assert "SECRET-MARKER-X" not in target.redacted_command
+
+    def test_codex_redacted_command_never_contains_prompt(self, tmp_path):
+        burnless = _init_burnless_project(tmp_path)
+        cfg = config_mod.load(burnless / "config.yaml")
+        target = CodexAdapter().resolve(
+            AskRequest(prompt="SECRET-MARKER-X", tier="silver", provider="codex"), cfg
+        )
+        assert "SECRET-MARKER-X" not in target.redacted_command

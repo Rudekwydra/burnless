@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -54,7 +55,19 @@ class CodexAdapter:
             capabilities=ProviderCapabilities(),
         )
         caps = self.capabilities(partial)
-        return dataclasses.replace(partial, capabilities=caps)
+        binary = shutil.which("codex") or "codex"
+        cmd = [
+            binary, "exec",
+            "--skip-git-repo-check",
+            "--sandbox", "read-only",
+            "--json",
+            "-m", model,
+            "<prompt>",
+        ]
+        if request.effort:
+            cmd += ["-c", f'model_reasoning_effort="{request.effort}"']
+        redacted = shlex.join(cmd)
+        return dataclasses.replace(partial, capabilities=caps, redacted_command=redacted)
 
     def explain(self, target: ResolvedAskTarget) -> dict:
         return {
