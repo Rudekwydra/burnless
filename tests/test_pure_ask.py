@@ -65,6 +65,15 @@ class TestBuildAskCommand:
         idx = cmd.index("--max-budget-usd")
         assert cmd[idx + 1] == "0.5"
 
+    def test_effort_omitted_by_default(self):
+        cmd = build_ask_command("claude-opus-4-8")
+        assert "--effort" not in cmd
+
+    def test_effort_passthrough(self):
+        cmd = build_ask_command("claude-opus-4-8", effort="high")
+        idx = cmd.index("--effort")
+        assert cmd[idx + 1] == "high"
+
 
 class TestResolveAskModel:
     """Test model resolution from tier config."""
