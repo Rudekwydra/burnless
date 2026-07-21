@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import subprocess
 import time
 
+from burnless import cli
+from burnless import config as config_mod
 from burnless import recovery
 
 
@@ -242,4 +246,138 @@ class TestGcDryRun:
 
         assert result == {"archived": [chain_id]}
         assert not (root / "epochs" / "_rolling" / "chains" / chain_id).exists()
+        assert (root / "epochs" / "_rolling" / "chains" / "_archived" / chain_id / "chain.json").exists()
+
+
+def _init_cli_project(tmp_path):
+    burnless = tmp_path / ".burnless"
+    for d in ("delegations", "logs", "temp", "capsules", "archive", "chat", "runs"):
+        (burnless / d).mkdir(parents=True, exist_ok=True)
+    config_mod.write_default(burnless / "config.yaml")
+    return burnless
+
+
+def _status_args(**overrides):
+    defaults = dict(show_all_chains=False)
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def _gc_args(**overrides):
+    defaults = dict(dry_run=False, host="claude")
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+class TestCmdStatusChainFiltering:
+    def _seed_active_and_dead_chain(self, root):
+        recovery.write_handoff(
+            root, host="claude", host_session_id="active-sid", process_instance_id=str(os.getpid())
+        )
+        dead = _dead_pid()
+        recovery.write_handoff(
+            root, host="claude", host_session_id="dead-sid", process_instance_id=str(dead)
+        )
+        active_chain_id = recovery._find_chain_id_by_pid(root, "claude", str(os.getpid()))
+        dead_chain_id = recovery._find_chain_id_by_pid(root, "claude", str(dead))
+        return active_chain_id, dead_chain_id
+
+    def test_status_default_shows_only_active(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        root = _init_cli_project(tmp_path)
+        active_chain_id, dead_chain_id = self._seed_active_and_dead_chain(root)
+
+        rc = cli.cmd_status(_status_args(show_all_chains=False))
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert active_chain_id in out
+        assert dead_chain_id not in out
+        assert "hidden" in out
+        assert "--all" in out
+
+    def test_status_all_shows_everything(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        root = _init_cli_project(tmp_path)
+        active_chain_id, dead_chain_id = self._seed_active_and_dead_chain(root)
+
+        rc = cli.cmd_status(_status_args(show_all_chains=True))
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert active_chain_id in out
+        assert dead_chain_id in out
+        assert "active" in out
+        assert "dead" in out
+
+    def test_status_all_only_active_chains_matches_default(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        root = _init_cli_project(tmp_path)
+        recovery.write_handoff(
+            root, host="claude", host_session_id="only-active-sid", process_instance_id=str(os.getpid())
+        )
+        active_chain_id = recovery._find_chain_id_by_pid(root, "claude", str(os.getpid()))
+
+        rc_default = cli.cmd_status(_status_args(show_all_chains=False))
+        out_default = capsys.readouterr().out
+        rc_all = cli.cmd_status(_status_args(show_all_chains=True))
+        out_all = capsys.readouterr().out
+
+        assert rc_default == 0
+        assert rc_all == 0
+        assert active_chain_id in out_default
+        assert active_chain_id in out_all
+        assert "hidden" not in out_default
+        assert "hidden" not in out_all
+
+
+class TestCmdGc:
+    def _make_archivable_chain(self, tmp_path):
+        root = tmp_path / ".burnless"
+        dead = _dead_pid()
+        recovery.write_checkpoint(
+            root,
+            host="claude",
+            host_session_id="cli-gc-sid",
+            process_instance_id=str(dead),
+            living_md="## Foco atual\n- trabalho a ser exportado no GC\n",
+            harvested_state={"contracts": [], "refs": [], "open_threads": []},
+            applied_through=0,
+        )
+        recovery.write_handoff(root, host="claude", host_session_id="cli-gc-sid", process_instance_id=str(dead))
+        chain_id = recovery._find_chain_id_by_pid(root, "claude", str(dead))
+        meta_path = root / "epochs" / "_rolling" / "chains" / chain_id / "chain.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        old_last_seen = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 8 * 86400))
+        meta["last_seen"] = old_last_seen
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        return root, chain_id
+
+    def test_gc_dry_run_cli_reports_json(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_cli_project(tmp_path)
+        root, chain_id = self._make_archivable_chain(tmp_path)
+
+        rc = cli.cmd_gc(_gc_args(dry_run=True))
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        payload = json.loads(out)
+        assert chain_id in payload["would_archive"]
+        chain_dir = root / "epochs" / "_rolling" / "chains" / chain_id
+        assert chain_dir.exists()
+
+    def test_gc_real_run_cli_archives(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        _init_cli_project(tmp_path)
+        root, chain_id = self._make_archivable_chain(tmp_path)
+
+        rc = cli.cmd_gc(_gc_args(dry_run=False))
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        payload = json.loads(out)
+        assert chain_id in payload["archived"]
+        chain_dir = root / "epochs" / "_rolling" / "chains" / chain_id
+        assert not chain_dir.exists()
         assert (root / "epochs" / "_rolling" / "chains" / "_archived" / chain_id / "chain.json").exists()

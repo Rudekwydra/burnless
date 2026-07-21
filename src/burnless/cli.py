@@ -382,16 +382,28 @@ def cmd_status(args: argparse.Namespace) -> int:
     if orphans:
         print(f"⚠ {len(orphans)} delegation(s) ran without a capsule: {', '.join(orphans[:10])}")
     try:
-        chains = recovery_mod.list_chains(root, host="claude")
+        all_chains = recovery_mod.list_chains(root, host="claude")
     except Exception:
-        chains = []
+        all_chains = []
+    show_all_chains = getattr(args, "show_all_chains", False)
+    chains = all_chains if show_all_chains else [c for c in all_chains if c.get("state") == "active"]
     if chains:
         print("")
         print("chains:")
         for c in chains:
-            state = "viva" if c["alive"] else "morta"
+            chain_state = c["state"]
             focus = c.get("focus_line") or "(sem foco registrado)"
-            print(f"  {c['chain_id']} · pid={c['pid']} ({state}) · last_seen={c['last_seen']} · gen={c['generation']} · {focus}")
+            print(f"  {c['chain_id']} · pid={c['pid']} ({chain_state}) · last_seen={c['last_seen']} · gen={c['generation']} · {focus}")
+    hidden_count = len(all_chains) - len(chains)
+    if hidden_count > 0:
+        print(f"  ({hidden_count} chain(s) hidden — not active; use --all to see them)")
+    return 0
+
+
+def cmd_gc(args: argparse.Namespace) -> int:
+    root = paths_mod.require_root()
+    result = recovery_mod.gc_dead_chains(root, host=getattr(args, "host", "claude") or "claude", dry_run=getattr(args, "dry_run", False))
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
@@ -2030,6 +2042,7 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         return 0
 
     elif epoch_cmd == "gc-chains":
+        # kept as a compatible alias; `burnless gc [--dry-run]` is the simpler equivalent.
         root = getattr(args, "root", None) or root_path
         host = getattr(args, "host", "claude")
         result = recovery_mod.gc_dead_chains(root, host=host)
@@ -2387,7 +2400,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_run)
 
     sp = sub.add_parser("status", help="show project state + headline metric")
+    sp.add_argument("--all", action="store_true", dest="show_all_chains", help="include stale/dead/unknown/archived chains, not just active")
     sp.set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("gc", help="archive dead/stale chains past the GC TTL (reuses gc_dead_chains)")
+    sp.add_argument("--dry-run", action="store_true", dest="dry_run", help="report what would be archived without writing anything")
+    sp.add_argument("--host", default="claude", help="host filter (default: claude)")
+    sp.set_defaults(func=cmd_gc)
 
     sp = sub.add_parser("chat", help="view a chain as one continuous chat timeline")
     sp.add_argument("--chain", metavar="ID", help="chain id (default: newest live chain)")
