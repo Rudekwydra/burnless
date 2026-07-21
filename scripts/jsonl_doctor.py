@@ -118,7 +118,7 @@ def _plain_text(entries):
 
 def compact_middle(middle_entries):
     """Summarise discarded middle entries. Tries ollama locally; falls back to extractive truncation."""
-    model = os.environ.get("BURNLESS_BRONZE_OLLAMA_MODEL", "gemma2:latest")
+    model = os.environ.get("BURNLESS_BRONZE_OLLAMA_MODEL", "hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL")
     plain = _plain_text(middle_entries)
     prompt = f"Summarize this conversation context briefly (2-3 sentences):\n{plain[:3000]}"
 
