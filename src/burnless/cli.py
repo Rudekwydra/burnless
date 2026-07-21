@@ -1315,6 +1315,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
             model=getattr(args, "model", None),
             max_budget_usd=getattr(args, "max_budget_usd", None),
             effort=getattr(args, "effort", None),
+            provider=getattr(args, "provider", None),
         )
     except ValueError as exc:
         print(f"burnless ask: {exc}", file=sys.stderr)
@@ -2312,6 +2313,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("text", nargs="?", default=None, help="prompt (reads stdin if omitted)")
     sp.add_argument("--tier", choices=["diamond", "gold", "silver", "bronze"], default="silver", help="which tier's model to use")
     sp.add_argument("--model", default=None, help="model string explicit (bypasses tier/config.yaml resolution, ex: claude-opus-4-8)")
+    sp.add_argument("--provider", default=None, choices=["anthropic", "ollama", "ollama-local", "codex"], help="explicit provider — required to disambiguate an explicit --model across providers")
     sp.add_argument("--system", default=None, help="override the default pure-completion system prompt")
     sp.add_argument("--output-format", choices=["text", "json"], default="text")
     sp.add_argument("--timeout", type=int, default=120)
