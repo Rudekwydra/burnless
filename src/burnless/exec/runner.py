@@ -895,6 +895,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
         reason=f"raw stdout/stderr from {selected_agent_cfg['name']} kept out of main context",
         delegation_id=did,
         usd_per_million=cfg["metrics"]["expensive_model_usd_per_million"],
+        tier=tier,
     )
 
     interrupted = bool(result.get("interrupted"))
@@ -1274,6 +1275,7 @@ def execute_delegation(opts: RunOpts, root=None) -> int:
             extra={"mode": "faithful", "ratio": savings["compression_ratio"]},
             usd_per_million=cfg["metrics"]["expensive_model_usd_per_million"],
             capsules_delta=1,
+            tier=tier,
         )
         metrics_mod.bump_legacy_counter(p["metrics"], "legacy_compress_calls")
     else:
@@ -1387,6 +1389,7 @@ def _record_and_bump(
     extra: dict | None = None,
     usd_per_million: float = 15.0,
     capsules_delta: int = 0,
+    tier: str | None = None,
 ) -> dict:
     before = metrics_mod.load(p["metrics"])
     new_metrics = metrics_mod.record(
@@ -1398,6 +1401,7 @@ def _record_and_bump(
         delegation_id=delegation_id,
         extra=extra,
         usd_per_million=usd_per_million,
+        tier=tier,
     )
     before_usd = float(before.get("estimated_cost_avoided_usd", 0.0))
     after_usd = float(new_metrics.get("estimated_cost_avoided_usd", 0.0))
