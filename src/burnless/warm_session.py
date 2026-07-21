@@ -256,6 +256,21 @@ def init(burnless_root: Path, *, model: str = config.DEFAULT_PROVIDER_MODELS["cl
     return state
 
 
+def find_transcript_paths(session_uuid: str) -> list[Path]:
+    """Locate a Claude Code session transcript by UUID.
+
+    Claude Code stores resumable sessions at
+    ~/.claude/projects/<dashed-cwd>/<session-uuid>.jsonl. We glob across
+    project dirs rather than trying to reconstruct the exact dashed-path
+    encoding, which has edge cases (dots, hidden dirs). Pure/read-only:
+    no state, no side effects, safe to call from any consumer.
+    """
+    projects_root = Path.home() / ".claude" / "projects"
+    if not projects_root.exists():
+        return []
+    return list(projects_root.glob(f"*/{session_uuid}.jsonl"))
+
+
 def session_exists_on_disk(burnless_root: Path, model: str) -> bool:
     """Check whether the warm session's jsonl file actually exists in
     ~/.claude/projects/. Claude code stores resumable sessions at
@@ -267,11 +282,7 @@ def session_exists_on_disk(burnless_root: Path, model: str) -> bool:
     if not state or not state.get("uuid"):
         return False
     uuid = state["uuid"]
-    projects_root = Path.home() / ".claude" / "projects"
-    if not projects_root.exists():
-        return False
-    # Glob: any project dir containing <uuid>.jsonl
-    matches = list(projects_root.glob(f"*/{uuid}.jsonl"))
+    matches = find_transcript_paths(uuid)
     return len(matches) > 0
 
 
