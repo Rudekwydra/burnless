@@ -3,7 +3,7 @@
 CHAT-1: read-only viewer. Parallelizes the native rolling-memory/recovery flow —
 it never re-derives chain or checkpoint logic, only reads the artifacts those
 modules already write (chain.json, checkpoint.json, handoff.json) and the
-Claude Code session transcripts under ~/.claude/projects/.
+host transcripts via transcript_sources (claude/codex — one parser per host, shared with recovery).
 
 Guarantees: 100% read-only (no writes anywhere), no LLM calls, no network,
 no locks held. `--follow` polls mtime/size on a 1s cadence, single thread.
@@ -19,7 +19,7 @@ from typing import Any, Iterator
 
 from . import epochs as epochs_mod
 from . import recovery as recovery_mod
-from . import warm_session as warm_session_mod
+from . import transcript_sources as ts_mod
 
 HOST = "claude"
 POLL_INTERVAL_S = 1.0
@@ -151,84 +151,54 @@ def _context_note_for(project_root: Path, session_id: str, host: str = HOST) -> 
 # Transcript resolution + parsing
 # ---------------------------------------------------------------------------
 
-def find_transcript(session_id: str, projects_root: Path | None = None) -> Path | None:
-    if projects_root is None:
-        matches = warm_session_mod.find_transcript_paths(session_id)
-    else:
+def find_transcript(session_id: str, projects_root: Path | None = None, host: str = HOST, cwd: str | None = None) -> Path | None:
+    if projects_root is not None:
+        # test seam: explicit fixture dir, newest match wins
         matches = list(projects_root.glob(f"*/{session_id}.jsonl")) if projects_root.exists() else []
-    if not matches:
-        return None
-    try:
-        return max(matches, key=lambda p: p.stat().st_mtime)
-    except OSError:
-        return matches[0]
+        if not matches:
+            return None
+        try:
+            return max(matches, key=lambda p: p.stat().st_mtime)
+        except OSError:
+            return matches[0]
+    return ts_mod.resolve_path(host, session_id, cwd)
 
 
-def _parse_transcript_turn(record: dict[str, Any]) -> dict[str, Any] | None:
-    message = record.get("message")
-    if not isinstance(message, dict):
+def _present_turn(raw: dict[str, Any] | None, host: str = HOST) -> dict[str, Any] | None:
+    """Presentation shaping over a transcript_sources turn: filter to real
+    user/assistant exchanges and reduce to the fields the renderer uses.
+    All record decoding lives in transcript_sources (paridade invariante 14)."""
+    if raw is None:
         return None
-    role = str(message.get("role") or "").strip().lower()
+    meta = ts_mod.turn_meta(host, raw)
+    if meta["is_sidechain"]:
+        return None
+    role = str(raw.get("role") or "").strip().lower()
     if role not in ("user", "assistant"):
         return None
-    if record.get("isSidechain") or message.get("isSidechain"):
-        return None
-
-    content = message.get("content")
-    text_parts: list[str] = []
-    tool_names: list[str] = []
-    if isinstance(content, str):
-        text_parts.append(content)
-    elif isinstance(content, list):
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            btype = block.get("type")
-            if btype == "text":
-                t = block.get("text")
-                if isinstance(t, str):
-                    text_parts.append(t)
-            elif btype == "tool_use":
-                tool_names.append(str(block.get("name") or "tool"))
-            elif btype == "tool_result":
-                tool_names.append("result")
-
-    text = "\n".join(p for p in text_parts if p).strip()
+    text = (raw.get("text") or "").strip()
+    tool_names = meta["tool_names"]
     if not text and not tool_names:
         return None
-    return {"role": role, "ts": str(record.get("timestamp") or ""), "text": text, "tool_names": tool_names}
+    return {"role": role, "ts": meta["ts"], "text": text, "tool_names": tool_names}
 
 
-def _parse_transcript_line(line: str) -> dict[str, Any] | None:
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        record = json.loads(line)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(record, dict):
-        return None
-    return _parse_transcript_turn(record)
-
-
-def read_transcript_turns(path: Path) -> list[dict[str, Any]]:
+def read_transcript_turns(path: Path, host: str = HOST) -> list[dict[str, Any]]:
     """Every user/assistant turn in a transcript. Malformed/partial JSONL
     lines (the file may be actively written by a live session) are skipped
     silently, never raised."""
     turns: list[dict[str, Any]] = []
     try:
-        with path.open("r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                turn = _parse_transcript_line(line)
-                if turn is not None:
-                    turns.append(turn)
+        for raw in ts_mod.iter_turns(host, path):
+            turn = _present_turn(raw, host)
+            if turn is not None:
+                turns.append(turn)
     except OSError:
         pass
     return turns
 
 
-def _read_new_turns(path: Path, offset: int) -> tuple[int, list[dict[str, Any]]]:
+def _read_new_turns(path: Path, offset: int, host: str = HOST) -> tuple[int, list[dict[str, Any]]]:
     """Incremental read from a byte offset, for --follow. A trailing line
     without a newline yet (writer mid-flush) is left unconsumed and retried
     on the next poll."""
@@ -245,7 +215,7 @@ def _read_new_turns(path: Path, offset: int) -> tuple[int, list[dict[str, Any]]]
                 if not line.endswith("\n"):
                     new_offset = line_start
                     break
-                turn = _parse_transcript_line(line)
+                turn = _present_turn(ts_mod.parse_turn_line(host, line), host)
                 if turn is not None:
                     turns.append(turn)
                 new_offset = f.tell()
@@ -273,8 +243,8 @@ def stitch_events(
     seq = 0
     for idx, entry in enumerate(sessions, start=1):
         sid = entry["session_id"]
-        path = find_transcript(sid, projects_root=projects_root)
-        turns = read_transcript_turns(path) if path is not None else []
+        path = find_transcript(sid, projects_root=projects_root, host=host)
+        turns = read_transcript_turns(path, host=host) if path is not None else []
 
         if idx > 1:
             boundary_ts = turns[0]["ts"] if turns else (entry.get("updated_at") or "")
@@ -409,7 +379,7 @@ def _follow(
                 continue
             transcript_paths: dict[str, Path] = {}
             for entry in sessions:
-                p = find_transcript(entry["session_id"])
+                p = find_transcript(entry["session_id"], host=host)
                 if p is not None:
                     transcript_paths[entry["session_id"]] = p
             target = current_follow_target(sessions, transcript_paths)
@@ -419,7 +389,7 @@ def _follow(
 
             if sid not in offsets:
                 idx = next(i for i, s in enumerate(sessions, start=1) if s["session_id"] == sid)
-                seen = read_transcript_turns(target)
+                seen = read_transcript_turns(target, host=host)
                 boundary_ts = seen[0]["ts"] if seen else ""
                 emit_event(
                     {"kind": "boundary", "session_id": sid, "index": idx, "ts": boundary_ts, "context_note": None},
@@ -427,7 +397,7 @@ def _follow(
                 )
                 offsets[sid] = 0
 
-            new_offset, new_turns = _read_new_turns(target, offsets[sid])
+            new_offset, new_turns = _read_new_turns(target, offsets[sid], host=host)
             offsets[sid] = new_offset
             for turn in new_turns:
                 seq += 1
@@ -477,7 +447,7 @@ def main(args: Any) -> int:
     offsets: dict[str, int] = {}
     if sessions and host == "claude":
         last_sid = sessions[-1]["session_id"]
-        last_path = find_transcript(last_sid)
+        last_path = find_transcript(last_sid, host=host)
         if last_path is not None:
             try:
                 offsets[last_sid] = last_path.stat().st_size

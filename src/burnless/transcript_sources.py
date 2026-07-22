@@ -131,6 +131,20 @@ def _claude_content_text(content: Any) -> str:
     return ""
 
 
+def _claude_turn_from_obj(obj: dict, line_no: int) -> dict:
+    """One decoded claude JSONL record -> turn dict. Single source of the
+    claude record shape; iter_turns and parse_turn_line both use it."""
+    message = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+    role = str(message.get("role") or obj.get("role") or obj.get("type") or "").strip().lower()
+    content = message.get("content")
+    text = _claude_content_text(content)
+    turn = dict(obj)
+    turn["_line_no"] = line_no
+    turn["role"] = role
+    turn["text"] = text
+    return turn
+
+
 def _iter_turns_claude(f) -> Iterator[dict]:
     with f:
         for line_no, line in enumerate(f):
@@ -143,15 +157,7 @@ def _iter_turns_claude(f) -> Iterator[dict]:
                 continue
             if not isinstance(obj, dict):
                 continue
-            message = obj.get("message") if isinstance(obj.get("message"), dict) else {}
-            role = str(message.get("role") or obj.get("role") or obj.get("type") or "").strip().lower()
-            content = message.get("content")
-            text = _claude_content_text(content)
-            turn = dict(obj)
-            turn["_line_no"] = line_no
-            turn["role"] = role
-            turn["text"] = text
-            yield turn
+            yield _claude_turn_from_obj(obj, line_no)
 
 
 def _codex_content_text(content: Any) -> str:
@@ -171,6 +177,32 @@ def _codex_content_text(content: Any) -> str:
 def _is_codex_noise(text: str) -> bool:
     stripped = (text or "").lstrip()
     return stripped.startswith(_CODEX_NOISE_PREFIXES)
+
+
+def _codex_turn_from_obj(obj: dict, strict: bool = False) -> tuple[dict | None, str | None]:
+    """One decoded codex rollout record -> (turn, skip_reason). Single source
+    of the codex record shape; iter_turns and parse_turn_line both use it."""
+    top_type = obj.get("type")
+    if top_type not in _CODEX_KNOWN_TOP_TYPES:
+        if strict:
+            raise ValueError(f"unknown codex record type: {top_type!r}")
+        return None, f"unknown_type:{top_type}"
+    if top_type != "response_item":
+        return None, f"top_type:{top_type}"
+    payload = obj.get("payload")
+    if not isinstance(payload, dict):
+        return None, "malformed_payload"
+    if payload.get("type") != "message":
+        return None, f"payload_type:{payload.get('type')}"
+    role = payload.get("role")
+    if role not in ("user", "assistant"):
+        return None, f"role:{role}"
+    text = _codex_content_text(payload.get("content"))
+    if not text.strip():
+        return None, "empty_text"
+    if role == "user" and _is_codex_noise(text):
+        return None, "boot_noise"
+    return {"role": role, "text": text}, None
 
 
 def _iter_turns_codex(f) -> Iterator[dict]:
@@ -194,37 +226,12 @@ def _iter_turns_codex(f) -> Iterator[dict]:
                 _skip("non_dict")
                 continue
 
-            top_type = obj.get("type")
-            if top_type not in _CODEX_KNOWN_TOP_TYPES:
-                if strict:
-                    raise ValueError(f"unknown codex record type: {top_type!r}")
-                _skip(f"unknown_type:{top_type}")
+            turn, skip_key = _codex_turn_from_obj(obj, strict=strict)
+            if skip_key is not None:
+                _skip(skip_key)
                 continue
-            if top_type != "response_item":
-                _skip(f"top_type:{top_type}")
-                continue
-
-            payload = obj.get("payload")
-            if not isinstance(payload, dict):
-                _skip("malformed_payload")
-                continue
-            if payload.get("type") != "message":
-                _skip(f"payload_type:{payload.get('type')}")
-                continue
-            role = payload.get("role")
-            if role not in ("user", "assistant"):
-                _skip(f"role:{role}")
-                continue
-
-            text = _codex_content_text(payload.get("content"))
-            if not text.strip():
-                _skip("empty_text")
-                continue
-            if role == "user" and _is_codex_noise(text):
-                _skip("boot_noise")
-                continue
-
-            yield {"role": role, "text": text}
+            if turn is not None:
+                yield turn
 
     if skip_counts:
         _logger.debug("iter_turns(codex): %d lines skipped: %s", sum(skip_counts.values()), skip_counts)
@@ -233,3 +240,53 @@ def _iter_turns_codex(f) -> Iterator[dict]:
 def _is_restore_noise(text: str) -> bool:
     blob = text or ""
     return any(marker in blob for marker in _IGNORED_RESTORE_MARKERS)
+
+
+def parse_turn_line(host: str, line: str, line_no: int = 0) -> dict | None:
+    """Decode ONE transcript line into a turn dict (or None). Same decoding as
+    iter_turns, exposed line-at-a-time for incremental readers (chat --follow).
+    Malformed/partial lines return None, never raise (fail-open like iter_turns)."""
+    if host not in ("claude", "codex"):
+        raise ValueError(f"unknown host: {host!r}")
+    text_line = (line or "").strip()
+    if not text_line:
+        return None
+    try:
+        obj = json.loads(text_line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    if host == "claude":
+        return _claude_turn_from_obj(obj, line_no)
+    turn, _skip = _codex_turn_from_obj(obj)
+    return turn
+
+
+def turn_meta(host: str, turn: dict) -> dict:
+    """Presentation metadata for a parsed turn: {ts, tool_names, is_sidechain}.
+    Host transcript-format knowledge stays HERE (paridade invariante 14) —
+    viewers consume, they never re-parse records themselves."""
+    if host == "claude":
+        message = turn.get("message") if isinstance(turn.get("message"), dict) else {}
+        tool_names: list[str] = []
+        content = message.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "tool_use":
+                    tool_names.append(str(block.get("name") or "tool"))
+                elif btype == "tool_result":
+                    tool_names.append("result")
+        return {
+            "ts": str(turn.get("timestamp") or ""),
+            "tool_names": tool_names,
+            "is_sidechain": bool(turn.get("isSidechain") or message.get("isSidechain")),
+        }
+    return {
+        "ts": str(turn.get("ts") or ""),
+        "tool_names": list(turn.get("tool_names") or []),
+        "is_sidechain": False,
+    }
