@@ -2781,7 +2781,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--host", choices=["auto", "claude", "codex"], default="auto", help="host CLI to launch")
     sp.add_argument("--model", default=None, help="optional model override forwarded to the host")
     sp.add_argument("--run-id", default=None, dest="run_id", help="optional lineage id")
-    sp.add_argument("extra_args", nargs=argparse.REMAINDER, help="extra args forwarded verbatim")
+    sp.add_argument("--chrome", action="store_true", help="claude host capability: launch with Claude-in-Chrome enabled (fails loud on other hosts)")
+    sp.add_argument("extra_args", nargs=argparse.REMAINDER, help="extra args forwarded verbatim (a leading -- separator is stripped, never forwarded as prompt)")
     sp.set_defaults(func=cmd_pilot, pilot_cmd="run")
 
     sp = sub.add_parser("pty", help="alias for pilot")
@@ -2793,7 +2794,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--host", choices=["auto", "claude", "codex"], default="auto", help="host CLI to launch")
     sp.add_argument("--model", default=None, help="optional model override forwarded to the host")
     sp.add_argument("--run-id", default=None, dest="run_id", help="optional lineage id")
-    sp.add_argument("extra_args", nargs=argparse.REMAINDER, help="extra args forwarded verbatim")
+    sp.add_argument("--chrome", action="store_true", help="claude host capability: launch with Claude-in-Chrome enabled (fails loud on other hosts)")
+    sp.add_argument("extra_args", nargs=argparse.REMAINDER, help="extra args forwarded verbatim (a leading -- separator is stripped, never forwarded as prompt)")
     sp.set_defaults(func=cmd_pilot, pilot_cmd="run")
 
     sp = sub.add_parser("pilot-event", help=argparse.SUPPRESS)
@@ -2937,6 +2939,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print(doctor_mod.render_human(checks))
     return doctor_mod.exit_code(checks)
+
+
+def _pilot_normalize_extra_args(raw_extra, chrome: bool, host_name: str):
+    """P11.1: argparse.REMAINDER keeps the literal `--` separator, and the host
+    CLI then treats everything after it as PROMPT text (the `--chrome`-as-prompt
+    footgun, Diario 21/07). Strip the separator, and materialize --chrome as an
+    explicit claude-host capability. Returns (extra_args, error_message)."""
+    extra = list(raw_extra or [])
+    if extra and extra[0] == "--":
+        extra = extra[1:]
+    if chrome:
+        if host_name != "claude":
+            return None, (
+                f"--chrome e uma capability do host claude; host resolvido: {host_name}. "
+                "Use --host claude ou remova --chrome."
+            )
+        if "--chrome" not in extra:
+            extra = extra + ["--chrome"]
+    return extra, None
 
 
 def cmd_pilot_event(args: argparse.Namespace) -> int:
@@ -3419,7 +3440,13 @@ def cmd_pilot(args: argparse.Namespace) -> int:
     model = getattr(args, "model", None)
     if model is None:
         model = pilot_cfg.get("model")
-    extra_args = getattr(args, "extra_args", []) or list(pilot_cfg.get("extra_args") or [])
+    _extra_raw = getattr(args, "extra_args", []) or list(pilot_cfg.get("extra_args") or [])
+    extra_args, _extra_err = _pilot_normalize_extra_args(
+        _extra_raw, bool(getattr(args, "chrome", False)), selected_host
+    )
+    if _extra_err:
+        print(f"burnless pilot: {_extra_err}", file=sys.stderr)
+        return 2
     run_id = getattr(args, "run_id", None) or f"pilot-{int(time.time())}"
     auto_rollover, _auto_rollover_diagnostic = _pilot_resolve_auto_rollover(
         cli_auto_rollover=bool(getattr(args, "auto_rollover", False)),
