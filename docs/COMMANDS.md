@@ -48,6 +48,10 @@ The three layers: **Encoder/Decoder** (compaction) → **Maestro** (routing) →
 - `--explain` — full scored route decision: natural/requested/effective tier, confidence, the signals that drove it, the active escalation-policy source, the action (`allowed`/`downgraded`/`blocked`/`confirmed`), and an executable next command.
 - `--tier {diamond,gold,silver,bronze}` — test a requested-tier upgrade against the natural route (pairs with `--explain` to see whether the escalation policy would block it and the `--force` command to override).
 
+### `burnless setup --codex` — install Codex host support
+- `--codex` — write the managed Burnless block into `~/.codex/AGENTS.md` (not `CODEX.md`), preserving any user content outside the markers.
+- `--dry-run` — print the diff without writing anything.
+
 ## Behavior contracts (verified)
 
 - **Atomic id allocation:** delegation ids are allocated under an exclusive file lock (`alloc_delegation_id`). Parallel `burnless do` never collide. *(Proven: 30 concurrent processes → 0 collisions.)*

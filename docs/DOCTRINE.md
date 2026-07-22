@@ -138,6 +138,27 @@ Rolling memory runs in your **Claude CLI session** via hooks (no `burnless chat`
 
 ---
 
+## Codex parity (multi-host)
+
+Burnless works identically from a Codex CLI session. The durable instruction file is `AGENTS.md`
+(not `CODEX.md`) — install it with `burnless setup --codex` (`--dry-run` to preview the diff first).
+Same `.burnless/` project state, same tier roles (gold/silver/bronze/diamond), same `## Verify`
+discipline as a Claude Code session — nothing about the tiering doctrine above changes by host.
+
+Rolling memory works the same way, wired through `templates/codex/hooks/*` instead of the Claude
+hook scripts. The `Stop` event is the guaranteed anchor that writes to the journal; `SessionStart` is
+best-effort and its payload schema is unverified — see `templates/codex/hooks/README.md` for the
+full caveat rather than re-deriving it here.
+
+`burnless chat --host codex`, `burnless status --all`, and `burnless gc` all operate across hosts
+identically — a chain started in Codex reads and lists the same as one started in Claude.
+
+The Gold/Diamond `ask` guidance (see "Tiers are ROLES, not models" above) is current recommendation
+for both hosts equally, not an enforced requirement — nothing blocks a Codex session from choosing a
+lower tier.
+
+---
+
 ## Spec Authoring — Pre-Dispatch Checklist (6 Rules)
 
 **When:** Before every `burnless do` or `burnless delegate`. **Why:** These rules prevent systematic errors discovered in TEST 1 audit (2026-06-13). **Who checks:** Pre-flight validator (automatic) + you (mental checklist).
