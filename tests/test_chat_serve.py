@@ -76,7 +76,7 @@ def chat_artifacts(tmp_path: Path, monkeypatch) -> dict[str, Path]:
     monkeypatch.setattr(
         chat,
         "find_transcript",
-        lambda session_id, projects_root=None: original_find(
+        lambda session_id, projects_root=None, **kwargs: original_find(
             session_id, projects_root=projects_root or transcript_dir.parent
         ),
     )
