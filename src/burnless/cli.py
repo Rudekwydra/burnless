@@ -30,6 +30,7 @@ from .providers.contracts import AskRequest
 from . import compression as compression_mod
 from . import lifetime as lifetime_mod
 from . import claude_integration
+from . import codex_integration
 from . import provider_autodetect
 from . import dashboard
 from . import live_runner
@@ -1251,12 +1252,46 @@ def cmd_debugless_sweep(args: argparse.Namespace) -> int:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    if getattr(args, "codex", False):
+        return _cmd_setup_codex(args)
     from . import setup_wizard
     return setup_wizard.run(
         non_interactive=bool(getattr(args, "non_interactive", False)),
         accept_all=bool(getattr(args, "yes", False)),
         project=getattr(args, "project", None),
     )
+
+
+def _cmd_setup_codex(args: argparse.Namespace) -> int:
+    """Install/update the managed Burnless block in ~/.codex/AGENTS.md.
+
+    HOME-level, not per-project (unlike CLAUDE.md) — Codex's AGENTS.md is a
+    single global file, so this never touches the current project's tree.
+    """
+    try:
+        from . import __version__ as _v
+    except ImportError:
+        _v = "0.7.4"
+
+    agents_md = Path.home() / ".codex" / "AGENTS.md"
+
+    if getattr(args, "dry_run", False):
+        if agents_md.exists():
+            current = agents_md.read_text(encoding="utf-8")
+            existing_block_match = codex_integration.BLOCK_PATTERN.search(current)
+            if existing_block_match:
+                print(f"AGENTS.md dry-run: existing burnless block found at {agents_md}")
+                print("current block:\n" + existing_block_match.group(0))
+            else:
+                print(f"AGENTS.md dry-run: no burnless block found at {agents_md} — would be appended")
+        else:
+            print(f"AGENTS.md dry-run: {agents_md} does not exist — would be created")
+        print("\nwould become:\n" + codex_integration.render_block(_v))
+        return 0
+
+    action = codex_integration.write_or_update(agents_md, version=_v)
+    print(f"AGENTS.md: {action} burnless block at {agents_md}")
+    return 0
 
 
 def _worker_overrides_from_args(args) -> dict:
@@ -2621,6 +2656,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--project", help="project name (default: current dir name)")
     sp.add_argument("--yes", "-y", action="store_true", help="accept all defaults")
     sp.add_argument("--non-interactive", action="store_true", help="no prompts")
+    sp.add_argument("--codex", action="store_true", dest="codex", help="install the managed Burnless block into ~/.codex/AGENTS.md")
+    sp.add_argument("--dry-run", action="store_true", dest="dry_run", help="show what would change without writing")
     sp.set_defaults(func=cmd_setup)
 
     sp = sub.add_parser("warm", help="manage the warm session pool (cache-hit prefix for workers)")
@@ -2882,6 +2919,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--fix", action="store_true",
                     help="auto-remediate safe issues (write config, wire hooks, copy managed files, register MCP) then re-check")
     sp.add_argument("--prefix-file", default=None, dest="prefix_file", help="scan this ask --prefix-file path for secret-shaped content (soft warning, not a hard failure)")
+    sp.add_argument("--codex", action="store_true", help="also run the Codex integration check group (binary, AGENTS.md, hooks, provider config) — informational only")
     sp.set_defaults(func=cmd_doctor)
 
     return p
@@ -2892,6 +2930,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     checks = doctor_mod.run_checks(
         fix=bool(getattr(args, "fix", False)),
         prefix_file=getattr(args, "prefix_file", None),
+        codex=bool(getattr(args, "codex", False)),
     )
     if getattr(args, "json", False):
         print(json.dumps(doctor_mod.render_json(checks), indent=2, ensure_ascii=False))

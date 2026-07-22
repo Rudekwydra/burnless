@@ -41,6 +41,7 @@ _BAND_NAMES = {
     "F": "Environment",
     "G": "Scheduled Jobs",
     "H": "Delegation",
+    "I": "Codex",
 }
 
 # Safe remediation order. mkdir/copy before wiring (hooks point at the copied
@@ -65,7 +66,8 @@ class Check:
 # ── Orchestration ─────────────────────────────────────────────────────────────
 
 def run_checks(*, home: Path | None = None, cwd: Path | None = None,
-               fix: bool = False, prefix_file: str | None = None) -> list[Check]:
+               fix: bool = False, prefix_file: str | None = None,
+               codex: bool = False) -> list[Check]:
     """Run all checks. Read-only unless ``fix=True``.
 
     With ``fix=True``: collect once, apply every auto-fixable WARN/FAIL fixer in
@@ -74,19 +76,25 @@ def run_checks(*, home: Path | None = None, cwd: Path | None = None,
     ``prefix_file``, when given, adds one extra check (F2) scanning that single
     file for secret-shaped content (sec 14 rule 7) — no historical audit-log
     scanning, just the one path the caller names.
+
+    ``codex=True`` adds Band I (Codex): binary presence, ~/.codex/AGENTS.md
+    managed-block status, shippable hooks, and configured provider — all
+    informational PASS/WARN, never FAIL, since not adopting Codex is a valid
+    default state, not a bug.
     """
     if home is None:
         home = Path.home()
 
-    checks = _collect(home=home, cwd=cwd, prefix_file=prefix_file)
+    checks = _collect(home=home, cwd=cwd, prefix_file=prefix_file, codex=codex)
     if not fix:
         return checks
 
     _apply_fixes(checks)
-    return _collect(home=home, cwd=cwd, prefix_file=prefix_file)
+    return _collect(home=home, cwd=cwd, prefix_file=prefix_file, codex=codex)
 
 
-def _collect(*, home: Path, cwd: Path | None, prefix_file: str | None = None) -> list[Check]:
+def _collect(*, home: Path, cwd: Path | None, prefix_file: str | None = None,
+             codex: bool = False) -> list[Check]:
     checks: list[Check] = []
     _check_a(checks)
     _check_b(checks, cwd=cwd)
@@ -100,6 +108,8 @@ def _collect(*, home: Path, cwd: Path | None, prefix_file: str | None = None) ->
             checks.append(c)
     _check_g(checks, cwd=cwd)
     _check_h(checks, home=home, cwd=cwd)
+    if codex:
+        _check_i(checks, home=home, cwd=cwd)
     return checks
 
 
@@ -866,6 +876,80 @@ def _check_h(checks: list[Check], home: Path | None = None, cwd: Path | None = N
 
     except Exception as e:
         checks.append(Check("H4", "H", "WARN", f"rolling-memory scan error: {e}"))
+
+
+# ── Band I: Codex (opt-in via --codex; informational, never FAIL) ──────────────
+
+def _check_i(checks: list[Check], home: Path | None = None, cwd: Path | None = None) -> None:
+    if home is None:
+        home = Path.home()
+
+    # I1: codex binary discoverable
+    codex_path = shutil.which("codex")
+    if codex_path:
+        checks.append(Check("I1", "I", "PASS", f"codex binary: {codex_path}"))
+    else:
+        checks.append(Check("I1", "I", "WARN", "codex not found in PATH",
+                            "install the codex CLI, or ignore if not using Codex"))
+
+    # I2: ~/.codex/AGENTS.md — informational only, absence is a valid state
+    from . import codex_integration
+    agents_md = home / ".codex" / "AGENTS.md"
+    if agents_md.exists():
+        try:
+            text = agents_md.read_text(encoding="utf-8")
+            if codex_integration.BLOCK_PATTERN.search(text):
+                checks.append(Check("I2", "I", "PASS", f"AGENTS.md has managed burnless block: {agents_md}"))
+            else:
+                checks.append(Check("I2", "I", "WARN",
+                                    f"AGENTS.md exists but no burnless block: {agents_md}",
+                                    "run `burnless setup --codex` to install it"))
+        except Exception as e:
+            checks.append(Check("I2", "I", "WARN", f"AGENTS.md unreadable: {e}"))
+    else:
+        checks.append(Check("I2", "I", "WARN",
+                            f"AGENTS.md not found: {agents_md}",
+                            "run `burnless setup --codex` to create it"))
+
+    # I3: codex hooks shippable from this installed package/repo
+    from .init_claude_code import _resolve_templates_dir
+    tdir = _resolve_templates_dir()
+    if tdir is not None and (tdir / "codex" / "hooks" / "hooks.json").exists():
+        checks.append(Check("I3", "I", "PASS", f"codex hooks.json: {tdir / 'codex' / 'hooks' / 'hooks.json'}"))
+    else:
+        checks.append(Check("I3", "I", "WARN",
+                            "templates/codex/hooks/hooks.json not found",
+                            "reinstall burnless package"))
+
+    # I4: codex provider/tier resolves in the current project's config.yaml
+    from . import paths as paths_mod
+    from . import config as config_mod
+    from .coreconfig import resolver as coreconfig_resolver
+
+    bl_root = paths_mod.find_root(start=cwd)
+    if bl_root is None:
+        checks.append(Check("I4", "I", "WARN", "no .burnless/ found — cannot check codex provider config"))
+        return
+
+    cfg_path = bl_root / "config.yaml"
+    if not cfg_path.exists():
+        checks.append(Check("I4", "I", "WARN", "config.yaml missing — cannot check codex provider config"))
+        return
+
+    try:
+        cfg = config_mod.load(cfg_path)
+        codex_tiers = [
+            t for t in ("bronze", "silver", "gold", "diamond")
+            if coreconfig_resolver.resolve_agent(t, cfg).provider == "codex"
+        ]
+        if codex_tiers:
+            checks.append(Check("I4", "I", "PASS", f"codex provider configured for tier(s): {', '.join(codex_tiers)}"))
+        else:
+            checks.append(Check("I4", "I", "WARN",
+                                "no tier configured with provider: codex",
+                                "set a tier's provider to codex in .burnless/config.yaml if desired"))
+    except Exception as e:
+        checks.append(Check("I4", "I", "WARN", f"config.yaml parse error: {e}"))
 
 
 # ── Renderers ─────────────────────────────────────────────────────────────────
