@@ -23,6 +23,14 @@ def _turn(role: str, text: str, ts: str) -> str:
     )
 
 
+def _codex_turn(role: str, text: str) -> str:
+    btype = "input_text" if role == "user" else "output_text"
+    return json.dumps(
+        {"type": "response_item", "payload": {"type": "message", "role": role, "content": [{"type": btype, "text": text}]}},
+        ensure_ascii=False,
+    )
+
+
 @pytest.fixture
 def chat_artifacts(tmp_path: Path) -> dict[str, Path]:
     project_root = tmp_path / "project"
@@ -131,11 +139,15 @@ def chat_artifacts_codex(tmp_path: Path) -> dict[str, Path]:
     transcript_dir = projects_root / "synthetic-project"
     transcript_dir.mkdir(parents=True)
     transcript = transcript_dir / f"{CODEX_SESSION_1}.jsonl"
+    # REAL codex rollout format (response_item/payload), not claude-shaped —
+    # the viewer must parse what ~/.codex/sessions actually contains.
     transcript.write_text(
         "\n".join(
             [
-                _turn("user", "pergunta codex", "2026-07-21T10:00:00Z"),
-                _turn("assistant", "resposta codex", "2026-07-21T10:00:30Z"),
+                json.dumps({"type": "session_meta", "payload": {"session_id": CODEX_SESSION_1}}),
+                _codex_turn("user", "pergunta codex"),
+                "{linha corrompida",
+                _codex_turn("assistant", "resposta codex"),
             ]
         )
         + "\n",
@@ -181,7 +193,7 @@ def test_json_mode_emits_valid_jsonl_contract(chat_artifacts, monkeypatch, capsy
     monkeypatch.setattr(
         chat,
         "find_transcript",
-        lambda session_id, projects_root=None: original_find(
+        lambda session_id, projects_root=None, **kwargs: original_find(
             session_id, projects_root=chat_artifacts["projects_root"]
         ),
     )
@@ -273,7 +285,7 @@ def test_chat_default_host_is_claude(chat_artifacts, monkeypatch, capsys):
     monkeypatch.setattr(
         chat,
         "find_transcript",
-        lambda session_id, projects_root=None: original_find(
+        lambda session_id, projects_root=None, **kwargs: original_find(
             session_id, projects_root=chat_artifacts["projects_root"]
         ),
     )
@@ -299,7 +311,7 @@ def test_chat_explicit_host_codex(chat_artifacts_codex, monkeypatch, capsys):
     monkeypatch.setattr(
         chat,
         "find_transcript",
-        lambda session_id, projects_root=None: original_find(
+        lambda session_id, projects_root=None, **kwargs: original_find(
             session_id, projects_root=chat_artifacts_codex["projects_root"]
         ),
     )
@@ -340,7 +352,7 @@ def test_chat_follow_skips_find_transcript_for_non_claude_host(chat_artifacts_co
     find_transcript_calls = []
     original_find = chat.find_transcript
 
-    def spy_find_transcript(session_id, projects_root=None):
+    def spy_find_transcript(session_id, projects_root=None, **kwargs):
         find_transcript_calls.append(session_id)
         return original_find(session_id, projects_root=chat_artifacts_codex["projects_root"])
 
@@ -371,3 +383,39 @@ def test_chat_follow_skips_find_transcript_for_non_claude_host(chat_artifacts_co
     # --follow byte-offset optimization must be skipped for non-claude hosts.
     assert find_transcript_calls == [CODEX_SESSION_1]
     assert captured_offsets == {}
+
+
+def test_find_transcript_codex_real_rollout_and_parse(tmp_path, monkeypatch):
+    """G3 real-flow: resolve + parse an ACTUAL codex rollout under
+    ~/.codex/sessions via transcript_sources (no claude-shaped fakes)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    sid = "cdx-real-0001"
+    day_dir = tmp_path / ".codex" / "sessions" / "2026" / "07" / "21"
+    day_dir.mkdir(parents=True)
+    rollout = day_dir / f"rollout-2026-07-21T10-00-00-{sid}.jsonl"
+    rollout.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"session_id": sid}}),
+                _codex_turn("user", "oi codex"),
+                _codex_turn("assistant", "oi humano"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    p = chat.find_transcript(sid, host="codex")
+    assert p == rollout
+    turns = chat.read_transcript_turns(p, host="codex")
+    assert [(t["role"], t["text"]) for t in turns] == [("user", "oi codex"), ("assistant", "oi humano")]
+
+
+def test_read_new_turns_codex_incremental(tmp_path):
+    path = tmp_path / "roll.jsonl"
+    path.write_text(_codex_turn("user", "parte 1") + "\n", encoding="utf-8")
+    offset, turns = chat._read_new_turns(path, 0, host="codex")
+    assert [t["text"] for t in turns] == ["parte 1"]
+    with path.open("a", encoding="utf-8") as f:
+        f.write(_codex_turn("assistant", "parte 2") + "\n")
+    offset, turns = chat._read_new_turns(path, offset, host="codex")
+    assert [t["text"] for t in turns] == ["parte 2"]
