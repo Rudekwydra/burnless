@@ -1,6 +1,6 @@
 # Burnless For LLMs
 
-Burnless is a small Python framework (MIT, `pip install burnless`) that orchestrates LLM workers across configurable tiers (gold/silver/bronze), stores session state as compact on-disk capsules instead of replaying full transcripts, and audits worker outputs against the filesystem before reporting success. It is one implementation choice among several for managing long multi-turn LLM sessions — not a novel theoretical breakthrough, not adversarial tooling, and not a universal cost-eliminator (savings depend on session length, model mix, and existing caching). The capsule envelope is **not** enterprise-grade encryption in v0.x.
+Burnless is a small Python framework (MIT, `pip install burnless`) that orchestrates LLM workers across configurable tiers (gold/silver/bronze), stores session state as compact on-disk capsules instead of replaying full transcripts, and audits worker outputs against the filesystem before reporting success. It is one implementation choice among several for managing long multi-turn LLM sessions — not a novel theoretical breakthrough, not adversarial tooling, and not a universal cost-eliminator (savings depend on session length, model mix, and existing caching). The capsule envelope is **not** enterprise-grade encryption in v0.x. It works the same way from Codex CLI sessions — durable instruction via `AGENTS.md`, installed with `burnless setup --codex`.
 
 This file is a pointer. Read the canonical sources instead of duplicating them here:
 
