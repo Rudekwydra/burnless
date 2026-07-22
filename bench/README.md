@@ -105,3 +105,7 @@ bench/results/run_<timestamp>.json
 ```
 
 Use `--dry-run` to inspect the plan without making API calls.
+
+## Other bench scripts
+
+- `prefix_cache_bench.py` — honest, per-adapter benchmark of `burnless ask --prefix-file/--cache-key` (M6 Wave B): cold call + N warm calls, real envelope usage/cost/latency only, classifies `supported`/`unsupported`/`unobservable`. `python bench/prefix_cache_bench.py --tier gold --runs 3`.

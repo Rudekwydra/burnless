@@ -39,6 +39,10 @@ The three layers: **Encoder/Decoder** (compaction) → **Maestro** (routing) →
 ### `burnless run dXXX` — execute a delegation
 - `--timeout`, `--stale-timeout-s`, `--dry-run`, `--maestro` / `--no-cache-worker`, `--cold-cache`, `--watch` / `--quiet` / `--full` / `--verbose`, `--progress {minimal,brief,full}`.
 
+### `burnless ask "PROMPT"` — pure text completion (no tools, no CLAUDE.md)
+- `--tier {diamond,gold,silver,bronze}`, `--explain`, `--dry-run`, `--output-format {text,json}`.
+- `--prefix-file PATH` — stable, versioned prefix appended to the system prompt (cache-friendly, hash-only telemetry). `--cache-key KEY` — opaque label for correlating prefix-cache calls in telemetry (not used for validation).
+
 ### `burnless route "TASK"` — preview routing (no execution)
 - (default) — prints the natural tier, agent, and matched keyword (3-line summary).
 - `--explain` — full scored route decision: natural/requested/effective tier, confidence, the signals that drove it, the active escalation-policy source, the action (`allowed`/`downgraded`/`blocked`/`confirmed`), and an executable next command.
