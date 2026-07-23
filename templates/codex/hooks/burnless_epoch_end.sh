@@ -11,31 +11,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/codex_payload.sh"
 
 codex_read_stdin
-IFS=$'\t' read -r SID CWD <<<"$(codex_resolve_sid_cwd)"
+IFS=$'\x1f' read -r SID CWD TRANSCRIPT_PATH <<<"$(codex_resolve_sid_cwd)"
+TRANSCRIPT_ARGS=()
+[[ -n "$TRANSCRIPT_PATH" ]] && TRANSCRIPT_ARGS=(--transcript "$TRANSCRIPT_PATH")
 PID=$(codex_host_pid)
 [[ -z "$PID" ]] && PID="$SID"
 
-if ! codex_validate_sid "$SID" "$CWD" "$BB"; then
+if ! codex_validate_sid "$SID" "$CWD" "$BB" "$TRANSCRIPT_PATH"; then
   codex_dump_payload
   exit 0
 fi
 
-ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --orphan-fallback 2>/dev/null)
+ROOT=$("$BB" epoch resolve-root --cwd "$CWD" --workspace "$WORKSPACE_ROOT" --orphan-fallback "${TRANSCRIPT_ARGS[@]}" 2>/dev/null)
 [[ -z "$ROOT" ]] && exit 0
 [[ -f "$ROOT/.burnless/epochs.off" ]] && exit 0
 
-EXTRACTED=$("$BB" epoch extract-exchange --host codex --host-session-id "$SID" --process-instance-id "$PID" --cwd "$CWD" --source clear 2>/dev/null)
+EXTRACTED=$("$BB" epoch extract-exchange --host codex --host-session-id "$SID" --process-instance-id "$PID" --cwd "$CWD" --source clear "${TRANSCRIPT_ARGS[@]}" 2>/dev/null)
 [[ -z "$EXTRACTED" ]] && exit 0
 
-RECORD=$(printf '%s' "$EXTRACTED" | "$BB" epoch journal-append --root "$ROOT" 2>/dev/null)
+RECORD=$(printf '%s' "$EXTRACTED" | "$BB" epoch journal-append --root "$ROOT" "${TRANSCRIPT_ARGS[@]}" 2>/dev/null)
 [[ -z "$RECORD" ]] && exit 0
 
-printf '%s' "$RECORD" | "$BB" epoch handoff-write --root "$ROOT" --host codex --host-session-id "$SID" --process-instance-id "$PID" >/dev/null 2>&1
+printf '%s' "$RECORD" | "$BB" epoch handoff-write --root "$ROOT" --host codex --host-session-id "$SID" --process-instance-id "$PID" "${TRANSCRIPT_ARGS[@]}" >/dev/null 2>&1
 
 {
-  printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host codex --host-session-id "$SID" --process-instance-id "$PID" --source clear >/dev/null 2>&1
+  printf '%s' "$RECORD" | "$BB" epoch compact-pending --root "$ROOT" --host codex --host-session-id "$SID" --process-instance-id "$PID" --source clear "${TRANSCRIPT_ARGS[@]}" >/dev/null 2>&1
   mkdir -p "$HOME/.burnless/state"
-  "$BB" epoch export --root "$ROOT" --host codex --host-session-id "$SID" >/dev/null 2>>"$HOME/.burnless/state/epoch_export.log"
+  "$BB" epoch export --root "$ROOT" --host codex --host-session-id "$SID" "${TRANSCRIPT_ARGS[@]}" >/dev/null 2>>"$HOME/.burnless/state/epoch_export.log"
 } </dev/null >/dev/null 2>&1 &
 disown 2>/dev/null || true
 exit 0
