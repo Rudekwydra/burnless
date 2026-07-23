@@ -142,7 +142,7 @@ def expand(ref_id: str, index: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     Byte-for-byte identical to the original.
     """
     if ref_id not in index:
-        raise ValueError(f"ref_id {ref_id} não encontrado no index")
+        raise ValueError(f"ref_id {ref_id} not found in index")
 
     ref_info = index[ref_id]
     src = ref_info["src"]

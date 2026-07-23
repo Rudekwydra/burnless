@@ -228,7 +228,7 @@ def test_missing_second_transcript_renders_notice_without_crash(chat_artifacts):
     output = StringIO()
     for event in events:
         chat.emit_event(event, output)
-    assert "(transcript não encontrado: session-)" in output.getvalue()
+    assert "(transcript not found: session-)" in output.getvalue()
 
 
 def test_current_follow_target_selects_newest_available_transcript(tmp_path):
