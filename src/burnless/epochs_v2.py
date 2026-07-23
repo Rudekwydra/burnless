@@ -11,6 +11,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from . import config
+from . import config
 from .markers import normalize_section, EXCHANGE_Q_MARKERS, EXCHANGE_A_MARKERS, find_line_anchored, to_pt_markers
 
 SECTIONS = ["Foco atual", "Threads abertas", "Decisões", "Contracts", "Refs"]
@@ -1172,7 +1174,7 @@ def _claude_rewrite(prompt: str, model: str, cfg_timeout: float, project_root, e
         except Exception:
             iso_cwd = None
         result = subprocess.run(
-            [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
+            [claude_bin, "-p", "--model", config.cli_model(model), "--permission-mode", "bypassPermissions",
              "--append-system-prompt", _encoder_system_prompt(enc),
              "--allowedTools", "", "--output-format", "json"],
             input=prompt,

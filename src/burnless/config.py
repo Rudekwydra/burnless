@@ -5,6 +5,10 @@ import os
 import re
 import yaml
 
+from .coreconfig.schema import DEFAULT_TIERS as _SCHEMA_TIERS
+
+from .coreconfig.schema import DEFAULT_TIERS as _SCHEMA_TIERS
+
 # Local ollama model standardized across the fleet (gemma-4 E4B QAT, 2026-06-25).
 # Single source of truth for codec / wizard / debugless local-model defaults.
 DEFAULT_LOCAL_MODEL = "hf.co/unsloth/gemma-4-E4B-it-qat-GGUF:UD-Q4_K_XL"
@@ -463,14 +467,14 @@ def _normalize_legacy_tiers(data: dict, *, prefer_diamond: bool = False) -> None
                         silver_rules.append(kw)
 
 
+# Dated model ids live in exactly one place: coreconfig/schema.py DEFAULT_TIERS.
+# Everything below derives from it, so bumping a model is a one-line change there.
 DEFAULT_TIER_MODELS = {
-    "gold": "claude-opus-4-8",
-    "silver": "claude-sonnet-4-6",
-    "bronze": "claude-haiku-4-5-20251001",
+    tier: _SCHEMA_TIERS[tier].model for tier in ("gold", "silver", "bronze")
 }
 
 DEFAULT_PROVIDER_MODELS = {
-    "claude": "claude-sonnet-4-6",
+    "claude": _SCHEMA_TIERS["silver"].model,
     "codex": "gpt-5.2",
 }
 
@@ -485,12 +489,50 @@ CLI_TIER_ALIASES = {
     "bronze": "haiku",
 }
 
+_CLI_ALIAS_BY_ID = {
+    _SCHEMA_TIERS["gold"].model: "opus",
+    _SCHEMA_TIERS["silver"].model: "sonnet",
+    _SCHEMA_TIERS["bronze"].model: "haiku",
+    "claude-fable-5": "fable",
+}
+
+
+def cli_model(model):
+    """Stable alias to hand to `claude --model`, for ids we own.
+
+    Config and bookkeeping keep the dated id; only the argv gets the
+    alias, so a retired id can never break a live install. Anything we
+    do not own passes through untouched.
+    """
+    if not model:
+        return model
+    return _CLI_ALIAS_BY_ID.get(model, model)
+
+_CLI_ALIAS_BY_ID = {
+    _SCHEMA_TIERS["gold"].model: "opus",
+    _SCHEMA_TIERS["silver"].model: "sonnet",
+    _SCHEMA_TIERS["bronze"].model: "haiku",
+    "claude-fable-5": "fable",
+}
+
+
+def cli_model(model):
+    """Stable alias to hand to `claude --model`, for ids we own.
+
+    Config and bookkeeping keep the dated id; only the argv gets the
+    alias, so a retired id can never break a live install. Anything we
+    do not own passes through untouched.
+    """
+    if not model:
+        return model
+    return _CLI_ALIAS_BY_ID.get(model, model)
+
 MODEL_ALIASES = {
-    "opus": "claude-opus-4-8",
-    "sonnet": "claude-sonnet-4-6",
-    "haiku": "claude-haiku-4-5-20251001",
+    "opus": _SCHEMA_TIERS["gold"].model,
+    "sonnet": _SCHEMA_TIERS["silver"].model,
+    "haiku": _SCHEMA_TIERS["bronze"].model,
     "fable": "claude-fable-5",
-    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+    "claude-haiku-4-5": _SCHEMA_TIERS["bronze"].model,
 }
 
 

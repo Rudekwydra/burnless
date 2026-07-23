@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 import urllib.request
 
+from . import config
+from . import config
 from . import estimator
 from . import pricing
 from .providers.contracts import AskRequest, AskResult, BudgetPlan, ResolvedAskTarget, UsageRecord
@@ -249,7 +251,7 @@ def run_ask(
             raise ValueError(f"burnless ask: could not resolve a local model for tier '{tier}'")
         return run_ask_ollama(local_model, prompt, system=system, timeout=timeout)
     elif resolved_provider == "anthropic":
-        resolved_model = resolve_ask_model(tier, cfg)
+        resolved_model = config.cli_model(resolve_ask_model(tier, cfg))
         cmd = build_ask_command(
             resolved_model,
             output_format=output_format,

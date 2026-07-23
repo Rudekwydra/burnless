@@ -16,12 +16,12 @@ import yaml
 
 from .schema import DEFAULT_TIERS, DEFAULT_AGENTS, DEFAULT_CACHE_MODES, TierDefinition, Agent, CacheMode
 
-# Mirrored from config.py MODEL_ALIASES.
+# Derived from DEFAULT_TIERS -- dated ids live only in schema.py.
 MODEL_ALIASES = {
-    "opus": "claude-opus-4-8",
-    "sonnet": "claude-sonnet-4-6",
-    "haiku": "claude-haiku-4-5-20251001",
-    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+    "opus": DEFAULT_TIERS["gold"].model,
+    "sonnet": DEFAULT_TIERS["silver"].model,
+    "haiku": DEFAULT_TIERS["bronze"].model,
+    "claude-haiku-4-5": DEFAULT_TIERS["bronze"].model,
 }
 
 # Mirrored from routing.py PATH_HINT_RE.

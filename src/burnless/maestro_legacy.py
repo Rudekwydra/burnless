@@ -22,7 +22,7 @@ from . import paths as paths_mod
 
 
 DEFAULT_MAIN_MODEL = config.DEFAULT_TIER_MODELS["gold"]
-DEFAULT_COMPACTOR_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_COMPACTOR_MODEL = config.DEFAULT_TIER_MODELS["bronze"]
 
 PRICES_USD_PER_MTOK = {
     "claude-opus-4-8": {"input": 15.0, "output": 75.0},

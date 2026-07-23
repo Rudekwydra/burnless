@@ -15,7 +15,7 @@ _TEMPLATES: dict[str, dict] = {
         "extends": "../config.yaml",
         "brain": {
             "provider": "anthropic",
-            "model": "claude-sonnet-4-6",
+            "model": config.DEFAULT_TIER_MODELS["silver"],
         },
         "keepalive": {"enabled": True, "interval_sec": 270},
     },
@@ -52,7 +52,7 @@ _TEMPLATES: dict[str, dict] = {
         "extends": "../config.yaml",
         "brain": {
             "provider": "anthropic",
-            "model": "claude-haiku-4-5-20251001",
+            "model": config.DEFAULT_TIER_MODELS["bronze"],
         },
         "agents": {
             "silver": {

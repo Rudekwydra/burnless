@@ -11,6 +11,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import config
+from . import config
 from . import paths
 
 LEVEL_PREFIXES = ["", "a", "b", "c", "d", "e", "f", "g", "h"]
@@ -213,7 +215,7 @@ def epoch_summarizer(project_root: Path):
                 except Exception:
                     claude_bin = "claude"
                 result = subprocess.run(
-                    [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
+                    [claude_bin, "-p", "--model", config.cli_model(model), "--permission-mode", "bypassPermissions",
                      "--allowedTools", "", "--output-format", "json"],
                     input=prompt,
                     capture_output=True,
