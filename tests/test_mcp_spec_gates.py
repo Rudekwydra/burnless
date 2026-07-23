@@ -132,10 +132,14 @@ def test_autofixed_spec_still_hits_verify_gates() -> None:
     # Use actual project path
     project_root = Path(__file__).resolve().parents[1]
 
-    # Construct spec with relative path that can be autofixed + unfenced Verify
-    # "tests/conftest.py" is autofixable (has real file reference), unfenced Verify should block
+    # The relative path lives in a FENCED sh block (an executed region), so gate (a)
+    # autofixes it to absolute; a SEPARATE unfenced ## Verify must still block at gate (b).
+    # (Prose-only relative paths only warn — they cannot exercise the autofix path.)
     spec = (
-        "Edit tests/conftest.py to add a new fixture.\n\n"
+        "Add a new fixture.\n\n"
+        "```sh\n"
+        "cat tests/conftest.py\n"
+        "```\n\n"
         "## Verify\n"
         "Manual verification text without code fence"
     )
