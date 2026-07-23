@@ -223,7 +223,7 @@ def test_restore_does_not_repeat_applied_delta(tmp_path):
         source="clear",
     )
     ctx = payload["hookSpecificOutput"]["additionalContext"]
-    assert "## Trocas ainda não consolidadas" not in ctx
+    assert "## Unconsolidated exchanges" not in ctx
     assert ctx.count("consolidado") == 1
 
 

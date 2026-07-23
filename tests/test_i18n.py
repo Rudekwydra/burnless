@@ -61,10 +61,10 @@ class TestMsgResolution:
         assert "blocked" in result
         assert "brutos" not in result
 
-    def test_msg_restore_pointer_rule_pt_br(self):
-        """msg() for restore pointer rule in Portuguese."""
+    def test_msg_restore_pointer_rule_pt_br_falls_back_to_en(self):
+        """restore_* payload keys have no pt-BR variant (R2-C) — pt-BR falls back to en."""
         result = msg("restore_pointer_rule", "pt-BR")
-        assert "PONTEIROS" in result
+        assert "POINTERS" in result
         assert "Read/grep" in result
 
     def test_msg_restore_pointer_rule_en(self):
@@ -73,20 +73,20 @@ class TestMsgResolution:
         assert "POINTERS" in result
         assert "Read/grep" in result
 
-    def test_msg_restore_handoff_header_pt_br(self):
-        """msg() for restore handoff header in Portuguese."""
+    def test_msg_restore_handoff_header_pt_br_falls_back_to_en(self):
+        """restore_* payload keys have no pt-BR variant (R2-C) — pt-BR falls back to en."""
         result = msg("restore_handoff_header", "pt-BR")
-        assert result.startswith("## Handoff da")
+        assert result.startswith("## Handoff from")
 
     def test_msg_restore_handoff_header_en(self):
         """msg() for restore handoff header in English."""
         result = msg("restore_handoff_header", "en")
         assert result.startswith("## Handoff from")
 
-    def test_msg_restore_manifest_checkpoint_pt_br(self):
-        """msg() for restore manifest checkpoint in Portuguese."""
+    def test_msg_restore_manifest_checkpoint_pt_br_falls_back_to_en(self):
+        """restore_* payload keys have no pt-BR variant (R2-C) — pt-BR falls back to en."""
         result = msg("restore_manifest_checkpoint", "pt-BR", path="/checkpoint")
-        assert "checkpoint completo" in result
+        assert "full checkpoint" in result
         assert "/checkpoint" in result
 
     def test_msg_restore_manifest_checkpoint_en(self):
@@ -95,10 +95,10 @@ class TestMsgResolution:
         assert "full checkpoint" in result
         assert "/checkpoint" in result
 
-    def test_msg_restore_manifest_exports_pt_br(self):
-        """msg() for restore manifest exports in Portuguese."""
+    def test_msg_restore_manifest_exports_pt_br_falls_back_to_en(self):
+        """restore_* payload keys have no pt-BR variant (R2-C) — pt-BR falls back to en."""
         result = msg("restore_manifest_exports", "pt-BR", path="/exports")
-        assert "exports da sessão anterior" in result
+        assert "exports from previous session" in result
         assert "/exports" in result
 
     def test_msg_restore_manifest_exports_en(self):
@@ -107,11 +107,11 @@ class TestMsgResolution:
         assert "exports from previous session" in result
         assert "/exports" in result
 
-    def test_msg_restore_manifest_refs_pt_br(self):
-        """msg() for restore manifest refs in Portuguese."""
+    def test_msg_restore_manifest_refs_pt_br_falls_back_to_en(self):
+        """restore_* payload keys have no pt-BR variant (R2-C) — pt-BR falls back to en."""
         result = msg("restore_manifest_refs", "pt-BR")
-        assert "Refs do documento vivo" in result
-        assert "leia só o que a tarefa atual pedir" in result
+        assert "Living-doc Refs" in result
+        assert "read only what the current task needs" in result
         assert "`path#Lx-y — why [seq N]`" in result
 
     def test_msg_restore_manifest_refs_en(self):
@@ -121,11 +121,11 @@ class TestMsgResolution:
         assert "read only what the current task needs" in result
         assert "`path#Lx-y — why [seq N]`" in result
 
-    def test_msg_restore_pending_old_header_pt_br(self):
-        """msg() for restore pending old header in Portuguese."""
+    def test_msg_restore_pending_old_header_pt_br_falls_back_to_en(self):
+        """restore_* payload keys have no pt-BR variant (R2-C) — pt-BR falls back to en."""
         result = msg("restore_pending_old_header", "pt-BR")
-        assert "Trocas antigas" in result
-        assert "resumo de 1 linha" in result
+        assert "Older exchanges" in result
+        assert "1-line summary" in result
 
     def test_msg_restore_pending_old_header_en(self):
         """msg() for restore pending old header in English."""

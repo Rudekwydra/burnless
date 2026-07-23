@@ -2199,7 +2199,10 @@ def _restore_divergence_warning(root_path: Path, own_mtime: float | None, lang: 
         return None
 
 
-def _restore_lang(root_path: Path) -> str:
+def _config_lang(root_path: Path) -> str:
+    """Config-derived language — for terminal/CLI-facing messages only
+    (e.g. restore_divergence_warn). NOT for restore payload content: see
+    _restore_lang()."""
     try:
         from . import config as config_mod
 
@@ -2209,6 +2212,14 @@ def _restore_lang(root_path: Path) -> str:
         import os as _os
 
         return _os.environ.get("BURNLESS_LANG", "en")
+
+
+def _restore_lang() -> str:
+    """Restore payload is LLM-facing context: English by default (R2-C).
+    Override with env BURNLESS_RESTORE_LANG for users who want it localized."""
+    import os
+
+    return os.environ.get("BURNLESS_RESTORE_LANG", "en") or "en"
 
 
 def _format_en_markers(root_path: Path) -> bool:
@@ -2223,9 +2234,9 @@ def _format_en_markers(root_path: Path) -> bool:
         return False
 
 
-_MANIFEST_HEADER = "## Manifesto (leia sob demanda, não tudo)"
-_PENDING_HEADER = "## Trocas ainda não consolidadas"
-_LIVING_TRUNCATED_MARKER = "[living_md truncado — leia o checkpoint completo no Manifesto]"
+_MANIFEST_HEADER = "## Manifest (read on demand, not all of it)"
+_PENDING_HEADER = "## Unconsolidated exchanges"
+_LIVING_TRUNCATED_MARKER = "[living_md truncated — read the full checkpoint in the Manifest]"
 
 # Sections that carry "the thread" and are never truncated (A1 layer 2).
 _PRIORITY_SECTIONS = ("Foco atual", "Threads abertas")
@@ -2261,7 +2272,7 @@ def _render_manifest(
     """
     from . import i18n
 
-    lang = _restore_lang(root_path)
+    lang = _restore_lang()
     lines = [_MANIFEST_HEADER]
     if checkpoint_path is not None:
         lines.append(i18n.msg("restore_manifest_checkpoint", lang, path=checkpoint_path))
@@ -2305,18 +2316,11 @@ def _render_last_prompt_section(record: dict[str, Any] | None, lang: str, *, en:
     if len(user_text) > 600:
         user_text = user_text[:599].rstrip() + "…"
     blockquote_lines = [f"> {line}" for line in user_text.splitlines()]
-    if lang == "pt-BR":
-        header = (
-            "## Última mensagem do Roberto — status: RESPONDIDA"
-            if answered
-            else "## Última mensagem do Roberto — status: EM ABERTO"
-        )
-    else:
-        header = (
-            "## Roberto's last message — status: ANSWERED"
-            if answered
-            else "## Roberto's last message — status: OPEN"
-        )
+    header = (
+        "## Last user message — status: ANSWERED"
+        if answered
+        else "## Last user message — status: OPEN"
+    )
     lines = [header, *blockquote_lines]
     if answered:
         summary = ""
@@ -2326,14 +2330,9 @@ def _render_last_prompt_section(record: dict[str, Any] | None, lang: str, *, en:
                 break
         if len(summary) > 120:
             summary = summary[:119].rstrip() + "…"
-        if lang == "pt-BR":
-            lines.append(
-                f"Já respondi isto (resumo: {summary}). NÃO responder de novo — serve só para devolver o fio."
-            )
-        else:
-            lines.append(
-                f"Already answered (summary: {summary}). Do NOT answer again — this only hands back the thread."
-            )
+        lines.append(
+            f"Already answered (summary: {summary}). Do NOT answer again — this exists only to restore the thread."
+        )
     return "\n".join(lines)
 
 
@@ -2651,7 +2650,11 @@ def render_restore(
 
     from . import i18n
 
-    lang = _restore_lang(root_path)
+    # Payload content (LLM-facing context) is always en (R2-C) regardless of
+    # the user's config language; `lang` stays config-derived and is used
+    # ONLY for the terminal-facing divergence warning below.
+    lang = _config_lang(root_path)
+    restore_lang = _restore_lang()
     en = _format_en_markers(root_path)
     _own_hp = _live_handoff_path(root_path)
     try:
@@ -2678,16 +2681,16 @@ def render_restore(
         handoff_age = None
     else:
         live_handoff, handoff_age_s = live_handoff_result
-        handoff_age = _humanize_handoff_age(handoff_age_s, lang)
+        handoff_age = _humanize_handoff_age(handoff_age_s, restore_lang)
 
     lineage_assertable = (
         not used_startup_fallback and checkpoint_session_id == host_session_id
     )
     if lineage_assertable:
         handoff_header = i18n.msg(
-            "restore_handoff_header", lang, age=handoff_age or "recente"
+            "restore_handoff_header", restore_lang, age=handoff_age or "recent"
         )
-    elif lang == "pt-BR":
+    elif restore_lang == "pt-BR":
         handoff_header = (
             "## Handoff da sessão anterior "
             f"(escrito pelo próprio modelo, {handoff_age or 'recente'} antes do /clear)"
@@ -2718,7 +2721,7 @@ def render_restore(
         header_parts.append(
             i18n.msg(
                 "restore_identity_preamble",
-                lang,
+                restore_lang,
                 old_sid_short=checkpoint_session_id[:8],
                 age=handoff_age,
             )
@@ -2727,22 +2730,23 @@ def render_restore(
         if handoff_age_s is not None and handoff_age_s > 1800:
             stale_notice = (
                 "Como handoff_age > 30m, a licença de assentamento está degradada: confie na estrutura e faça spot-check dos claims voláteis."
-                if lang == "pt-BR"
+                if restore_lang == "pt-BR"
                 else "Because handoff_age > 30m, the settlement license is degraded: trust the structure and spot-check volatile claims."
             )
         header_parts.append(
             i18n.msg(
                 "restore_trust_contract",
-                lang,
+                restore_lang,
                 age=handoff_age,
                 stale_notice=stale_notice,
-                pointer_rule_text=i18n.msg("restore_pointer_rule", lang),
+                pointer_rule_text=i18n.msg("restore_pointer_rule", restore_lang),
             ).replace("  ", " ")
         )
     else:
-        header_parts.append(i18n.msg("restore_pointer_rule", lang))
-    if live_handoff:
-        header_parts.append(i18n.msg("restore_resume_imperative", lang))
+        header_parts.append(i18n.msg("restore_pointer_rule", restore_lang))
+    # Resume imperative always leads the resume-content block (before the
+    # living-doc "Current focus" / Manifest sections) — R2-C item 4.
+    header_parts.append(i18n.msg("restore_resume_imperative", restore_lang))
     header = "\n".join(header_parts)
     live_handoff_chars = len(live_handoff) if live_handoff else 0
 
@@ -2759,13 +2763,15 @@ def render_restore(
     )
 
     pending_sorted = sorted(pending, key=lambda r: int(r.get("seq") or 0))
-    last_prompt_section = _render_last_prompt_section(pending_sorted[-1], lang, en=en) if pending_sorted else ""
+    last_prompt_section = (
+        _render_last_prompt_section(pending_sorted[-1], restore_lang, en=en) if pending_sorted else ""
+    )
     if not last_prompt_section and not pending_sorted and transcript_path:
         try:
             old_transcript_path = Path(transcript_path).parent / f"{checkpoint_session_id}.jsonl"
             rec = _last_user_prompt_from_transcript(old_transcript_path)
             if rec:
-                last_prompt_section = _render_last_prompt_section(rec, lang, en=en)
+                last_prompt_section = _render_last_prompt_section(rec, restore_lang, en=en)
         except Exception:
             pass
     full_parts = [header]
@@ -2798,7 +2804,7 @@ def render_restore(
             max_chars,
             live_handoff,
             handoff_header,
-            lang,
+            restore_lang,
             en,
             last_prompt_section=last_prompt_section,
         )

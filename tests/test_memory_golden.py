@@ -9,7 +9,7 @@ Each scenario declares 20+ turns across 4 sessions (3 rollovers) plus
 and `must_forget` (superseded decisions, closed threads). At the 3rd
 rollover the restore payload must contain every must_remember string,
 no must_forget string, the last exchange verbatim, fit the budget, and
-carry the '## Manifesto' block with paths that exist on disk (I1).
+carry the '## Manifest' block with paths that exist on disk (I1).
 
 The fake rewriter consumes the real compact prompt and applies directives
 embedded in the exchange text:
@@ -228,7 +228,7 @@ def _effective_budget_tokens(scenario: dict) -> int:
 
 
 def _manifest_paths(ctx: str) -> list[Path]:
-    manifest = ctx[ctx.index("## Manifesto"):]
+    manifest = ctx[ctx.index("## Manifest"):]
     paths = []
     for m in re.finditer(r"- [^:\n]*(?:checkpoint|exports)[^:\n]*: (\S+)", manifest):
         paths.append(Path(m.group(1)))
@@ -270,7 +270,7 @@ def test_golden_scenario(fixture, tmp_path):
     # I1: manifest present with existing paths at EVERY rollover
     for i, payload in enumerate(run.restores):
         ctx = payload["hookSpecificOutput"]["additionalContext"]
-        assert "## Manifesto (leia sob demanda, não tudo)" in ctx, f"rollover {i + 1}"
+        assert "## Manifest (read on demand, not all of it)" in ctx, f"rollover {i + 1}"
         listed = _manifest_paths(ctx)
         assert listed, f"rollover {i + 1}: manifest lists no paths"
         for p in listed:
@@ -285,7 +285,7 @@ def test_golden_scenario(fixture, tmp_path):
         assert needle in ctx, f"must_remember lost at 3rd rollover: {needle!r}"
 
     # pointer-class items (Refs, file paths) are reachable per the P6 contract
-    # ("Refs e Recuperáveis são PONTEIROS"): inline in the payload OR in the
+    # ("Refs and Recoverables are POINTERS"): inline in the payload OR in the
     # checkpoint the manifest points to — not required to be pasted verbatim.
     checkpoint = recovery.read_checkpoint(run.root, "claude", meta["old_session"])
     checkpoint_md = (checkpoint or {}).get("living_md") or ""

@@ -9,7 +9,7 @@ most recent pending exchanges. These tests pin the layered behavior:
 3. most recent pending exchanges whole, newest first, while they fit
 4. rest of living_md
 5. old pending exchanges as one-line summaries (seq N · first PERGUNTA line)
-6. '## Manifesto' block ALWAYS present, never truncated (I1)
+6. '## Manifest' block ALWAYS present, never truncated (I1)
 """
 from __future__ import annotations
 
@@ -156,15 +156,15 @@ def test_dense_restore_has_untruncated_manifest(tmp_path):
     payload = _restore(root, budget_tokens=2000)
     ctx = payload["hookSpecificOutput"]["additionalContext"]
 
-    assert "## Manifesto (leia sob demanda, não tudo)" in ctx
-    manifest = ctx[ctx.index("## Manifesto") :]
+    assert "## Manifest (read on demand, not all of it)" in ctx
+    manifest = ctx[ctx.index("## Manifest") :]
     assert "checkpoint" in manifest
     assert "- journal: " in manifest
     assert "(head=8, applied=0)" in manifest
     assert "exports" in manifest and str(export_file) in manifest
-    assert "leia só o que a tarefa atual pedir" in manifest or "read only what the current task needs" in manifest
+    assert "read only what the current task needs" in manifest
     # I1: pointer rule in the header
-    assert "PONTEIROS" in ctx or "POINTERS" in ctx
+    assert "POINTERS" in ctx
 
 
 def test_small_payload_served_whole_with_manifest(tmp_path):
@@ -208,7 +208,7 @@ def test_small_payload_served_whole_with_manifest(tmp_path):
     assert "resposta pendente" in ctx
     # manifest present even when nothing was truncated (I1 supersedes the old
     # truncation-only 'Referencia local' block)
-    assert "## Manifesto (leia sob demanda, não tudo)" in ctx
+    assert "## Manifest (read on demand, not all of it)" in ctx
     assert "## Referencia local" not in ctx
 
 
@@ -247,9 +247,9 @@ def test_non_v3_fallback_truncates_only_the_tail(tmp_path):
     assert "INICIO-LITERAL" in ctx
     assert "linha 0001 do documento legado" in ctx
     assert "\n...\n[truncated]\n...\n" not in ctx
-    assert "[living_md truncado — leia o checkpoint completo no Manifesto]" in ctx
+    assert "[living_md truncated — read the full checkpoint in the Manifest]" in ctx
     # manifest survives
-    assert "## Manifesto (leia sob demanda, não tudo)" in ctx
+    assert "## Manifest (read on demand, not all of it)" in ctx
 
 
 def test_restore_owner_event_reports_layering(tmp_path):
@@ -315,11 +315,11 @@ def test_last_prompt_section_journal_path(tmp_path):
     payload = _restore(root, budget_tokens=4000, sid="sid-1")
     ctx = payload["hookSpecificOutput"]["additionalContext"]
 
-    assert "## Última mensagem do Roberto — status: RESPONDIDA" in ctx
+    assert "## Last user message — status: ANSWERED" in ctx
     assert "> PERGUNTA-2: a mais recente pergunta do Roberto" in ctx
-    assert "NÃO responder de novo" in ctx
-    manifest_idx = ctx.index("## Manifesto (leia sob demanda, não tudo)")
-    section_idx = ctx.index("## Última mensagem do Roberto — status: RESPONDIDA")
+    assert "Do NOT answer again" in ctx
+    manifest_idx = ctx.index("## Manifest (read on demand, not all of it)")
+    section_idx = ctx.index("## Last user message — status: ANSWERED")
     assert section_idx > manifest_idx
 
     # Root 2: newest exchange NOT answered -> EM ABERTO, no do-not-answer line.
@@ -352,8 +352,8 @@ def test_last_prompt_section_journal_path(tmp_path):
 
     payload2 = _restore(root2, budget_tokens=4000, sid="sid-2")
     ctx2 = payload2["hookSpecificOutput"]["additionalContext"]
-    assert "status: EM ABERTO" in ctx2
-    assert "NÃO responder de novo" not in ctx2
+    assert "status: OPEN" in ctx2
+    assert "Do NOT answer again" not in ctx2
 
     # Root 3: newest user_text over 600 chars -> truncated with an ellipsis.
     root3 = tmp_path / "long" / ".burnless"
@@ -387,7 +387,7 @@ def test_last_prompt_section_journal_path(tmp_path):
 
     payload3 = _restore(root3, budget_tokens=4000, sid="sid-3")
     ctx3 = payload3["hookSpecificOutput"]["additionalContext"]
-    section_start = ctx3.index("## Última mensagem do Roberto")
+    section_start = ctx3.index("## Last user message")
     assert "…" in ctx3[section_start:]
 
 
@@ -494,5 +494,101 @@ def test_restore_transcript_fallback_when_no_pending(tmp_path):
         budget_tokens=4000,
     )
     ctx = payload["hookSpecificOutput"]["additionalContext"]
-    assert "## Última mensagem do Roberto" in ctx
+    assert "## Last user message" in ctx
     assert "pergunta do transcript de fallback" in ctx
+
+
+def test_restore_render_is_english(tmp_path):
+    """R2-C: the restore payload is LLM-facing context, so it stays en even
+    when the project config sets language: pt-BR — only the user's own
+    conversation content (journal text) is left verbatim/untranslated."""
+    root = tmp_path / ".burnless"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "config.yaml").write_text("language: pt-BR\n", encoding="utf-8")
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-en",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+    recovery.journal_append(
+        root,
+        {
+            "schema": 1,
+            "host": "claude",
+            "host_session_id": "sid-en",
+            "process_instance_id": "proc-1",
+            "transcript_path": "/tmp/t.jsonl",
+            "exchange_id": "sha256:en-1",
+            "user_text": "pergunta pendente",
+            "assistant_text": "resposta pendente",
+            "files": [],
+        },
+    )
+
+    payload = _restore(root, budget_tokens=4000, sid="sid-en")
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+
+    removed_pt_markers = [
+        "## Manifesto",
+        "## Trocas ainda não consolidadas",
+        "NÃO responder de novo",
+        "PONTEIROS",
+        "## Última mensagem do Roberto",
+    ]
+    for marker in removed_pt_markers:
+        assert marker not in ctx, f"pt-BR marker leaked into the restore payload: {marker!r}"
+
+    en_markers = [
+        "## Manifest (read on demand, not all of it)",
+        "## Last user message — status: ANSWERED",
+        "POINTERS",
+        "You are RESUMING an ongoing session. Continue the work below; do not greet, do not wait for the user.",
+    ]
+    for marker in en_markers:
+        assert marker in ctx, f"expected en marker missing from restore payload: {marker!r}"
+
+
+def test_restore_first_line_is_resume_imperative(tmp_path):
+    """R2-C item 4: the resume imperative leads the resume-content block,
+    ahead of the living-doc 'Current focus' section and the Manifest."""
+    root = tmp_path / ".burnless"
+    root.mkdir(parents=True, exist_ok=True)
+    recovery.write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-imp",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- objetivo vivo\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+    recovery.journal_append(
+        root,
+        {
+            "schema": 1,
+            "host": "claude",
+            "host_session_id": "sid-imp",
+            "process_instance_id": "proc-1",
+            "transcript_path": "/tmp/t.jsonl",
+            "exchange_id": "sha256:imp-1",
+            "user_text": "pergunta pendente",
+            "assistant_text": "resposta pendente",
+            "files": [],
+        },
+    )
+
+    payload = _restore(root, budget_tokens=4000, sid="sid-imp")
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+
+    imperative = (
+        "You are RESUMING an ongoing session. Continue the work below; "
+        "do not greet, do not wait for the user."
+    )
+    assert imperative in ctx
+    # format.en_markers defaults to True, so living_md headers render in en.
+    assert ctx.index(imperative) < ctx.index("## Current focus")
+    assert ctx.index(imperative) < ctx.index("## Manifest (read on demand, not all of it)")
