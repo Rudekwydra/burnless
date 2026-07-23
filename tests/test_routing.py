@@ -3,7 +3,7 @@ from burnless import routing
 
 def test_absolute_path_routes_to_silver_without_config_keyword():
     tier, matched = routing.route(
-        "olha o projeto /Users/roberto/antigravity/app_paty",
+        "olha o projeto /Users/dev/antigravity/app_paty",
         {"gold": [], "silver": [], "bronze": []},
     )
 
@@ -33,7 +33,7 @@ def test_repository_lookup_routes_to_silver():
 
 def test_explicit_gold_keyword_wins_over_path_hint():
     tier, matched = routing.route(
-        "faça uma revisão de arquitetura em /Users/roberto/app",
+        "faça uma revisão de arquitetura em /Users/dev/app",
         {"gold": ["arquitetura"], "silver": [], "bronze": []},
     )
 
@@ -75,7 +75,7 @@ def test_score_route_signals_and_confidence():
     from burnless.routing import score_route
     rules = {"gold": ["architecture"], "silver": [], "bronze": []}
     natural, signals, conf = score_route(
-        "architecture review with security risk for /Users/roberto/x.py", rules
+        "architecture review with security risk for /Users/dev/x.py", rules
     )
     assert natural == "gold"
     kinds = {s.kind for s in signals}

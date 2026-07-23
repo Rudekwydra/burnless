@@ -13,7 +13,7 @@ def test_render_hud_off_is_empty():
 
 def test_render_hud_compact_single_line_ascii():
     out = render_hud(
-        {"project": "/home/roberto/antigravity/burnless", "mode": "rolling", "last_status": "OK"},
+        {"project": "/home/dev/antigravity/burnless", "mode": "rolling", "last_status": "OK"},
         style="compact",
     )
     assert out != ""
@@ -25,7 +25,7 @@ def test_render_hud_compact_single_line_ascii():
 def test_render_hud_verbose_multiline():
     out = render_hud(
         {
-            "project": "/home/roberto/proj",
+            "project": "/home/dev/proj",
             "mode": "default",
             "last_status": "PART",
             "scope_hash": "sha256:abc",

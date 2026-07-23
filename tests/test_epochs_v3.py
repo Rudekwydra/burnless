@@ -10,7 +10,7 @@ def _v3_doc() -> str:
         "## Threads abertas\n- wire V3 into config\n\n"
         "## Decisões\n- adotar 8-section model\n\n"
         "## Contracts\n- d000 keep V2 green\n\n"
-        "## Refs\n- /Users/roberto/antigravity/burnless/docs/DOCTRINE.md\n\n"
+        "## Refs\n- /Users/dev/antigravity/burnless/docs/DOCTRINE.md\n\n"
         "## Riscos\n- regressão nos 37 testes V2\n\n"
         "## Última validação\n- pytest -q OK\n\n"
         "## Recuperáveis\n- d725 — pytest tests/test_epochs_v3.py\n"

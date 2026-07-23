@@ -13,7 +13,7 @@ def test_state_json_atomic_and_valid():
     with tempfile.TemporaryDirectory() as tmp_root:
         tmp_root = Path(tmp_root)
         chat_id = "chat1"
-        exchange = f"user: check /Users/roberto/antigravity/test.py\nassistant: found it" + "x" * 250
+        exchange = f"user: check /Users/dev/antigravity/test.py\nassistant: found it" + "x" * 250
 
         def fake_rewriter(prompt: str) -> str:
             return "# Foco atual\n- test entry\n- another line"
@@ -52,7 +52,7 @@ def test_concurrent_capture_no_lost_turn():
             except Exception as e:
                 errors.append(e)
 
-        exchange_base = f"user: check /Users/roberto/file{0}.py\nassistant: found\n" + "x" * 250
+        exchange_base = f"user: check /Users/dev/file{0}.py\nassistant: found\n" + "x" * 250
         threads = [
             threading.Thread(target=capture_thread, args=(exchange_base + f"msg{i}",))
             for i in range(2)
@@ -94,7 +94,7 @@ def test_rewriter_exception_preserves_living_and_logs(monkeypatch):
             def failing_rewriter(prompt: str) -> str:
                 raise RuntimeError("boom")
 
-            exchange_base = f"user: check /Users/roberto/file.py\nassistant: found\n" + "x" * 250
+            exchange_base = f"user: check /Users/dev/file.py\nassistant: found\n" + "x" * 250
             result = apply_capture(tmp_root, chat_id, exchange_base, rewriter=failing_rewriter)
 
             assert living.exists(), f"living doc not found at {living}"
@@ -129,7 +129,7 @@ def test_structure_gate_rejects_unstructured_output(monkeypatch):
             valid_doc = _rebuild_md_v3(valid_parsed)
             living.write_text(valid_doc, encoding='utf-8')
 
-            exchange = f"user: check /Users/roberto/test.py\nassistant: found\n" + "x" * 250
+            exchange = f"user: check /Users/dev/test.py\nassistant: found\n" + "x" * 250
 
             def junk_rewriter(prompt: str) -> str:
                 return "---\n**Observação:** lixo meta sem seção alguma."
@@ -151,7 +151,7 @@ def test_structure_gate_rejects_on_empty_prev():
     with tempfile.TemporaryDirectory() as tmp_root:
         tmp_root = Path(tmp_root)
         chat_id = "gate_test_2"
-        exchange = f"user: check /Users/roberto/test.py\nassistant: found\n" + "x" * 250
+        exchange = f"user: check /Users/dev/test.py\nassistant: found\n" + "x" * 250
 
         def junk_rewriter(prompt: str) -> str:
             return "---\n**Observação:** lixo meta sem seção alguma."
@@ -169,7 +169,7 @@ def test_structure_gate_accepts_valid_v3():
     with tempfile.TemporaryDirectory() as tmp_root:
         tmp_root = Path(tmp_root)
         chat_id = "gate_test_3"
-        exchange = f"user: check /Users/roberto/test.py\nassistant: found\n" + "x" * 250
+        exchange = f"user: check /Users/dev/test.py\nassistant: found\n" + "x" * 250
 
         def valid_rewriter(prompt: str) -> str:
             parsed = {s: [] for s in SECTIONS_V3}
@@ -197,7 +197,7 @@ def test_structure_gate_toggle_off():
         config_file = burnless_dir / "config.yaml"
         config_file.write_text("epochs:\n  compact_structure_gate: false\n", encoding='utf-8')
 
-        exchange = f"user: check /Users/roberto/test.py\nassistant: found\n" + "x" * 250
+        exchange = f"user: check /Users/dev/test.py\nassistant: found\n" + "x" * 250
 
         def junk_rewriter(prompt: str) -> str:
             return "---\n**Observação:** lixo meta sem seção alguma."
@@ -226,7 +226,7 @@ def test_living_rewriter_empty_logs_hook_error(monkeypatch):
             living.parent.mkdir(parents=True, exist_ok=True)
             living.write_text("# Anterior\n- old content", encoding='utf-8')
 
-            exchange = f"user: check /Users/roberto/file.py\nassistant: found\n" + "x" * 250
+            exchange = f"user: check /Users/dev/file.py\nassistant: found\n" + "x" * 250
 
             def none_rewriter(prompt: str) -> str | None:
                 return None

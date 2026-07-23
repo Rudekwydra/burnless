@@ -112,7 +112,7 @@ def test_cap_order_preserves_contracts_and_foco(tmp_path, monkeypatch):
     decisoes = "\n".join(f"- decisao-{i:04d}-{'x' * 50}" for i in range(400))
     body = (
         "## Foco atual\n- foco-vivo-critico\n\n"
-        "## Contracts\n- contract-XYZ /Users/roberto/path/d999\n\n"
+        "## Contracts\n- contract-XYZ /Users/dev/path/d999\n\n"
         f"## Decisões\n{decisoes}\n\n"
     )
     _write_living(tmp_path, "chatCAPX", body)
@@ -121,7 +121,7 @@ def test_cap_order_preserves_contracts_and_foco(tmp_path, monkeypatch):
 
     # Survivors: Foco atual + Contracts.
     assert "foco-vivo-critico" in out, out
-    assert "contract-XYZ /Users/roberto/path/d999" in out, out
+    assert "contract-XYZ /Users/dev/path/d999" in out, out
     # Decisões was trimmed (oldest = tail entries gone) to meet the cap.
     assert "decisao-0399" not in out, out
     assert len(out) <= 8000 + len("> ordem: documento vivo (living-doc v2) consolidado por slot — entradas mais NOVAS primeiro em cada secao\n\n") + 200, len(out)

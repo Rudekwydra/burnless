@@ -133,7 +133,7 @@ class TestDecideRoutePolicyFloor:
         assert d_hardcore.action != "blocked"
 
     def test_path_plus_implementa_routes_silver_no_regression(self):
-        d = decide_route("/Users/roberto/antigravity/burnless implementa isso", None, {})
+        d = decide_route("/Users/dev/antigravity/burnless implementa isso", None, {})
         assert d.effective_tier == "silver"
 
     def test_policy_floor_wins_over_lower_requested_tier(self):

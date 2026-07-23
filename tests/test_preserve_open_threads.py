@@ -254,7 +254,7 @@ def test_golden_design_done_build_pending():
 ## Contracts
 
 ## Refs
-- /Users/roberto/antigravity/burnless/src/burnless/epochs_v2.py#L465-L530 — spec location [seq 3]
+- /Users/dev/antigravity/burnless/src/burnless/epochs_v2.py#L465-L530 — spec location [seq 3]
 
 ## Riscos
 
@@ -275,7 +275,7 @@ def test_golden_design_done_build_pending():
 ## Contracts
 
 ## Refs
-- /Users/roberto/antigravity/burnless/src/burnless/epochs_v2.py#L465-L530 — spec location [seq 3]
+- /Users/dev/antigravity/burnless/src/burnless/epochs_v2.py#L465-L530 — spec location [seq 3]
 
 ## Riscos
 
