@@ -71,13 +71,19 @@ from .delegation_parse import (
     extract_verify_block as _extract_verify_block,
 )
 
-from ._pro import audit as _audit_mod
-import sys as _sys
-from . import plugin_loader as _plugin_loader_parent
-_sys.modules.setdefault("burnless._pro.plugin_loader", _plugin_loader_parent)
-del _sys, _plugin_loader_parent
-_audit_summary_evidence = _audit_mod.audit_summary_evidence
-_audit_execution_filesystem = _audit_mod.audit_execution_filesystem
+try:
+    from ._pro import audit as _audit_mod
+    import sys as _sys
+    from . import plugin_loader as _plugin_loader_parent
+    _sys.modules.setdefault("burnless._pro.plugin_loader", _plugin_loader_parent)
+    del _sys, _plugin_loader_parent
+    _audit_summary_evidence = _audit_mod.audit_summary_evidence
+    _audit_execution_filesystem = _audit_mod.audit_execution_filesystem
+except ImportError:
+    # _pro/ is gitignored/private — absent on public clones and CI.
+    _audit_mod = None
+    _audit_summary_evidence = None
+    _audit_execution_filesystem = None
 
 from .exec.runner import (
     execute_delegation, RunOpts, _apply_verify_gate, _load_anthropic_key,

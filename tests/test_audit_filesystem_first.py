@@ -7,6 +7,11 @@ import pytest
 
 from burnless import cli
 
+pytestmark = pytest.mark.skipif(
+    cli._audit_mod is None,
+    reason="_pro/ not present (private, gitignored) — audit tests require the pro package",
+)
+
 
 def test_returns_none_when_no_files_touched(tmp_path: Path):
     summary = {"status": "OK", "kind": "execution", "files_touched": []}
