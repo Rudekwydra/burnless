@@ -5,6 +5,11 @@ import pytest
 from burnless import cli, paths
 from burnless import delegations as deleg_mod
 
+pytestmark = pytest.mark.skipif(
+    cli._audit_mod is None,
+    reason="_pro/ not present (private, gitignored) — audit tests require the pro package",
+)
+
 
 def _paths(tmp_path: Path) -> dict[str, Path]:
     root = tmp_path / ".burnless"
