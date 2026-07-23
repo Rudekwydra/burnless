@@ -476,6 +476,15 @@ DEFAULT_PROVIDER_MODELS = {
 
 HAIKU_MODEL = DEFAULT_TIER_MODELS["bronze"]
 
+# What we hand to `claude --model` when we shell out to the CLI. The CLI
+# resolves these aliases to whatever is current, so a dated id can never go
+# stale on a user machine. Dated ids stay for API calls only.
+CLI_TIER_ALIASES = {
+    "gold": "opus",
+    "silver": "sonnet",
+    "bronze": "haiku",
+}
+
 MODEL_ALIASES = {
     "opus": "claude-opus-4-8",
     "sonnet": "claude-sonnet-4-6",
