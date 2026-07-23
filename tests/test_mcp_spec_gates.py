@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("mcp", reason="mcp is an optional dependency (install with .[mcp])")
+
 from burnless.mcp_server import handle_delegate
 from burnless import state as state_mod
 
