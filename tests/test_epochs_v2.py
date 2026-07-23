@@ -28,9 +28,9 @@ from burnless.epochs_v2 import (
 
 
 def test_extract_entities_paths():
-    text = "arquivo em /Users/roberto/antigravity/test.py"
+    text = "arquivo em /Users/dev/antigravity/test.py"
     entities = extract_entities(text)
-    assert "/Users/roberto/antigravity/test.py" in entities
+    assert "/Users/dev/antigravity/test.py" in entities
 
 
 def test_extract_entities_delegation_id():
@@ -365,13 +365,13 @@ def test_apply_capture_persists_turn_and_ages(tmp_path):
 
 def test_harvest_state_parses_structured_ref_line():
     md = """## Refs
-- /Users/roberto/x/y.py#L10-20 — motivo curto [seq 12]
+- /Users/dev/x/y.py#L10-20 — motivo curto [seq 12]
 """
     harvested = harvest_state(md)
     assert len(harvested["refs"]) == 1
     parsed_ref = harvested["refs"][0]
     assert isinstance(parsed_ref, dict)
-    assert parsed_ref["path"] == "/Users/roberto/x/y.py"
+    assert parsed_ref["path"] == "/Users/dev/x/y.py"
     assert parsed_ref["lines"] == [10, 20]
     assert parsed_ref["why"] == "motivo curto"
     assert parsed_ref["seq"] == [12, 12]
@@ -379,14 +379,14 @@ def test_harvest_state_parses_structured_ref_line():
 
 def test_harvest_state_parses_structured_recuperavel_line():
     md = """## Recuperáveis
-- d725 — pytest /Users/roberto/antigravity/burnless/tests/test_x.py [seq 40]
+- d725 — pytest /Users/dev/antigravity/burnless/tests/test_x.py [seq 40]
 """
     harvested = harvest_state(md)
     assert len(harvested["recuperaveis"]) == 1
     parsed_rec = harvested["recuperaveis"][0]
     assert isinstance(parsed_rec, dict)
     assert parsed_rec["d"] == "d725"
-    assert parsed_rec["why"] == "pytest /Users/roberto/antigravity/burnless/tests/test_x.py"
+    assert parsed_rec["why"] == "pytest /Users/dev/antigravity/burnless/tests/test_x.py"
     assert parsed_rec["seq"] == [40, 40]
 
 

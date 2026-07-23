@@ -36,7 +36,7 @@ def _codex_uuid7(year: int, month: int, day: int, hour: int = 12) -> str:
 def test_resolve_path_claude_slug_hit(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     sid = "11111111-2222-3333-4444-555555555555"
-    cwd = "/Users/roberto/antigravity/burnless"
+    cwd = "/Users/dev/antigravity/burnless"
     slug = cwd.replace("/", "-").replace(".", "-")
     transcript = tmp_path / ".claude" / "projects" / slug / f"{sid}.jsonl"
     _write_jsonl(transcript, [{"type": "summary", "summary": "hi"}])
@@ -49,7 +49,7 @@ def test_resolve_path_claude_slug_hit(tmp_path, monkeypatch):
 def test_resolve_path_claude_glob_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     sid = "11111111-2222-3333-4444-555555555555"
-    real_cwd = "/Users/roberto/antigravity/burnless"
+    real_cwd = "/Users/dev/antigravity/burnless"
     slug = real_cwd.replace("/", "-").replace(".", "-")
     transcript = tmp_path / ".claude" / "projects" / slug / f"{sid}.jsonl"
     _write_jsonl(transcript, [{"type": "summary", "summary": "hi"}])

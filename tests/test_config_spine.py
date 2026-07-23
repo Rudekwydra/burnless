@@ -68,7 +68,7 @@ def test_route_picks_gold_silver_bronze():
     assert resolver.route("escrever documentação do projeto")[0] == "silver"
     assert resolver.route("resumir este log")[0] == "bronze"
     # path hint -> silver
-    assert resolver.route("olhar /Users/roberto/foo.py") == ("silver", "path")
+    assert resolver.route("olhar /Users/dev/foo.py") == ("silver", "path")
     # nothing matches -> default bronze
     assert resolver.route("xyzzy nothing here")[0] == "bronze"
 
