@@ -76,7 +76,7 @@ def summary_line(data: dict, language: str) -> str:
     saved = float(data.get("total_saved_usd") or 0.0)
     projects = len(data.get("projects") or [])
     since = (data.get("first_use_at") or _now_iso())[:10]
-    if language == "en-US":
+    if not language.startswith("pt"):
         return f"lifetime saved: US${saved:,.2f} across {projects} projects since {since}"
     return f"vida toda: US${saved:,.2f} em {projects} projetos desde {since}"
 
