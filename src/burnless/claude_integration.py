@@ -39,6 +39,10 @@ This project has a `.burnless/` directory. Prefer delegating work with
   relative paths fail in the worker's isolated working directory.
 - **Recovery:** after `/clear` or a new session, Burnless restores working
   state from its own session memory — no manual raw-log replay.
+- **When to delegate:** conversational questions and quick single-file reads —
+  just answer. Multi-file or spec-able changes — prefer `burnless do`.
+- **Language:** these operating instructions are in English. ALWAYS reply to
+  the user in the USER'S language.
 - **Reference:** run `burnless --help` for current commands and flags.
 
 Project: {project_name}
