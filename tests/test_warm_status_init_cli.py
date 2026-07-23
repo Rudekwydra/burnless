@@ -41,7 +41,7 @@ _SINGLE_MODEL_STATUS_MISSING = {"exists": False}
 
 class TestWarmStatusMultiModel:
     def test_status_prints_details_for_existing_multi_model_pool(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(cli, "_resolve_burnless_root", lambda: tmp_path)
+        monkeypatch.setattr("burnless.paths.find_root", lambda: tmp_path)
         monkeypatch.setattr(ws, "status", lambda root: _EMPTY_STATUS)
         monkeypatch.setattr(ws_codex, "status", lambda root: _MULTI_MODEL_STATUS)
         args = types.SimpleNamespace(provider="both")
@@ -60,7 +60,7 @@ class TestWarmStatusMultiModel:
         assert "age_s:" in out
 
     def test_status_reports_not_initialized_when_truly_empty(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(cli, "_resolve_burnless_root", lambda: tmp_path)
+        monkeypatch.setattr("burnless.paths.find_root", lambda: tmp_path)
         monkeypatch.setattr(ws, "status", lambda root: _EMPTY_STATUS)
         monkeypatch.setattr(ws_codex, "status", lambda root: _EMPTY_STATUS)
         args = types.SimpleNamespace(provider="both")
@@ -77,7 +77,7 @@ class TestWarmStatusMultiModel:
         single-model {'exists': ...} shape directly must keep working."""
         single = dict(_MULTI_MODEL_STATUS["gpt-5.5"])
         single["model"] = "gpt-5.5"
-        monkeypatch.setattr(cli, "_resolve_burnless_root", lambda: tmp_path)
+        monkeypatch.setattr("burnless.paths.find_root", lambda: tmp_path)
         monkeypatch.setattr(ws, "status", lambda root: _SINGLE_MODEL_STATUS_MISSING)
         monkeypatch.setattr(ws_codex, "status", lambda root: single)
         args = types.SimpleNamespace(provider="both")
@@ -92,7 +92,7 @@ class TestWarmStatusMultiModel:
 
 class TestWarmInitProviderBothModelAmbiguity:
     def test_provider_both_with_bare_model_is_rejected(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(cli, "_resolve_burnless_root", lambda: tmp_path)
+        monkeypatch.setattr("burnless.paths.find_root", lambda: tmp_path)
         args = types.SimpleNamespace(provider="both", model="gpt-5.5", claude_model=None, codex_model=None)
         buf = io.StringIO()
         with redirect_stdout(io.StringIO()):
@@ -100,7 +100,7 @@ class TestWarmInitProviderBothModelAmbiguity:
         assert rc == 2
 
     def test_provider_both_with_per_provider_models_routes_correctly(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(cli, "_resolve_burnless_root", lambda: tmp_path)
+        monkeypatch.setattr("burnless.paths.find_root", lambda: tmp_path)
         seen = {}
 
         def fake_claude_init(root, *, model):
@@ -126,7 +126,7 @@ class TestWarmInitProviderBothModelAmbiguity:
 
     def test_single_provider_still_accepts_bare_model(self, tmp_path, monkeypatch):
         """--provider codex --model X is unambiguous and must keep working."""
-        monkeypatch.setattr(cli, "_resolve_burnless_root", lambda: tmp_path)
+        monkeypatch.setattr("burnless.paths.find_root", lambda: tmp_path)
         seen = {}
 
         def fake_codex_init(root, *, model):
