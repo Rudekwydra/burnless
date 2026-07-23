@@ -12,6 +12,10 @@ This project has a `.burnless/` directory. Prefer delegating work with
 - **Recovery:** the `SessionStart` hook restores rolling-memory state for this
   project automatically at the start of a new session — no manual raw-log
   replay needed.
+- **When to delegate:** conversational questions and quick single-file reads —
+  just answer. Multi-file or spec-able changes — prefer `burnless do`.
+- **Language:** these operating instructions are in English. ALWAYS reply to
+  the user in the USER'S language.
 - **Reference:** run `burnless --help` for current commands and flags.
 
 Copy this file to the project root as `AGENTS.md` (or merge it into an
