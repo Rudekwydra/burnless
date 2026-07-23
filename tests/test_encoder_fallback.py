@@ -135,7 +135,7 @@ class TestApplyCaptureStructureFallback:
         import inspect
         sig = inspect.signature(_claude_rewrite)
         params = list(sig.parameters.keys())
-        assert params == ['prompt', 'model', 'cfg_timeout', 'project_root']
+        assert params == ['prompt', 'model', 'cfg_timeout', 'project_root', 'enc']
 
     def test_config_has_fallback_model(self):
         """Verify fallback_model is defined in DEFAULT_CONFIG."""

@@ -37,7 +37,7 @@ _FAKE_EXPLAIN = {
 
 
 def test_cmd_warm_explain_json(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli, "_resolve_burnless_root", lambda: tmp_path)
+    monkeypatch.setattr("burnless.paths.find_root", lambda: tmp_path)
     monkeypatch.setattr(ws, "explain", lambda root, model=None: _FAKE_EXPLAIN)
     args = types.SimpleNamespace(provider="claude", json=True)
     buf = io.StringIO()
@@ -51,7 +51,7 @@ def test_cmd_warm_explain_json(tmp_path, monkeypatch):
 
 
 def test_cmd_warm_explain_event_written(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli, "_resolve_burnless_root", lambda: tmp_path)
+    monkeypatch.setattr("burnless.paths.find_root", lambda: tmp_path)
     monkeypatch.setattr(ws, "explain", lambda root, model=None: _FAKE_EXPLAIN)
     args = types.SimpleNamespace(provider="claude", json=False)
     buf = io.StringIO()
