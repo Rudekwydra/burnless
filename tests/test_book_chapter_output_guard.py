@@ -12,7 +12,10 @@ _BOOK_SCRIPTS = Path(__file__).resolve().parents[1] / "book" / "scripts"
 pytestmark = pytest.mark.skipif(not _BOOK_SCRIPTS.exists(), reason="book/ not present in this checkout")
 sys.path.insert(0, str(_BOOK_SCRIPTS))
 
-from chapter_output_guard import validate_chapter_output
+try:
+    from chapter_output_guard import validate_chapter_output
+except ImportError:
+    validate_chapter_output = None
 
 
 class TestChapterOutputGuard:
