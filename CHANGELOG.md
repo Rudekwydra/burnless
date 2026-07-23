@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.6] — 2026-07-23
+
+Repairs the 0.9.5 wheel, which could not run. Both defects were invisible from a
+source checkout and only showed up in a cold install from a clean tarball into a
+fresh venv — the way a first-time user arrives.
+
+### Fixed
+
+- **`pip install burnless` produced a CLI that crashed on every command.**
+  `cli.py` imported the private `_pro` package unconditionally. That package is
+  not distributed, so `burnless --version` — and everything else — died with
+  `ModuleNotFoundError`. The import is now guarded and the audit hooks fall back
+  to `None` when the module is absent.
+- **`burnless init --claude-code` could not wire a single hook after a pip
+  install.** `templates/` was never included in the wheel, and the resolver only
+  looked for it relative to a source checkout. It is now shipped inside the
+  package and the resolver knows that layout. This restores the Claude Code
+  integration — rolling memory included — for anyone who installed from PyPI.
+- **Dated model ids no longer reach the `claude` CLI.** Generated agent commands
+  and the encoder path passed a dated model id (e.g. `claude-haiku-4-5-<date>`)
+  straight to `claude --model`; when such an id is retired, it fails on the
+  user's machine with no clear cause. The argv now carries the stable alias while
+  config and accounting keep the exact id. The dated ids themselves live in one
+  place, `coreconfig/schema.py`, instead of four drifting copies.
+- **`scripts/release_pypi.sh` raised `KeyError: 'version'` before building
+  anything**, because it read `project.version` from `pyproject.toml` where the
+  version is declared dynamic.
+
+### Changed
+
+- The shipped `templates/delegation_filter.sh` and `templates/README.md` are in
+  English, and the hook's block message names tiers rather than specific models.
+
 ## [0.9.5] — 2026-07-11
 
 First PyPI release of the v0.9 line (PyPI was at 0.7.4). Highlights since 0.8.0: v1-scope hardening (CLI-driven usage; interactive chat shell removed), single faithful compression mode, rolling memory (epoch hooks, `/clear`-survivable context), engagement modes `off`/`on`, maestro adapters for OpenAI/Gemini/OpenRouter, warm pool with hermetic test isolation, `## Verify` fail-closed gate. Suite: 1222 tests green.
