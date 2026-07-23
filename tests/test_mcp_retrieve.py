@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytest.importorskip("mcp", reason="mcp is an optional dependency (install with .[mcp])")
+
 from burnless.mcp_server import (
     handle_retrieve,
     handle_search_capsules,

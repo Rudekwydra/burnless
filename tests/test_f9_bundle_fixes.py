@@ -8,6 +8,8 @@ from unittest import mock
 
 import pytest
 
+pytest.importorskip("mcp", reason="mcp is an optional dependency (install with .[mcp])")
+
 from burnless import config as config_mod
 from burnless.pilot import logs as logs_mod, rollover as rollover_mod
 from burnless import mcp_server
