@@ -303,7 +303,7 @@ def _hhmm(ts: str) -> str:
 
 def _format_boundary(index: int, session_id: str, ts: str, context_note: str | None) -> str:
     sid_short = (session_id or "")[:8]
-    parts = ["nova janela", f"{index}ª da chain", sid_short, ts or "--"]
+    parts = ["new window", f"#{index} in chain", sid_short, ts or "--"]
     if context_note:
         parts.append(context_note)
     return "── " + " · ".join(parts) + " ──"
@@ -337,7 +337,7 @@ def emit_event(ev: dict[str, Any], out, as_json: bool = False, verbose: bool = F
     if ev["kind"] == "boundary":
         out.write(_format_boundary(ev["index"], ev["session_id"], ev["ts"], ev.get("context_note")) + "\n")
     elif ev["kind"] == "missing":
-        out.write(f"(transcript não encontrado: {(ev['session_id'] or '')[:8]})\n")
+        out.write(f"(transcript not found: {(ev['session_id'] or '')[:8]})\n")
     elif ev["kind"] == "turn":
         out.write(_format_turn(ev, verbose=verbose))
     out.flush()
@@ -350,7 +350,7 @@ def emit_event(ev: dict[str, Any], out, as_json: bool = False, verbose: bool = F
 def _cmd_list(root: Path, host: str = HOST, out=sys.stdout) -> int:
     chains = list_chains_for_root(root, host=host)
     if not chains:
-        out.write("(nenhuma chain encontrada)\n")
+        out.write("(no chains found)\n")
         return 0
     for c in chains:
         sessions = sessions_for_chain(root, c["chain_id"], host=host)

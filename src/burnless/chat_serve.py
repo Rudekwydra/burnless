@@ -295,7 +295,7 @@ PAGE_HTML = r"""<!doctype html>
       <div id="live" class="live"><span class="live-dot"></span><span id="status">live</span></div>
     </header>
     <div class="layout">
-      <aside aria-label="Janelas de contexto">
+      <aside aria-label="Context windows">
         <p class="eyebrow">janelas da llm</p>
         <div id="sessions" class="context-stack"></div>
         <p class="rail-note">O contexto expira. A conversa continua.</p>
@@ -343,16 +343,16 @@ PAGE_HTML = r"""<!doctype html>
 
       const renderTimeline = (events) => {
         timeline.replaceChildren();
-        if (!events.length) timeline.append(node("div", "empty", "Aguardando os primeiros turnos…"));
+        if (!events.length) timeline.append(node("div", "empty", "Waiting for the first turns…"));
 
         events.forEach((event, index) => {
           if (event.kind === "boundary") {
-            const details = ["nova janela", event.index ? `${event.index}ª da chain` : null, shortId(event.session_id), hhmm(event.ts)].filter(Boolean);
+            const details = ["new window", event.index ? `#${event.index} in chain` : null, shortId(event.session_id), hhmm(event.ts)].filter(Boolean);
             timeline.append(node("div", "boundary", `── ${details.join(" · ")} ──`));
             return;
           }
           if (event.kind === "missing") {
-            timeline.append(node("div", "missing", event.text || `transcript não encontrado: ${shortId(event.session_id)}`));
+            timeline.append(node("div", "missing", event.text || `transcript not found: ${shortId(event.session_id)}`));
             return;
           }
           if (event.kind !== "turn") return;
@@ -417,9 +417,9 @@ def _event_payload(event: dict[str, Any], chain_id: str) -> dict[str, Any]:
         "role": None,
         "ts": event.get("ts", ""),
         "text": (
-            "nova janela"
+            "new window"
             if kind == "boundary"
-            else f"transcript não encontrado: {(session_id or '')[:8]}"
+            else f"transcript not found: {(session_id or '')[:8]}"
         ),
         "kind": kind,
     }
