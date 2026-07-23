@@ -207,11 +207,11 @@ def suggest(det: Detection) -> dict:
 
     if claude.available:
         out["gold"]["name"] = "opus"
-        out["gold"]["command"] = f"claude --model {config_mod.DEFAULT_TIER_MODELS['gold']} --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS,WebFetch -p --output-format stream-json --verbose --include-partial-messages"
+        out["gold"]["command"] = f"claude --model {config_mod.CLI_TIER_ALIASES['gold']} --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS,WebFetch -p --output-format stream-json --verbose --include-partial-messages"
         out["silver"]["name"] = "sonnet"
-        out["silver"]["command"] = f"claude --model {config_mod.DEFAULT_TIER_MODELS['silver']} --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS -p --output-format stream-json --verbose --include-partial-messages"
+        out["silver"]["command"] = f"claude --model {config_mod.CLI_TIER_ALIASES['silver']} --allowedTools Read,Edit,Write,Bash,Glob,Grep,LS -p --output-format stream-json --verbose --include-partial-messages"
         out["bronze"]["name"] = "haiku"
-        out["bronze"]["command"] = f"claude --model {config_mod.DEFAULT_TIER_MODELS['bronze']} --allowedTools Read,Bash,Glob,Grep,LS -p --output-format stream-json --verbose --include-partial-messages"
+        out["bronze"]["command"] = f"claude --model {config_mod.CLI_TIER_ALIASES['bronze']} --allowedTools Read,Bash,Glob,Grep,LS -p --output-format stream-json --verbose --include-partial-messages"
     elif gemini.available:
         out["gold"]["name"] = "gemini-pro"
         out["gold"]["command"] = "gemini -p --model gemini-pro"

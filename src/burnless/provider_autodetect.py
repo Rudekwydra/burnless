@@ -7,6 +7,8 @@ from __future__ import annotations
 import shutil
 from typing import TypedDict
 
+from . import config
+
 
 class Detected(TypedDict):
     claude: str | None
@@ -62,7 +64,7 @@ def _both(claude: str, codex: str) -> dict:
     return {
         "gold": {
             "name": "claude-opus",
-            "command": _claude_cmd("opus", claude),
+            "command": _claude_cmd(config.CLI_TIER_ALIASES["gold"], claude),
             "role": "strategy_architecture_code_review",
             "use_for": ["architecture", "complex_reasoning", "high_level_planning"],
         },
@@ -79,14 +81,14 @@ def _both(claude: str, codex: str) -> dict:
                 },
                 {
                     "name": "claude-sonnet-4-6",
-                    "command": _claude_cmd("claude-sonnet-4-6", claude),
+                    "command": _claude_cmd(config.CLI_TIER_ALIASES["silver"], claude),
                     "provider": "anthropic",
                 },
             ],
         },
         "bronze": {
             "name": "claude-haiku-4-5",
-            "command": _claude_cmd("claude-haiku-4-5-20251001", claude),
+            "command": _claude_cmd(config.CLI_TIER_ALIASES["bronze"], claude),
             "role": "summaries_classification_readonly",
             "use_for": ["summarize", "classify", "clean_logs"],
         },
@@ -97,19 +99,19 @@ def _claude_only(claude: str) -> dict:
     return {
         "gold": {
             "name": "claude-opus",
-            "command": _claude_cmd("opus", claude),
+            "command": _claude_cmd(config.CLI_TIER_ALIASES["gold"], claude),
             "role": "strategy_architecture_code_review",
             "use_for": ["architecture", "complex_reasoning", "high_level_planning"],
         },
         "silver": {
             "name": "claude-sonnet-4-6",
-            "command": _claude_cmd("claude-sonnet-4-6", claude),
+            "command": _claude_cmd(config.CLI_TIER_ALIASES["silver"], claude),
             "role": "everyday_execution_filesystem",
             "use_for": ["docs", "prd", "prompts", "specs", "code", "implementation"],
         },
         "bronze": {
             "name": "claude-haiku-4-5",
-            "command": _claude_cmd("claude-haiku-4-5-20251001", claude),
+            "command": _claude_cmd(config.CLI_TIER_ALIASES["bronze"], claude),
             "role": "summaries_classification_readonly",
             "use_for": ["summarize", "classify", "clean_logs"],
         },
