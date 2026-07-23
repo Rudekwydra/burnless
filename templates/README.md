@@ -1,23 +1,23 @@
 # Burnless templates
 
-Drop-ins versionados que vivem no repo do burnless e são usados em outras
-ferramentas (Claude Code, agents, etc).
+Versioned drop-ins that live in the burnless repo and get installed into other
+tools (Claude Code, agents, and so on).
 
 ## delegation_filter.sh
 
-Hook bash que classifica comandos do main Claude (Opus) como Bronze/Prata/Ouro
-e bloqueia tarefas mecânicas, forçando delegação via Agent tool para Haiku/Sonnet.
-Comandos SSH/sudo **read-only** passam (interpretação é trabalho Opus, economiza
-round-trip via Haiku).
+A Bash hook that classifies the main session's Bash commands as bronze/silver/gold
+and blocks the mechanical ones, pushing them to a cheaper worker instead.
+Read-only `ssh`/`sudo` commands pass through: reading output is interpretation
+work, and bouncing it through a worker just costs a round trip.
 
 ### Install
 
 ```bash
 mkdir -p ~/.claude/scripts
-ln -sf ~/antigravity/burnless/templates/delegation_filter.sh ~/.claude/scripts/delegation_filter.sh
+ln -sf "$(pwd)/templates/delegation_filter.sh" ~/.claude/scripts/delegation_filter.sh
 ```
 
-Em `~/.claude/settings.json`, adicionar PreToolUse hook para Bash:
+Then add a PreToolUse hook for Bash in `~/.claude/settings.json`:
 
 ```json
 {
@@ -26,28 +26,23 @@ Em `~/.claude/settings.json`, adicionar PreToolUse hook para Bash:
 }
 ```
 
-### Tests
+### Rules
 
-```bash
-bash /tmp/test_filter.sh  # ver suite em ../tests/ depois (TODO move)
-```
-
-### Regras
-
-| Categoria | Exemplo | Decisão |
+| Category | Example | Decision |
 |---|---|---|
-| SSH read-only | `ssh host 'cat /etc/nginx.conf'` | ALLOW |
-| SSH com nginx -t | `ssh host 'sudo nginx -t'` | ALLOW |
-| SSH mutativo | `ssh host 'sudo systemctl reload nginx'` | BLOCK |
-| SSH interativo | `ssh -t host` | BLOCK |
-| sudo read-only | `sudo cat /etc/sudoers` | ALLOW |
-| sudo systemctl status | `sudo systemctl is-active nginx` | ALLOW |
-| sudo mutativo | `sudo systemctl restart nginx` | BLOCK |
-| rsync/scp/lftp | `rsync -av host:/foo /bar` | BLOCK |
-| Override Opus | `# OURO_OK <razão>\n<cmd>` (1ª linha) | ALLOW |
+| ssh, read-only | `ssh host 'cat /etc/nginx.conf'` | ALLOW |
+| ssh running a check | `ssh host 'sudo nginx -t'` | ALLOW |
+| ssh, mutating | `ssh host 'sudo systemctl reload nginx'` | BLOCK |
+| ssh, interactive | `ssh -t host` | BLOCK |
+| sudo, read-only | `sudo cat /etc/sudoers` | ALLOW |
+| sudo status query | `sudo systemctl is-active nginx` | ALLOW |
+| sudo, mutating | `sudo systemctl restart nginx` | BLOCK |
+| rsync / scp / lftp | `rsync -av host:/foo /bar` | BLOCK |
+| explicit override | `# OURO_OK <reason>` on the first line | ALLOW |
 
-Bloqueado → delegar via `Agent` tool (haiku=bronze, sonnet=prata/ouro).
+Blocked means: delegate it instead (`burnless do --tier bronze "..."`).
 
 ### Logs
 
-Toda decisão fica em `~/.claude/logs/delegation_filter.log` (timestamp + decisão + snippet).
+Every decision is appended to `~/.claude/logs/delegation_filter.log`
+(timestamp, decision, command snippet).

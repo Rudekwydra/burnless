@@ -50,7 +50,7 @@ def compact_to_telegram(text, *, project_root=None, timeout=8):
             except Exception:
                 claude_bin = "claude"
             result = subprocess.run(
-                [claude_bin, "-p", "--model", model, "--permission-mode", "bypassPermissions",
+                [claude_bin, "-p", "--model", config.cli_model(model), "--permission-mode", "bypassPermissions",
                  "--allowedTools", "", "--output-format", "json"],
                 input=prompt,
                 capture_output=True,

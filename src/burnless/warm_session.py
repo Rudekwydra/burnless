@@ -207,7 +207,7 @@ def init(burnless_root: Path, *, model: str = config.DEFAULT_PROVIDER_MODELS["cl
 
     cmd = [
         binary, "-p",
-        "--model", model,
+        "--model", config.cli_model(model),
         "--permission-mode", "bypassPermissions",
         "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep,LS",
         "--session-id", new_uuid,
@@ -379,7 +379,7 @@ def refresh(burnless_root: Path, *, model: str = config.DEFAULT_PROVIDER_MODELS[
     project_root = state.get("project_root") or str(_project_root_from_burnless_root(burnless_root))
     cmd = [
         binary, "-p",
-        "--model", model,
+        "--model", config.cli_model(model),
         "--permission-mode", "bypassPermissions",
         "--allowedTools", "Read",
         "--resume", state["uuid"],
