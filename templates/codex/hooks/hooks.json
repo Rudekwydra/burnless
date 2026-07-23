@@ -1,10 +1,42 @@
 {
+  "description": "Global lifecycle hooks installed by Burnless.",
   "hooks": {
     "SessionStart": [
-      {"hooks": [{"type": "command", "command": "./burnless_epoch_session.sh"}]}
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/hooks/burnless_epoch_session.sh",
+            "timeout": 10,
+            "statusMessage": "Restoring Burnless rolling memory"
+          }
+        ]
+      }
     ],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "./burnless_epoch_stop.sh"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/hooks/burnless_epoch_stop.sh",
+            "timeout": 10,
+            "statusMessage": "Capturing Burnless rolling memory"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/hooks/burnless_epoch_end.sh",
+            "timeout": 3,
+            "statusMessage": "Writing Burnless session handoff"
+          }
+        ]
+      }
     ]
   }
 }

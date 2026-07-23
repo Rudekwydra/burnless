@@ -1,8 +1,5 @@
 #!/bin/bash
-# Codex SessionEnd-equivalent hook (checkpoint/end path). NOT wired into
-# hooks.json this wave (no confirmed Codex "SessionEnd"-class event to bind
-# to yet) — kept as a sibling script mirroring the Claude end-of-session
-# flow, ready to wire once such an event is confirmed.
+# Codex SessionEnd hook (checkpoint/end path).
 [[ -n "$BURNLESS_NO_EPOCH" ]] && exit 0
 export PATH="$HOME/.local/bin:$PATH"
 BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"

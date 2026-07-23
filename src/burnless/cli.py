@@ -1269,34 +1269,43 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 
 def _cmd_setup_codex(args: argparse.Namespace) -> int:
-    """Install/update the managed Burnless block in ~/.codex/AGENTS.md.
+    """Install/update Burnless's global Codex instructions and hooks.
 
-    HOME-level, not per-project (unlike CLAUDE.md) — Codex's AGENTS.md is a
-    single global file, so this never touches the current project's tree.
+    Registration uses ~/.codex/hooks.json, leaving config.toml byte-for-byte
+    untouched. Codex requires the user to trust changed command hooks via
+    /hooks before they run.
     """
     try:
         from . import __version__ as _v
     except ImportError:
         _v = "0.7.4"
 
-    agents_md = Path.home() / ".codex" / "AGENTS.md"
+    home = Path.home()
+    try:
+        plan = codex_integration.plan_setup(home, version=_v)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        print(f"burnless setup --codex: {exc}", file=sys.stderr)
+        return 1
 
     if getattr(args, "dry_run", False):
-        if agents_md.exists():
-            current = agents_md.read_text(encoding="utf-8")
-            existing_block_match = codex_integration.BLOCK_PATTERN.search(current)
-            if existing_block_match:
-                print(f"AGENTS.md dry-run: existing burnless block found at {agents_md}")
-                print("current block:\n" + existing_block_match.group(0))
-            else:
-                print(f"AGENTS.md dry-run: no burnless block found at {agents_md} — would be appended")
-        else:
-            print(f"AGENTS.md dry-run: {agents_md} does not exist — would be created")
-        print("\nwould become:\n" + codex_integration.render_block(_v))
+        diff = codex_integration.format_plan_diff(plan)
+        print(diff if diff else "burnless setup --codex dry-run: no changes")
+        print("\nManual step: open /hooks in Codex and trust the Burnless hooks after installation.")
         return 0
 
-    action = codex_integration.write_or_update(agents_md, version=_v)
-    print(f"AGENTS.md: {action} burnless block at {agents_md}")
+    try:
+        changed = codex_integration.apply_setup(plan)
+    except OSError as exc:
+        print(f"burnless setup --codex: {exc}", file=sys.stderr)
+        return 1
+
+    if changed:
+        print(f"burnless setup --codex: changed {len(changed)} file(s)")
+        for path in changed:
+            print(f"  {path}")
+    else:
+        print("burnless setup --codex: no changes")
+    print("Manual step: open /hooks in Codex and trust the Burnless hooks.")
     return 0
 
 
@@ -2662,7 +2671,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--project", help="project name (default: current dir name)")
     sp.add_argument("--yes", "-y", action="store_true", help="accept all defaults")
     sp.add_argument("--non-interactive", action="store_true", help="no prompts")
-    sp.add_argument("--codex", action="store_true", dest="codex", help="install the managed Burnless block into ~/.codex/AGENTS.md")
+    sp.add_argument("--codex", action="store_true", dest="codex", help="install Burnless instructions and lifecycle hooks under ~/.codex")
     sp.add_argument("--dry-run", action="store_true", dest="dry_run", help="show what would change without writing")
     sp.set_defaults(func=cmd_setup)
 

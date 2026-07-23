@@ -1,8 +1,6 @@
 # Meant to be `source`d by the Codex event scripts (burnless_epoch_*.sh) in
-# this directory, not executed directly. Provides the shared, defensive
-# stdin-payload parsing + sid validation used by every Codex hook, since the
-# real Codex hook payload schema is UNVERIFIED (no official-doc access, no
-# local evidence of SessionStart's shape at authoring time) — see README.md.
+# this directory, not executed directly. Provides parsing for Codex's
+# documented common stdin fields (`session_id`, `cwd`) plus sid validation.
 
 # codex_read_stdin(): reads stdin ONCE into $stdin_data (same variable name
 # the Claude scripts use, so callers don't need new plumbing).
@@ -10,11 +8,9 @@ codex_read_stdin() {
   stdin_data=$(cat)
 }
 
-# codex_resolve_sid_cwd(): given $stdin_data and $PYTHON_BIN already set,
-# tries candidate key names for session id and cwd (decision 1 in the G1
-# spec) and prints "SID<TAB>CWD" for the caller to split. This is pure
-# candidate-picking — it does NOT validate the sid against the resolve_path
-# oracle; that happens in bash after, via codex_validate_sid().
+# codex_resolve_sid_cwd(): parse the documented `session_id` and `cwd` fields
+# and print "SID<TAB>CWD" for callers to split. Sid validation remains a
+# separate step via codex_validate_sid().
 codex_resolve_sid_cwd() {
   local out
   out=$(INPUT_JSON="$stdin_data" "${PYTHON_BIN:-python3}" - <<'PY'
@@ -29,29 +25,17 @@ except Exception:
 if not isinstance(payload, dict):
     payload = {}
 
-SID_KEYS = ("session_id", "id", "thread_id", "conversation_id", "rollout_id")
-CWD_KEYS = ("cwd", "workspace", "working_directory", "workspace_root")
-
-sid = ""
-for key in SID_KEYS:
-    value = payload.get(key)
-    if isinstance(value, str) and value.strip():
-        sid = value.strip()
-        break
-
-cwd = ""
-for key in CWD_KEYS:
-    value = payload.get(key)
-    if isinstance(value, str) and value.strip():
-        cwd = value.strip()
-        break
+sid_value = payload.get("session_id")
+sid = sid_value.strip() if isinstance(sid_value, str) else ""
+cwd_value = payload.get("cwd")
+cwd = cwd_value.strip() if isinstance(cwd_value, str) else ""
 
 print(f"{sid}\t{cwd}")
 PY
 )
   local sid cwd
   IFS=$'\t' read -r sid cwd <<<"$out"
-  # $PWD fallback (shell env, not JSON) when no candidate cwd field matched.
+  # Defensive fallback for malformed payloads; command hooks normally receive cwd.
   [[ -z "$cwd" ]] && cwd="$PWD"
   printf '%s\t%s\n' "$sid" "$cwd"
 }
@@ -74,16 +58,15 @@ codex_validate_sid() {
   return 0
 }
 
-# codex_dump_payload(): raw-payload capture for manual schema discovery.
-# Only called when no candidate sid/cwd validates. Stays on by default this
-# wave (greenfield, zero cost) — see README.md for removal plan.
+# codex_dump_payload(): retained as a safe no-op compatibility shim. The schema
+# is now documented, so hooks no longer persist raw payloads on validation
+# failure.
 codex_dump_payload() {
-  local dump_dir="$HOME/.burnless/codex_hook_payloads"
-  mkdir -p "$dump_dir"
-  printf '%s' "${stdin_data:0:4000}" >"$dump_dir/$(date +%s).json"
+  return 0
 }
 
-# codex_host_pid(): stable lineage id — nearest codex ancestor pid. Same
+# Codex's stdin schema has no PID field. codex_host_pid(): stable lineage id
+# from the nearest codex ancestor pid. Same
 # ancestor-walk as the Claude scripts' host_pid(), matching `codex*` instead
 # of `claude*|node*` in the process name (this function has nothing
 # host-specific in its walk logic, only in the comm match).

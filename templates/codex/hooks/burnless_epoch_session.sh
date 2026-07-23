@@ -1,5 +1,5 @@
 #!/bin/bash
-# Codex SessionStart hook. UNVERIFIED payload shape — see README.md.
+# Codex SessionStart hook. Payload fields follow the official hook schema.
 [[ -n "$BURNLESS_NO_EPOCH" ]] && exit 0
 export PATH="$HOME/.local/bin:$PATH"
 BB="$(command -v burnless || echo "$HOME/.local/bin/burnless")"
