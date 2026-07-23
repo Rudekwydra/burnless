@@ -54,3 +54,8 @@ path = "src/burnless/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/burnless"]
+
+# templates/ is not Python, but `burnless init --claude-code` cannot wire a
+# single hook without it. Ship it inside the package.
+[tool.hatch.build.targets.wheel.force-include]
+"templates" = "burnless/templates"

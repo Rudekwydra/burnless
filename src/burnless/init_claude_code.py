@@ -133,6 +133,10 @@ def _resolve_templates_dir() -> Path | None:
     candidate2 = pkg_dir.parent / "templates"
     if candidate2.is_dir():
         return candidate2
+    # Installed layout: shipped inside the package (see pyproject force-include).
+    packaged = pkg_dir / "templates"
+    if packaged.is_dir():
+        return packaged
     try:
         import importlib.resources as _ir
         ref = Path(str(_ir.files("burnless"))) / ".." / "templates"
