@@ -11,7 +11,8 @@ _logger = logging.getLogger(__name__)
 
 _IGNORED_RESTORE_MARKERS = (
     "[BURNLESS RESTORE]",
-    "## Trocas ainda não consolidadas",
+    "## Unconsolidated exchanges",
+    "## Trocas ainda não consolidadas",  # legacy pt marker — kept for pre-existing transcripts
     "[BURNLESS SEED]",
 )
 
