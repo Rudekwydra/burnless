@@ -1,16 +1,22 @@
 # Codex hooks (burnless epoch, `--host codex`)
 
-- **`SessionStart` payload schema is UNVERIFIED.** No official-doc access and no local evidence of
-  its real shape at authoring time. `codex_payload.sh` defensively tries several candidate key
-  names for session id and cwd, and validates the session id against
-  `transcript_sources.resolve_path` before trusting it.
-- When no candidate validates, the hook dumps the raw stdin payload (truncated to ~4KB) to
-  `~/.burnless/codex_hook_payloads/<unix-timestamp>.json`. This dump is the intended schema-discovery
-  mechanism — it stays on by default this wave (greenfield, zero cost) and should be removed once the
-  real schema is confirmed and captured.
-- **`Stop` is the guaranteed anchor event** for this wave — it's what actually writes to the journal.
-  `SessionStart` is best-effort and safe-no-op if the event never fires.
-- **`PostToolUse` is out of scope this wave** (high-frequency noise, unvalidatable without a test
-  harness). It's a documented future contingency: if `SessionStart` proves to never fire in practice,
-  a lazy-init on the first `PostToolUse` call would be the fallback path to pick up rolling-memory
-  restore late.
+Codex 0.144.4 uses the documented global hook source `~/.codex/hooks.json`.
+`burnless setup --codex` installs this directory's shell scripts under
+`~/.codex/hooks/`, merges the three registrations below into that global JSON
+file, and leaves `~/.codex/config.toml` untouched.
+
+- `SessionStart`: restore on `startup`, `resume`, `clear`, or `compact`.
+- `Stop`: append the completed turn to the journal.
+- `SessionEnd`: checkpoint/handoff when the main thread actually ends. Codex
+  emits this on normal close, archive/delete of an open conversation, or after
+  30 minutes idle with no connected client; switching conversations alone does
+  not end the session immediately.
+
+Each command receives one JSON object on stdin. The fields used here are the
+documented `session_id` and `cwd`; Codex does not document a host PID field, so
+the scripts retain their process-ancestor fallback for lineage.
+
+Codex skips new or changed non-managed hooks until their exact definitions are
+trusted. After setup or an upgrade, open `/hooks` in Codex, review the three
+Burnless commands, and trust them. Trust is recorded against the definition
+hash, so changed hooks must be reviewed again.

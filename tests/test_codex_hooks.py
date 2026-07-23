@@ -47,15 +47,14 @@ def _dump_files(home: Path) -> list[Path]:
     return list(dump_dir.glob("*.json"))
 
 
-def test_stop_hook_missing_sid_dumps_and_exits_zero(tmp_path):
+def test_stop_hook_missing_sid_exits_zero_without_persisting_payload(tmp_path):
     result = _run_hook("burnless_epoch_stop.sh", {}, tmp_path)
 
     assert result.returncode == 0, result.stderr
-    dumps = _dump_files(tmp_path)
-    assert len(dumps) == 1, f"expected exactly one dump file, found {dumps}"
+    assert not _dump_files(tmp_path)
 
 
-def test_stop_hook_unresolvable_sid_dumps_and_exits_zero(tmp_path):
+def test_stop_hook_unresolvable_sid_exits_zero_without_persisting_payload(tmp_path):
     fake_sid = str(uuid.uuid4())
     project_dir = tmp_path / "proj"
     project_dir.mkdir(parents=True)
@@ -67,8 +66,7 @@ def test_stop_hook_unresolvable_sid_dumps_and_exits_zero(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    dumps = _dump_files(tmp_path)
-    assert len(dumps) == 1, f"expected exactly one dump file, found {dumps}"
+    assert not _dump_files(tmp_path)
 
 
 def test_stop_hook_valid_sid_calls_extract_exchange(tmp_path):
@@ -130,8 +128,9 @@ def test_hooks_json_matches_real_plugin_schema_shape():
     hooks = data["hooks"]
     assert "Stop" in hooks
     assert "SessionStart" in hooks
+    assert "SessionEnd" in hooks
 
-    for event in ("Stop", "SessionStart"):
+    for event in ("Stop", "SessionStart", "SessionEnd"):
         entries = hooks[event]
         assert isinstance(entries, list) and entries
         found_command = False
