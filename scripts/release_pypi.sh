@@ -45,8 +45,19 @@ require_module() {
 
 scripts/public_git_check.sh
 
-VERSION="$("$PYTHON_BIN" -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-CODE_VERSION="$("$PYTHON_BIN" - <<'PY'
+# pyproject declares the version dynamic; it lives in src/burnless/__init__.py.
+# Read it there, and fail loudly if that stops being true.
+"$PYTHON_BIN" - <<'PY'
+import tomllib
+
+project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+if "version" in project or "version" not in project.get("dynamic", []):
+    raise SystemExit(
+        "release: pyproject no longer declares a dynamic version -- update this script"
+    )
+PY
+
+VERSION="$("$PYTHON_BIN" - <<'PY'
 from pathlib import Path
 import re
 
@@ -57,10 +68,6 @@ if not match:
 print(match.group(1))
 PY
 )"
-if [[ "$VERSION" != "$CODE_VERSION" ]]; then
-  echo "release: version mismatch: pyproject.toml=${VERSION}, burnless.__version__=${CODE_VERSION}" >&2
-  exit 2
-fi
 
 require_module build
 require_module twine

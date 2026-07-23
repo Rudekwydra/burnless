@@ -123,6 +123,9 @@ burnless do --tier silver "your first task"
 
 Python 3.10+. Tiers map to whatever CLIs you configure — mix providers freely.
 
+On a minimal Debian or Ubuntu image, `python3-venv` is not installed by default —
+`apt install python3-venv` first if you want burnless in a virtualenv.
+
 For OpenAI/Codex:
 
 ```bash
