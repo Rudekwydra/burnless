@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import stat
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -36,6 +37,55 @@ def _burnless_commands(document: dict) -> list[str]:
     ]
 
 
+def _install_recording_burnless(home: Path) -> Path:
+    executable = home / ".local" / "bin" / "burnless"
+    executable.parent.mkdir(parents=True)
+    executable.write_text(
+        """#!/bin/bash
+printf '%s\\n' "$*" >>"$BURNLESS_TEST_ARG_LOG"
+case "$1 $2" in
+  "epoch extract-exchange")
+    printf '%s\\n' '{"question":"q","answer":"a"}'
+    ;;
+  "epoch resolve-root")
+    printf '%s\\n' "$BURNLESS_TEST_ROOT"
+    ;;
+  "epoch journal-append")
+    cat
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    return executable
+
+
+def _run_installed_stop(
+    home: Path,
+    payload: dict,
+    project_root: Path,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    log_path = home / "burnless-args.log"
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "BURNLESS_TEST_ARG_LOG": str(log_path),
+        "BURNLESS_TEST_ROOT": str(project_root),
+    }
+    result = subprocess.run(
+        ["bash", str(home / ".codex" / "hooks" / "burnless_epoch_stop.sh")],
+        input=json.dumps(payload),
+        cwd=project_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    calls = log_path.read_text(encoding="utf-8").splitlines()
+    return result, calls
+
+
 def test_fresh_install_copies_executable_hooks_and_registers_real_events(
     tmp_path, monkeypatch, capsys
 ):
@@ -52,11 +102,58 @@ def test_fresh_install_copies_executable_hooks_and_registers_real_events(
     assert set(("SessionStart", "Stop", "SessionEnd")) <= set(document["hooks"])
     commands = _burnless_commands(document)
     assert commands == [
-        "bash ~/.codex/hooks/burnless_epoch_session.sh",
-        "bash ~/.codex/hooks/burnless_epoch_stop.sh",
-        "bash ~/.codex/hooks/burnless_epoch_end.sh",
+        f"bash {tmp_path / '.codex' / 'hooks' / 'burnless_epoch_session.sh'}",
+        f"bash {tmp_path / '.codex' / 'hooks' / 'burnless_epoch_stop.sh'}",
+        f"bash {tmp_path / '.codex' / 'hooks' / 'burnless_epoch_end.sh'}",
     ]
+    assert all(command.startswith(f"bash {tmp_path.resolve()}") for command in commands)
     assert "/hooks" in capsys.readouterr().out
+
+
+def test_payload_transcript_path_reaches_every_epoch_call(tmp_path, monkeypatch):
+    assert _run_setup(tmp_path, monkeypatch) == 0
+    _install_recording_burnless(tmp_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    transcript = tmp_path / "custom-codex-home" / "sessions" / "rollout.jsonl"
+
+    result, calls = _run_installed_stop(
+        tmp_path,
+        {
+            "session_id": "019f9118-0335-71c2-8818-2e3387897288",
+            "cwd": str(project_root),
+            "transcript_path": str(transcript),
+        },
+        project_root,
+    )
+
+    assert result.returncode == 0, result.stderr
+    epoch_calls = [call for call in calls if call.startswith("epoch ")]
+    assert len([call for call in epoch_calls if call.startswith("epoch extract-exchange")]) == 2
+    assert epoch_calls
+    assert all(f"--transcript {transcript}" in call for call in epoch_calls)
+
+
+def test_payload_without_transcript_preserves_derived_path_fallback(tmp_path, monkeypatch):
+    assert _run_setup(tmp_path, monkeypatch) == 0
+    _install_recording_burnless(tmp_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    result, calls = _run_installed_stop(
+        tmp_path,
+        {
+            "session_id": "019f9118-0335-71c2-8818-2e3387897288",
+            "cwd": str(project_root),
+        },
+        project_root,
+    )
+
+    assert result.returncode == 0, result.stderr
+    epoch_calls = [call for call in calls if call.startswith("epoch ")]
+    assert len([call for call in epoch_calls if call.startswith("epoch extract-exchange")]) == 2
+    assert epoch_calls
+    assert all("--transcript" not in call for call in epoch_calls)
 
 
 def test_second_install_is_a_filesystem_noop(tmp_path, monkeypatch, capsys):

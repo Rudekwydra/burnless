@@ -47,26 +47,31 @@ def _dump_files(home: Path) -> list[Path]:
     return list(dump_dir.glob("*.json"))
 
 
-def test_stop_hook_missing_sid_exits_zero_without_persisting_payload(tmp_path):
+def test_stop_hook_missing_sid_exits_zero_and_dumps_payload(tmp_path):
     result = _run_hook("burnless_epoch_stop.sh", {}, tmp_path)
 
     assert result.returncode == 0, result.stderr
-    assert not _dump_files(tmp_path)
+    dumps = _dump_files(tmp_path)
+    assert len(dumps) == 1
+    assert json.loads(dumps[0].read_text(encoding="utf-8")) == {}
 
 
-def test_stop_hook_unresolvable_sid_exits_zero_without_persisting_payload(tmp_path):
+def test_stop_hook_unresolvable_sid_exits_zero_and_dumps_payload(tmp_path):
     fake_sid = str(uuid.uuid4())
     project_dir = tmp_path / "proj"
     project_dir.mkdir(parents=True)
+    payload = {"session_id": fake_sid, "cwd": str(project_dir)}
 
     result = _run_hook(
         "burnless_epoch_stop.sh",
-        {"session_id": fake_sid, "cwd": str(project_dir)},
+        payload,
         tmp_path,
     )
 
     assert result.returncode == 0, result.stderr
-    assert not _dump_files(tmp_path)
+    dumps = _dump_files(tmp_path)
+    assert len(dumps) == 1
+    assert json.loads(dumps[0].read_text(encoding="utf-8")) == payload
 
 
 def test_stop_hook_valid_sid_calls_extract_exchange(tmp_path):
@@ -114,6 +119,66 @@ def test_stop_hook_valid_sid_calls_extract_exchange(tmp_path):
     combined = "\n".join(f.read_text(encoding="utf-8") for f in journal_files)
     assert "Real question one" in combined
     assert "Real reply one" in combined
+
+
+def test_stop_hook_uses_payload_transcript_outside_default_codex_home(tmp_path):
+    sid = _codex_uuid7(2026, 7, 23)
+    transcript = (
+        tmp_path
+        / "alternate-codex-home"
+        / "sessions"
+        / "2026"
+        / "07"
+        / "23"
+        / f"rollout-2026-07-23T12-00-00-{sid}.jsonl"
+    )
+    _write_jsonl(
+        transcript,
+        [
+            {"type": "session_meta", "payload": {"session_id": sid}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Payload path question"}],
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Payload path reply"}],
+                },
+            },
+        ],
+    )
+
+    project_dir = tmp_path / "proj"
+    (project_dir / ".burnless").mkdir(parents=True)
+    (project_dir / ".burnless" / "config.yaml").write_text(
+        "project: test\n",
+        encoding="utf-8",
+    )
+
+    result = _run_hook(
+        "burnless_epoch_stop.sh",
+        {
+            "session_id": sid,
+            "cwd": str(project_dir),
+            "transcript_path": str(transcript),
+        },
+        tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not _dump_files(tmp_path)
+    journal_files = list((project_dir / ".burnless" / "epochs" / "sessions").rglob("*.json"))
+    assert journal_files
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in journal_files)
+    assert "Payload path question" in combined
+    assert "Payload path reply" in combined
 
 
 def test_session_hook_missing_sid_exits_zero_no_crash(tmp_path):

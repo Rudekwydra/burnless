@@ -10,6 +10,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import shlex
 import shutil
 import stat
 from dataclasses import dataclass
@@ -132,11 +133,12 @@ def _resolve_hooks_templates_dir() -> Path | None:
     return None
 
 
-def _burnless_hook_group(event: str) -> dict[str, Any]:
+def _burnless_hook_group(event: str, hooks_dir: Path) -> dict[str, Any]:
     filename = _HOOK_EVENT_FILES[event]
+    script_path = (hooks_dir / filename).resolve()
     handler: dict[str, Any] = {
         "type": "command",
-        "command": f"bash ~/.codex/hooks/{filename}",
+        "command": f"bash {shlex.quote(str(script_path))}",
         "timeout": _HOOK_TIMEOUTS[event],
     }
     if event == "SessionStart":
@@ -181,8 +183,14 @@ def _without_burnless_handlers(groups: Any) -> Any:
     return cleaned
 
 
-def merge_hooks_document(existing: dict[str, Any] | None) -> dict[str, Any]:
+def merge_hooks_document(
+    existing: dict[str, Any] | None,
+    *,
+    hooks_dir: Path | None = None,
+) -> dict[str, Any]:
     """Return a registration document with exactly one group per Burnless hook."""
+    if hooks_dir is None:
+        hooks_dir = Path.home() / ".codex" / "hooks"
     document: dict[str, Any] = dict(existing or {})
     if not document:
         document["description"] = "Global lifecycle hooks installed by Burnless."
@@ -200,7 +208,7 @@ def merge_hooks_document(existing: dict[str, Any] | None) -> dict[str, Any]:
         hooks.setdefault(event, [])
         if not isinstance(hooks[event], list):
             raise ValueError(f"~/.codex/hooks.json field hooks.{event} must be a JSON array")
-        hooks[event].append(_burnless_hook_group(event))
+        hooks[event].append(_burnless_hook_group(event, hooks_dir))
     document["hooks"] = hooks
     return document
 
@@ -294,7 +302,7 @@ def plan_setup(home: Path, version: str) -> SetupPlan:
             raise ValueError(f"{hooks_json_path} must contain a top-level JSON object")
         existing_document = parsed
 
-    merged_document = merge_hooks_document(existing_document)
+    merged_document = merge_hooks_document(existing_document, hooks_dir=hooks_dir)
     hooks_json_after = (
         json.dumps(merged_document, indent=2, ensure_ascii=False) + "\n"
     ).encode("utf-8")
