@@ -39,9 +39,15 @@ execution.
 - **Gold/Diamond tier tasks:** prefer `burnless ask --tier gold/diamond` for
   planning, architecture, and irreversible-decision arbitration — this is
   currently a RECOMMENDATION, not an enforced requirement.
-- **Recovery:** Codex hooks under `templates/codex/hooks/` already wire
-  epoch-based rolling memory via the `SessionStart` hook — no manual raw-log
-  replay needed after a new session starts.
+- **Recovery (Codex): NOT wired yet by this setup.** Rolling memory for Codex
+  sessions requires installing the hooks from `templates/codex/hooks/` into
+  your Codex configuration — this setup currently manages AGENTS.md only.
+  Until hooks are installed, a fresh Codex session starts WITHOUT restored
+  state; do not assume /clear-style continuity here.
+- **When to delegate:** conversational questions and quick single-file reads —
+  just answer. Multi-file or spec-able changes — prefer `burnless do`.
+- **Language:** these operating instructions are in English. ALWAYS reply to
+  the user in the USER'S language.
 - **Reference:** run `burnless --help` for current commands and flags.
 <!-- burnless:codex:end -->"""
 
