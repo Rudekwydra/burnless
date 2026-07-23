@@ -75,6 +75,11 @@ def test_doctor_fix(tmp_home):
     (Band B). So init a config first, then assert fix drives FAIL to 0.
     """
     from burnless.cli import cmd_init
+    # A real project lives in a SUBDIR of $HOME; is_project_root() refuses $HOME itself,
+    # so init/run_checks from a subdir (the fixture chdirs to $HOME).
+    proj = tmp_home / "proj"
+    proj.mkdir()
+    os.chdir(proj)
     init_args = MagicMock()
     init_args.project = "test-project"
     init_args.force = True
