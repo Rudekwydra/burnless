@@ -299,7 +299,8 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
     Returns (first match):
     (a) Closest ancestor of cwd with .burnless/config.yaml (excluding workspace itself)
     (b) workspace/<first_component> if cwd is strictly inside workspace
-    (c) _detect_from_transcript or freshest_project_root if cwd == workspace or cwd == home
+    (c) if cwd == workspace: _detect_from_transcript, else freshest_project_root
+    (c2) if cwd == home with a transcript proving a project (>=5 refs): that project, else None
     (d) cwd itself
     Returns None on any error.
     """
@@ -333,6 +334,18 @@ def resolve_root(cwd, workspace=None, transcript=None) -> Path | None:
                 if detected:
                     return detected
             return freshest_project_root(workspace)
+
+        # Home-started session (the ~90% default): if the transcript proves the
+        # user actually worked on a project under the workspace (>=5 refs), route
+        # the handoff there so continuity survives no matter which folder the next
+        # session opens in. HOME_TRANSCRIPT_ROUTING marker. No confident detection
+        # -> fall through to None (the deterministic per-cwd orphan store), never a
+        # freshest-project guess, so a quick home Q&A never writes into an
+        # unrelated project.
+        if workspace is not None and cwd == Path.home() and transcript is not None:
+            detected = _detect_from_transcript(transcript, workspace)
+            if detected:
+                return detected
 
         return None
     except Exception as exc:
