@@ -227,9 +227,13 @@ burnless run d001 --progress minimal   # spinner + idle label
 burnless run d001 --progress full      # raw streaming output
 burnless status              # current plan + open delegations
 burnless metrics             # token counter + audit ledger
+burnless ask "<prompt>"      # ask a question, route to configured tier
 ```
 
 State lives entirely under `.burnless/` in your project. No hosted backend.
+
+Use `--output PATH` to write the response to disk, preserving context across turns. 
+The stdout prints a pointer (file path + first line). Auto-name files in a directory with `--output-dir`.
 
 ## Using Burnless from your AI assistant
 

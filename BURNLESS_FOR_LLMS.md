@@ -9,3 +9,7 @@ This file is a pointer. Read the canonical sources instead of duplicating them h
 - **Architecture (Maestro / Worker / Capsule, audit loop, plugins):** [`PROTOCOL.md`](PROTOCOL.md)
 
 For the discovery-level briefing (what-it-is / what-it-is-not, benchmarks, comparisons), see [`llms.txt`](llms.txt).
+
+## Quick tip for LLM callers
+
+**LLM callers:** Use `burnless ask --output /path/to/file.md` to save responses to disk. This preserves context economy across multiple turns — the response file can be read back in a later invocation without re-running the model.

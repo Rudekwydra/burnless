@@ -1644,6 +1644,34 @@ def cmd_ask(args: argparse.Namespace) -> int:
         envelope["warnings"] = list(warn_list)
 
     if args.output_format == "json":
+        response = envelope
+    else:
+        response = result.stdout
+
+    if args.output or args.output_dir:
+        import datetime
+        output_path = None
+        if args.output:
+            output_path = Path(args.output)
+        else:
+            ts = datetime.datetime.now(datetime.timezone.utc).isoformat().replace(':', '').replace('-', '')[:15]
+            slug = request_id[:8]
+            fname = f'ask_{ts}_{slug}.md'
+            output_path = Path(args.output_dir) / fname
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if args.output_format == 'json':
+            output_path.write_text(json.dumps(response, indent=2, ensure_ascii=False), encoding='utf-8')
+        else:
+            output_path.write_text(str(response), encoding='utf-8')
+
+        first_line = str(response).split('\n')[0][:80]
+        print(str(output_path))
+        print(first_line)
+        return 0
+
+    if args.output_format == "json":
         print(json.dumps(envelope, indent=2, ensure_ascii=False))
         return 0 if envelope["status"] == "ok" else 1
 
@@ -2674,6 +2702,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--budget-policy", choices=["hard", "soft"], default="soft", dest="budget_policy", help="hard: block when a capability proves it can enforce the cap; soft: estimate + warn only")
     sp.add_argument("--prefix-file", default=None, dest="prefix_file", help="path to a stable, versioned prefix appended to the system prompt (cache-friendly, hash-only telemetry)")
     sp.add_argument("--cache-key", default=None, dest="cache_key", help="opaque label for correlating prefix-cache calls in telemetry (not used for validation)")
+    sp.add_argument("--output", default=None, dest="output", help="write response to PATH as markdown")
+    sp.add_argument("--output-dir", default=None, dest="output_dir", help="auto-name response in DIR as ask_<ts>_<slug8>.md")
     sp.set_defaults(func=cmd_ask)
 
     sp = sub.add_parser("setup", help="detect CLIs/keys and write a sensible config")
