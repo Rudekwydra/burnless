@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
+from . import epochs
 from . import owner_loop
 from . import transcript_sources
 from .markers import EXCHANGE_MARKER_LINES, to_en_markers, to_pt_markers, SECTION_PT_TO_EN
@@ -2830,10 +2831,12 @@ def render_restore(
             "verified_claims": _extract_verified_claims(live_handoff),
         },
     )
+    footer = epochs.build_restore_clear_footer()
+    context_with_footer = context + "\n\n" + footer if context and footer else context
     return {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": context,
+            "additionalContext": context_with_footer,
         },
         "recovery": {
             "host": host,

@@ -1437,3 +1437,58 @@ def test_trust_audit_computes_reverify_rate(tmp_path):
     assert "git status --short" in result["matched"]
     assert result["reverify_rate"] == 0.5
     assert result["stale_blind_rate"] == 0.0
+
+
+def test_restore_includes_clear_footer_banner(tmp_path):
+    """Verify that restore output includes the /clear safety banner."""
+    from burnless import recovery
+    from burnless.recovery import write_checkpoint, _journal_dir
+
+    root = tmp_path / ".burnless"
+
+    # Set up minimal checkpoint and journal
+    write_checkpoint(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        living_md="## Foco atual\n- test task\n",
+        harvested_state={"contracts": [], "refs": [], "open_threads": []},
+        applied_through=0,
+    )
+
+    journal_dir = _journal_dir(root, "claude", "sid-1")
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    (journal_dir / "000.jsonl").write_text(
+        json.dumps({
+            "seq": 1,
+            "exchange_id": "test-ex-1",
+            "host": "claude",
+            "host_session_id": "sid-1",
+            "process_instance_id": "proc-1",
+            "user_text": "test question",
+            "assistant_text": "test answer",
+            "files": [],
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    payload = recovery.render_restore(
+        root,
+        host="claude",
+        host_session_id="sid-1",
+        process_instance_id="proc-1",
+        new_session_id="sid-2",
+        source="clear",
+    )
+
+    assert payload is not None
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+
+    # Verify the /clear footer banner is present
+    assert "You can /clear anytime" in ctx
+    assert "Burnless restores your working state" in ctx
+    assert "A clean context saves tokens" in ctx
+
+    # Verify banner appears at the end (after the manifest)
+    assert ctx.rstrip().endswith("keeps answers sharp.")

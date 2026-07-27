@@ -813,6 +813,16 @@ def carry_forward_chain(root, current_chat_id=None) -> str:
         return ""
 
 
+def build_restore_clear_footer() -> str:
+    """Generate the footer banner for restore output.
+
+    Returns a 1-2 line tip about /clear being safe and saving tokens.
+    Token counts are omitted since they're not cheaply available at this point.
+    """
+    from . import i18n
+    return i18n.msg("restore_clear_footer", "en")
+
+
 def build_refine_owner_candidates(root, current_chat_id=None) -> tuple[list[tuple[str, str]], str] | None:
     """Build predecessors list and deterministic floor for owner-loop refine_seed.
 
