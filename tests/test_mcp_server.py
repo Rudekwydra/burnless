@@ -324,3 +324,32 @@ async def test_metrics_tool_returns_snapshots(mock_burnless_project: Path) -> No
     assert result["metrics"]["burnless_tokens"] == 1
     assert len(result["audit"]) == 1
     assert len(result["spend"]) == 1
+
+
+def test_no_burnless_root_hint_lists_known_roots(tmp_path, monkeypatch):
+    """Verify hint includes known roots when global_metrics.jsonl is readable"""
+    from pathlib import Path
+    from burnless import mcp_server
+
+    home_dir = tmp_path / 'home'
+    home_dir.mkdir()
+    burnless_dir = home_dir / '.burnless'
+    burnless_dir.mkdir()
+    metrics_file = burnless_dir / 'global_metrics.jsonl'
+    metrics_file.write_text('{"project_root": "/path/one"}\n{"project_root": "/path/two"}\n{"project_root": "/path/three"}\n{"project_root": "/path/four"}\n')
+
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: home_dir))
+    hint = mcp_server._build_root_hint()
+    assert 'Known roots:' in hint
+    assert '/path/one' in hint
+    assert '/path/four' not in hint
+
+
+def test_no_burnless_root_hint_graceful_missing_file(monkeypatch):
+    """Verify hint = default when global_metrics.jsonl missing"""
+    from pathlib import Path
+    from burnless import mcp_server
+
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: Path('/nonexistent/path')))
+    hint = mcp_server._build_root_hint()
+    assert hint == 'run `burnless init` in project root'

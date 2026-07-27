@@ -22,6 +22,37 @@ from . import spec_validator, report_kind
 from .agents import resolve_command
 
 
+def _get_known_roots() -> list[str]:
+    """Extract up to 3 most-recent distinct project_roots from ~/.burnless/global_metrics.jsonl"""
+    try:
+        metrics_file = Path.home() / '.burnless' / 'global_metrics.jsonl'
+        if not metrics_file.exists():
+            return []
+        roots_seen = {}
+        with open(metrics_file, encoding='utf-8') as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    root = entry.get('project_root')
+                    if root and root not in roots_seen:
+                        roots_seen[root] = True
+                except (json.JSONDecodeError, ValueError):
+                    continue
+        return list(roots_seen.keys())[:3]
+    except (OSError, IOError):
+        return []
+
+
+def _build_root_hint() -> str:
+    """Build improved no_burnless_root hint with known roots"""
+    known = _get_known_roots()
+    base = 'run `burnless init` in project root'
+    if known:
+        roots_str = '\n'.join(f'  - {r}' for r in known)
+        return f'{base}. Known roots:\n{roots_str}'
+    return base
+
+
 server = Server("burnless")
 
 
@@ -98,7 +129,7 @@ async def handle_delegate(text: str, tier: Optional[str] = None, project_root: O
 
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     try:
         cfg = _get_config(burnless_root)
@@ -180,7 +211,7 @@ async def handle_route(text: str, project_root: Optional[str] = None) -> dict:
 
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     try:
         cfg = _get_config(burnless_root)
@@ -211,7 +242,7 @@ async def handle_route(text: str, project_root: Optional[str] = None) -> dict:
 async def handle_run(id: str, background: bool = False, project_root: Optional[str] = None) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     deleg_path = burnless_root / "delegations" / f"{id}.md"
     if not deleg_path.exists():
@@ -305,7 +336,7 @@ async def _run_sync(id: str, burnless_root: Path) -> dict:
 async def handle_capsule(id: str, project_root: Optional[str] = None) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     capsule_path = burnless_root / "capsules" / f"{id}.json"
     if not capsule_path.exists():
@@ -321,7 +352,7 @@ async def handle_capsule(id: str, project_root: Optional[str] = None) -> dict:
 async def handle_read(id: str, project_root: Optional[str] = None, max_log_lines: int = 200) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     capsule_path = burnless_root / "capsules" / f"{id}.json"
     if capsule_path.exists():
@@ -361,7 +392,7 @@ async def handle_read(id: str, project_root: Optional[str] = None, max_log_lines
 async def handle_status(id: Optional[str] = None, project_root: Optional[str] = None, include_config: bool = False) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     if id:
         return _status_per_delegation(id, burnless_root)
@@ -485,7 +516,7 @@ async def handle_do(text: str, tier: Optional[str] = None, project_root: Optiona
 async def handle_metrics(project_root: Optional[str] = None, limit: int = 50) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     p = paths.paths_for(burnless_root)
     metrics = metrics_mod.load(p["metrics"])
@@ -501,7 +532,7 @@ async def handle_metrics(project_root: Optional[str] = None, limit: int = 50) ->
 async def handle_audit(delegation_id: Optional[str] = None, session: bool = False, project_root: Optional[str] = None) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     did = None if session else delegation_id
     records = audit_graph.read_records(burnless_root.parent, did)
@@ -511,7 +542,7 @@ async def handle_audit(delegation_id: Optional[str] = None, session: bool = Fals
 async def handle_retrieve(id: Optional[str] = None, query: Optional[str] = None, file: Optional[str] = None, entity: Optional[str] = None, project_root: Optional[str] = None, max_chars: int = 4000) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     try:
         cfg = _get_config(burnless_root)
@@ -543,7 +574,7 @@ async def handle_retrieve(id: Optional[str] = None, query: Optional[str] = None,
 async def handle_search_capsules(query: str, project_root: Optional[str] = None, limit: int = 10) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     try:
         all_results = retrieve_mod.search(burnless_root, query=query)
@@ -562,7 +593,7 @@ async def handle_search_capsules(query: str, project_root: Optional[str] = None,
 async def handle_explain_capsule(id: str, project_root: Optional[str] = None) -> dict:
     burnless_root = _resolve_root(project_root)
     if burnless_root is None:
-        return {"error": "no_burnless_root", "hint": "run `burnless init` in project root"}
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
 
     try:
         refs = retrieve_mod.search(burnless_root, delegation_id=id)

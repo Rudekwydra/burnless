@@ -127,6 +127,8 @@ def _ask_args(**overrides) -> argparse.Namespace:
         provider=None,
         system=None,
         output_format="text",
+        output=None,
+        output_dir=None,
         timeout=120,
         max_budget_usd=None,
         effort=None,
@@ -136,6 +138,8 @@ def _ask_args(**overrides) -> argparse.Namespace:
         max_output_tokens=None,
         max_total_tokens=None,
         budget_policy="soft",
+        prefix_file=None,
+        cache_key=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
