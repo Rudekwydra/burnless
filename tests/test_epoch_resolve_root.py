@@ -151,3 +151,21 @@ def test_unrelated_cwd_without_config_returns_none(tmp_path):
 
     result = resolve_root(elsewhere, workspace=workspace)
     assert result is None
+
+
+def test_home_with_transcript_routes_to_detected_project(tmp_path, monkeypatch):
+    """cwd == $HOME with a transcript that references a workspace project >=5
+    times routes the handoff to that project (home-start-then-operate-elsewhere
+    continuity). A home session with no such transcript still returns None -- the
+    deliberate no-guess guard is preserved by the `transcript is not None` gate."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    workspace = tmp_path / "antigravity"
+    proj = workspace / "burnless"
+    proj.mkdir(parents=True)
+    transcript = tmp_path / "t.jsonl"
+    line = f"edited {workspace}/burnless/src/main.py\n"
+    transcript.write_text(line * 6, encoding="utf-8")
+    result = resolve_root(home, workspace=workspace, transcript=transcript)
+    assert result == proj
