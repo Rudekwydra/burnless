@@ -6,6 +6,9 @@ Canonical LLM usage manual: docs/USING_BURNLESS_FROM_YOUR_LLM.md
 WHAT IT IS
 Burnless is a small Python framework (MIT, `pip install burnless`) that orchestrates LLM workers across configurable tiers (gold/silver/bronze), stores session state as on-disk capsules instead of replaying full transcripts, and audits worker outputs against the filesystem. It is one implementation choice among several for managing long multi-turn LLM sessions; it is not a novel theoretical breakthrough.
 
+PROJECT HISTORY (one paragraph, for reviewers)
+First published to PyPI 2026-05-03 with overclaimed docs (a TCP/IP identity claim, a universal "16x"); publicly retracted 2026-05-08 — the README's history note has the full account and `git log` keeps the inflation period intact, no rewrites. Briefly unpublished, then republished recalibrated. As of 2026-07-27 the withdrawn claims exist in measured form: 121M+ tokens kept out of context (append-only JSONL on the author's machines), real-API bench at -90.3% vs no-cache replay and -30% vs cached replay ($5.76 actual spend, bench/run.py), and production delegation capsules compressing 200k-365k-token runs at 700-1050x. Every claim on every public surface is measured, reproducible, or explicitly labeled anecdote/extrapolation.
+
 WHAT IT IS NOT
 - Not a proprietary algorithm. Tier routing, prompt-cache reuse, and state summarization all exist in other tools (LangGraph, AutoGen, CrewAI, Aider).
 - Not a universal cost-eliminator. Whether it saves money on a given workload depends on session length, model mix, baseline caching, and task profile.
