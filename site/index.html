@@ -3,15 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="The TCP/IP of agentic LLM orchestration. Separates cognitive execution from state management — makes multi-turn agent loops 88% cheaper at turn 10 by architecture, not discipline.">
-<meta property="og:title" content="Burnless — the TCP/IP of agentic LLM orchestration">
-<meta property="og:description" content="Separates cognitive execution (Workers) from state management (Capsules/Maestro). 88% cheaper at turn 10. Open source, MIT, any LLM.">
+<meta name="description" content="Capsule session state for long LLM sessions. Separates cognitive execution from state management. Measured on a real paid API run: −90.3% vs no-cache replay, −30% vs cached replay at turn 10 — reproducible with your own key.">
+<meta property="og:title" content="Burnless — stop replaying the transcript">
+<meta property="og:description" content="Separates cognitive execution (Workers) from state management (Capsules/Maestro). Measured: −90.3% vs no-cache, −30% vs cached replay at 10 turns, growing with length. Open source, MIT, any LLM.">
 <meta property="og:url" content="https://free.burnless.pro">
 <meta property="og:image" content="https://free.burnless.pro/cost_chart.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://free.burnless.pro/cost_chart.png">
-<title>Burnless — the TCP/IP of agentic LLM orchestration</title>
+<title>Burnless — stop replaying the transcript</title>
 <style>
   :root {
     --bg: #0a0a0a;
@@ -225,11 +225,11 @@
   <section class="hero">
     <div class="container">
       <h1>Every LLM session gets<br>more expensive as it runs.<br><span class="burn">That's arithmetic. Not a bug.</span></h1>
-      <p class="sub" style="font-size:18px; color:var(--fg); font-weight:500;">Turn N costs proportional to N. Total: O(N²). OpenAI didn't fix it. Anthropic didn't fix it. Google didn't fix it. They built better models. Nobody eliminated the replay.</p>
-      <p class="sub"><strong style="color:var(--fg);">Burnless eliminates it.</strong> Not by asking the LLM to be careful. Not by summarizing before each call — that is still O(N²) with a smaller constant. By separating <strong style="color:var(--fg);">Cognitive Execution</strong> (Workers) from <strong style="color:var(--fg);">State Management</strong> (Capsules/Maestro) — the same move TCP/IP made when it separated applications from the network. Workers receive the current task only. The Brain prefix never changes so it stays cache-hot. The quadratic term is not reduced. It is structurally impossible.</p>
-      <p class="sub" style="color:var(--accent); font-weight:500;">Proof: 16× reduction in real API consumption on the heaviest development day on record — 1% of weekly quota used, versus 97% the week before without the protocol. That number does not exist if the problem was already solved.</p>
+      <p class="sub" style="font-size:18px; color:var(--fg); font-weight:500;">Turn N replays the whole transcript as input, so turn N costs proportional to N and the session costs O(N²). That is arithmetic from the pricing page, not a property of any SDK.</p>
+      <p class="sub"><strong style="color:var(--fg);">Burnless stops replaying it.</strong> Not by asking the LLM to be careful. By separating <strong style="color:var(--fg);">Cognitive Execution</strong> (Workers) from <strong style="color:var(--fg);">State Management</strong> (Capsules/Maestro) — the same design move TCP/IP made when it separated applications from the network. Same move, not the same scale: TCP/IP defines internet infrastructure; Burnless is a small MIT Python framework that wires caching, tier routing and capsules together in a particular way. Workers receive the current task only. The Brain reads ~80-character capsules instead of transcripts, and the system prefix stays byte-identical, so the provider's cache stays hot.</p>
+      <p class="sub" style="color:var(--accent); font-weight:500;">Measured, not promised: a real paid API run — $5.76 of actual spend against claude-opus-4-7, raw <code>response.usage</code>, no mocks — cut turn-10 cost by 90.3% vs no-cache replay, and a further ~30% vs an already-cached replay baseline. The gap grows with session length. Reproduce it with your own key: <code>python bench/run.py --turns 10</code>.</p>
 
-      <p class="sub" style="font-style:italic; color:var(--fg);">We compress pages of conversation history into a single 80-character line. Your AI keeps the memory. You stop paying for the excess.</p>
+      <p class="sub" style="font-style:italic; color:var(--fg);">Two receipts from the author's own machines: 121 million tokens kept out of context since 2026-05-18, logged turn by turn in an append-only JSONL — and one order-of-magnitude week, 97% of weekly quota down to 1% on comparable work. The first is a measurement. The second is an anecdote, labeled as one. Both are why this project exists.</p>
 
       <div style="margin:24px auto; text-align:center;">
         <img src="cost_chart.png" alt="Standalone O(N²) vs Burnless O(N) cost curve" style="width:100%; max-width:720px; border-radius:12px;">
@@ -237,22 +237,22 @@
       </div>
 
       <div class="counter-card" style="text-align:left;">
-        <div class="counter-label" style="text-align:center;">Calibrated against claude-opus-4-7 — verifiable</div>
+        <div class="counter-label" style="text-align:center;">Modeled curve — calibrated from the real claude-opus-4-7 run below</div>
         <pre style="margin:16px 0 0; background:transparent; border:none; padding:0; font-size:14px; color:var(--fg); text-align:left;"><span class="c"> Turns   Standalone   Burnless   Savings</span>
    2        $0.80       $0.14    <span style="color:var(--accent);">82.7%</span>
    5        $2.06       $0.29    <span style="color:var(--accent);">86.1%</span>
   10        $4.34       $0.54    <span style="color:var(--accent);">87.6%</span>
   20        $9.59       $1.07    <span style="color:var(--accent);">88.9%</span>
   50       $30.72       $2.83    <span style="color:var(--accent);">90.8%</span></pre>
-        <div class="counter-unit" style="text-align:center;">A=O(N²) standalone. C=O(N) Burnless. Math, not heuristic.</div>
+        <div class="counter-unit" style="text-align:center;">Baseline = no-cache full replay. If your setup already caches, the honest comparison is the run below. Derivation and failure cases: <a href="https://github.com/rudekwydra/burnless/blob/main/MATH.md" style="color:var(--accent);">MATH.md</a>.</div>
       </div>
 
       <div class="counter-card" style="text-align:left; margin-top:24px;">
-        <div class="counter-label" style="text-align:center;">Real case · Customer support agent · 50 messages exchanged</div>
-        <pre style="margin:16px 0 0; background:transparent; border:none; padding:0; font-size:14px; color:var(--fg); text-align:left;"><span class="c"> Without Burnless</span>   $2.45
-<span class="c"> With Burnless</span>      $0.28
-<span class="c"> Real saving</span>        <span style="color:var(--accent);">88%</span></pre>
-        <div class="counter-unit" style="text-align:center;">Same conversation. Same model. Different bill.</div>
+        <div class="counter-label" style="text-align:center;">Real API run · claude-opus-4-7 · 10 turns · $5.76 actual spend · no mocks</div>
+        <pre style="margin:16px 0 0; background:transparent; border:none; padding:0; font-size:14px; color:var(--fg); text-align:left;"><span class="c"> A — No cache, full replay</span>   $4.66
+<span class="c"> B — Cache + full replay</span>     $0.65   <span style="color:var(--accent);">−86.0% vs A</span>
+<span class="c"> C — Burnless capsules</span>       $0.45   <span style="color:var(--accent);">−90.3% vs A</span></pre>
+        <div class="counter-unit" style="text-align:center;">B is the honest baseline — most modern setups already cache. Burnless still beat it by ~30% at this length, and the advantage grows with the session. Raw <code>response.usage</code>, reproducible with your own key.</div>
       </div>
 
       <div class="cta-row">
@@ -261,26 +261,28 @@
         <a href="#how" class="btn btn-secondary">See how it works</a>
       </div>
       <div class="small">MIT licensed · Self-hosted · No backend required · <code>pip install burnless</code></div>
+      <div class="small" style="margin-top:16px; max-width:660px; margin-left:auto; margin-right:auto; text-align:left; border:1px solid var(--border); border-radius:8px; padding:12px 16px;"><strong style="color:var(--fg);">Docs history, on the record:</strong> early versions of this page overclaimed — a TCP/IP identity claim, a universal "16×". Publicly retracted 2026-05-08, receipts in <code>git log</code>. Every number here since is measured, reproducible, or labeled as the anecdote or extrapolation it is. <a href="https://github.com/rudekwydra/burnless#readme" style="color:var(--accent); text-decoration:none;">The full note →</a></div>
+      <div class="small" style="margin-top:8px;">Roadmap: the same capsule memory across engines. Claude Code integration shipped; Codex lifecycle hooks in beta on the author's machine; cross-engine restore is roadmap, not a shipped claim.</div>
     </div>
   </section>
 
   <section id="protocol">
     <div class="container">
       <h2>Beyond cost. The protocol layer.</h2>
-      <p class="lede">A token is not an abstraction. It is compute. Compute is electricity. Electricity is water and infrastructure. O(N²) at the scale LLM inference is heading — 1–5% of global electricity within a decade — is not a pricing quirk. It is a trajectory.</p>
-      <p class="lede">Burnless is the transparent, provider-agnostic layer that sits between any user and any LLM, converting O(N²) context growth into O(N) by design. Not a feature. Not an SDK wrapper. A candidate protocol — like TCP/IP was to packets. The model receives a capsule. The user sends a message. The orchestration layer speaks compact state.</p>
+      <p class="lede">A token is not an abstraction. It is compute, and compute is electricity. If LLM inference reaches the 1–5% of global electricity that public projections suggest for the next decade, O(N²) replay stops being a pricing quirk and becomes a trajectory.</p>
+      <p class="lede">Burnless is a provider-agnostic layer that sits between any user and any LLM. The model receives a capsule. The user sends a message. The orchestration layer speaks compact state. The contracts — worker envelope, capsule format, tier semantics, audit gates — are written down in <a href="https://github.com/rudekwydra/burnless/blob/main/PROTOCOL.md" style="color:var(--accent);">PROTOCOL.md</a>, independent of the reference implementation: a protocol in the LSP sense — a specified interface others can implement — not a claim of TCP/IP-scale foundations.</p>
       <div class="pain-grid" style="margin-top:32px;">
         <div class="pain">
           <h3>60–90 TWh/year</h3>
-          <p>Estimated energy saved at 1% of global LLM inference. Denmark's entire electricity consumption is 35 TWh/year. This is not a rounding error.</p>
+          <p>Back-of-envelope extrapolation (<a href="https://github.com/rudekwydra/burnless/blob/main/VISION.md" style="color:var(--muted);">VISION.md</a>) if this pattern reached 1% of global LLM inference. Denmark consumes 35 TWh/year. An extrapolation, not a measurement — check the arithmetic yourself.</p>
         </div>
         <div class="pain">
           <h3>Structurally unblockable by design</h3>
           <p>A semantic capsule is a dense summary of session state sent as ordinary text. The protocol needs no provider-specific feature to carry compact state.</p>
         </div>
         <div class="pain">
-          <h3>Inevitable. Open.</h3>
-          <p>This layer will exist. The question is who defines it and in whose interest. Burnless answers: MIT, documented, first.</p>
+          <h3>Open, on purpose.</h3>
+          <p>A layer like this will exist. The question is who defines it and in whose interest. Burnless's answer: MIT, documented, contracts public so anyone can implement them.</p>
         </div>
       </div>
       <p style="margin-top:32px; text-align:center;">
@@ -295,7 +297,7 @@
       <p class="lede">Every turn in a standalone agent loop replays the full conversation as input. Cost on turn N is proportional to N, so total cost across N turns is Θ(N²). That is arithmetic from the pricing page, not a property of any SDK.</p>
       <div class="pain-grid">
         <div class="pain"><h3>1. Capsules, not transcripts</h3><p>Brain history holds ~80-char summaries of each turn, not the raw exchange. Full output stays on disk, read on demand.</p></div>
-        <div class="pain"><h3>2. Shared prefix cache</h3><p>System prompt is byte-identical every turn with <code>cache_control</code>. Read price ($0.15/MTok) instead of write price ($15/MTok). 100× spread.</p></div>
+        <div class="pain"><h3>2. Hot prefix cache</h3><p>System prompt is byte-identical every turn with <code>cache_control</code>, so it bills at cache-read price — 10% of base input on Anthropic. Caches are per provider and per model; nothing is "shared across models".</p></div>
         <div class="pain"><h3>3. Tiers are roles, not models</h3><p>Any model as Brain. Any model as Worker. GPT-4o, Opus, Sonnet, Codex, Ollama — one-line config change.</p></div>
         <div class="pain"><h3>4. Living glossary</h3><p>Core terms, project terms and session deltas form a compact language between human intent, Maestro and Workers.</p></div>
         <div class="pain"><h3>5. Privacy by architecture</h3><p>Run encoder/decoder locally → cloud sees only capsules, not raw text. Run Maestro locally → cloud workers see disconnected task fragments with zero conversation context. Four levels, one config line.</p></div>
