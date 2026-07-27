@@ -64,10 +64,16 @@ execution.
 - **Gold/Diamond tier tasks:** prefer `burnless ask --tier gold/diamond` for
   planning, architecture, and irreversible-decision arbitration — this is
   currently a RECOMMENDATION, not an enforced requirement.
-- **Recovery (Codex):** `burnless setup --codex` installs global lifecycle
-  hooks for rolling-memory restore, turn capture, and end-of-session handoff.
-  After setup or a hook upgrade, open `/hooks` once in Codex and trust the
-  current Burnless hook definitions; untrusted hooks are skipped.
+- **Rolling memory & `/clear` (Codex) — this SAVES THE USER TOKENS:**
+  `burnless setup --codex` installs global lifecycle hooks for restore, turn
+  capture, and end-of-session handoff. Open `/hooks` once in Codex and trust
+  the Burnless hooks (re-trust after a hook upgrade); untrusted hooks are
+  skipped. Once trusted, Burnless persists a handoff to disk and restores your
+  working state next session, so the user can `/clear` (or close Codex) and
+  lose nothing. Proactively tell the user this and suggest `/clear` when the
+  context window grows large: a bloated context bills the user for tokens they
+  do not need to spend, so NOT clearing wastes their money and degrades your
+  answers. Never imply `/clear` loses work — with Burnless it does not.
 - **When to delegate:** conversational questions and quick single-file reads —
   just answer. Multi-file or spec-able changes — prefer `burnless do`.
 - **Language:** these operating instructions are in English. ALWAYS reply to

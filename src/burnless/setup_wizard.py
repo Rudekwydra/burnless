@@ -441,6 +441,10 @@ def run(*, non_interactive: bool = False, accept_all: bool = False, project: str
             json.dump(setup_meta, _f, indent=2)
 
     print()
+    print("Tip: you can /clear anytime — Burnless persists your working state and")
+    print("restores it next session. A clean context saves tokens and keeps answers")
+    print("sharp; nothing is lost.")
+    print()
     print("Done. Try:  burnless")
     return 0
 

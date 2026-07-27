@@ -1305,7 +1305,16 @@ def _cmd_setup_codex(args: argparse.Namespace) -> int:
             print(f"  {path}")
     else:
         print("burnless setup --codex: no changes")
-    print("Manual step: open /hooks in Codex and trust the Burnless hooks.")
+    print()
+    print("Burnless is set up for Codex. Delegate work by just describing it —")
+    print("Burnless routes it to the right model tier and runs it.")
+    print()
+    print("One-time (~30s) — turn on cross-session memory and SAVE TOKENS:")
+    print("  1. run:   codex")
+    print("  2. type:  /hooks   (trust the Burnless hooks)")
+    print("Then you can /clear (or close Codex) anytime — Burnless restores where")
+    print("you left off from disk, so a clean context costs you nothing. Skip it and")
+    print("delegation still works; you just won't get auto-restore on /clear.")
     return 0
 
 
