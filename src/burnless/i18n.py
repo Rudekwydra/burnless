@@ -63,6 +63,9 @@ MESSAGES: dict[str, dict[str, str]] = {
     "restore_pending_old_header": {
         "en": "Older exchanges (1-line summary; content in the journal — see Manifest):",
     },
+    "restore_clear_footer": {
+        "en": "Tip: You can /clear anytime — Burnless restores your working state from disk. A clean context saves tokens and keeps answers sharp.",
+    },
 }
 
 

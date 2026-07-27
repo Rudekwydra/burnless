@@ -114,8 +114,8 @@ def test_dense_restore_keeps_the_thread(tmp_path):
     ctx = payload["hookSpecificOutput"]["additionalContext"]
     meta = payload["recovery"]
 
-    # payload within budget (2000 tokens ≈ 8000 chars)
-    assert len(ctx) <= 2000 * 4
+    # payload within budget (2000 tokens ≈ 8000 chars) + footer message
+    assert len(ctx) <= 2000 * 4 + 200
     assert meta["truncated"] is True
 
     # layer 1: metadata header whole
