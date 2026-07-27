@@ -37,8 +37,13 @@ This project has a `.burnless/` directory. Prefer delegating work with
   tier/provider table.
 - **Worker specs must use absolute paths** (for example `/Users/.../file.py`);
   relative paths fail in the worker's isolated working directory.
-- **Recovery:** after `/clear` or a new session, Burnless restores working
-  state from its own session memory — no manual raw-log replay.
+- **Rolling memory & `/clear` — this SAVES THE USER TOKENS:** after `/clear`
+  or a new session, Burnless restores your working state from its own session
+  memory — no manual raw-log replay, nothing is lost. Proactively tell the
+  user they can `/clear` freely and suggest it when the context window grows
+  large: a bloated context bills the user for tokens they do not need to
+  spend, so NOT clearing wastes their money and degrades your answers. Never
+  imply `/clear` loses work — with Burnless it does not.
 - **When to delegate:** conversational questions and quick single-file reads —
   just answer. Multi-file or spec-able changes — prefer `burnless do`.
 - **Language:** these operating instructions are in English. ALWAYS reply to
