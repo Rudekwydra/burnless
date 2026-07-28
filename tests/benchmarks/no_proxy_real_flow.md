@@ -38,7 +38,7 @@ Dry-run (no model calls — prints the measurement plan only; this is the
 acceptance check):
 
 ```bash
-cd /Users/roberto/antigravity/burnless
+cd <REPO_ROOT>
 .venv/bin/python tests/benchmarks/no_proxy_real_flow.py --dry-run
 .venv/bin/python tests/benchmarks/no_proxy_real_flow.py --dry-run --json
 ```
@@ -47,6 +47,7 @@ Live run (invokes real `claude -p` / `burnless do`; cost and latency depend on
 model and machine):
 
 ```bash
+cd <REPO_ROOT>
 .venv/bin/python tests/benchmarks/no_proxy_real_flow.py \
   --task "List the 5 largest .py files in src/burnless by line count." --runs 1
 ```
