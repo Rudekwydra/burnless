@@ -1,12 +1,20 @@
+"""
+One-shot remediation script: cleardown of stale session checkpoints.
+Executed 2026-07-04 on author machine; kept for audit trail.
+No longer active; kept as recovery reference if needed.
+"""
+
 import json
 import shutil
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/Users/roberto/antigravity/burnless/src")
+# Repo root resolution: this script is in scripts/, so parent.parent reaches repo root
+repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root / "src"))
 from burnless import recovery  # noqa: E402
 
-ROOT = "/Users/roberto/antigravity/burnless"
+ROOT = str(repo_root)
 HOST = "claude"
 STALE_SIDS = [
     "15028a72-45ef-49f8-81d1-3b7a31c0ac70",

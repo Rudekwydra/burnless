@@ -2,7 +2,12 @@
 """A/B benchmark: compact encoders (gemma4 local × haiku API) on golden harness."""
 
 import sys
-sys.path.insert(0, "/Users/roberto/antigravity/burnless/tests")
+import os
+from pathlib import Path
+
+# Resolve repo root relative to this file
+repo_root = Path(__file__).parent.parent
+sys.path.insert(0, str(repo_root / "tests"))
 
 import argparse
 import json
@@ -135,9 +140,11 @@ def main():
         default=[],
         help="fixture glob pattern (default: all *.yaml in golden/); repetible"
     )
+    bench_root = os.getenv("BURNLESS_BENCH_ROOT", ".")
+    default_out = str(Path(bench_root) / "bench" / "results" / "ab_compact_encoders.json")
     parser.add_argument(
         "--out",
-        default="/Users/roberto/antigravity/burnless/bench/results/ab_compact_encoders.json",
+        default=default_out,
         help="output JSON path"
     )
     args = parser.parse_args()
@@ -148,13 +155,14 @@ def main():
 
     # Default fixtures
     if not args.fixture_globs:
-        golden_dir = Path("/Users/roberto/antigravity/burnless/tests/fixtures/golden")
+        golden_dir = repo_root / "tests" / "fixtures" / "golden"
         fixture_paths = sorted(golden_dir.glob("*.yaml"))
         fixture_paths = [p for p in fixture_paths if p.name != "rewriter_outage.yaml"]
     else:
         fixture_paths = []
+        golden_dir = repo_root / "tests" / "fixtures" / "golden"
         for glob_pattern in args.fixture_globs:
-            fixture_paths.extend(Path("/Users/roberto/antigravity/burnless/tests/fixtures/golden").glob(glob_pattern))
+            fixture_paths.extend(golden_dir.glob(glob_pattern))
         fixture_paths = sorted(set(fixture_paths))
 
     # Parse encoders

@@ -18,6 +18,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Resolve repo root relative to this file
+repo_root = Path(__file__).parent.parent
+
 HANDOFF_BODY = """## Tarefa em andamento
 Restaurar confiança no bloco de restore pós-/clear.
 
@@ -341,9 +344,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="sonnet")
     parser.add_argument("--max-turns", type=int, default=6)
     parser.add_argument("--first-n", type=int, default=10)
+    bench_root = os.getenv("BURNLESS_BENCH_ROOT", ".")
+    default_out = str(Path(bench_root) / "bench" / "restore_trust_ab_results.md")
     parser.add_argument(
         "--out",
-        default="/Users/roberto/antigravity/burnless/bench/restore_trust_ab_results.md",
+        default=default_out,
     )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
