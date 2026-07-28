@@ -1,0 +1,47 @@
+name: "Bug report"
+description: "Something works incorrectly after setup — a command, a capsule, a restore, an audit result."
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What went wrong
+      description: Expected behaviour vs actual behaviour.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands you ran, in order.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "Output of `burnless doctor`"
+      description: "Run in the affected project directory. `--fix` auto-remediates the safe ones if you want to try that first."
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "OS, Python version, `burnless --version`, driving CLI"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "If a delegation is involved: `burnless read dNNN` or the raw `.burnless/logs/dNNN.log`. Redact anything private — logs can contain your prompts."
+      render: shell
+    validations:
+      required: false

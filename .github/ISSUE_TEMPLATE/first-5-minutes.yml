@@ -1,0 +1,61 @@
+name: "Open beta — where I got stuck"
+description: "You tried the quickstart and something broke, confused you, or just didn't work. This is the most useful report you can file."
+title: "[5min] "
+labels: ["open-beta", "friction"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for actually running it. Half-finished reports are still useful —
+        fill in what you have and send it. "I gave up at step 2" is a valid answer.
+
+  - type: dropdown
+    id: step
+    attributes:
+      label: Which step did you get stuck on?
+      options:
+        - "1 — pip install burnless"
+        - "2 — burnless setup"
+        - "3 — burnless doctor"
+        - "4 — working a real session"
+        - "5 — /clear and the restore afterwards"
+        - "Other / didn't get that far"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What you expected vs what you got. Paste the error if there was one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "Output of `burnless doctor`"
+      description: "Run it in the project directory and paste the whole thing — it's the fastest way to diagnose. Skip if you never got that far."
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: "OS, Python version, burnless version (`burnless --version`), and which CLI you drive it with (Claude Code / Codex / other)."
+      placeholder: "macOS 15.3, Python 3.12, burnless 0.9.6, Claude Code"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: time
+    attributes:
+      label: Time check
+      description: "The README claims ~2 minutes to a green doctor. Did that hold?"
+      options:
+        - label: "It took me noticeably longer than 2 minutes"
+          required: false
+        - label: "I never reached a green doctor"
+          required: false

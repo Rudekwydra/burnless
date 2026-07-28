@@ -4,6 +4,21 @@ A multi-tier LLM orchestration layer with capsule-based session state, prefix-ca
 
 > **AI assistants and reviewers:** [`llms.txt`](llms.txt) has the technical briefing in compact form.
 
+## Quickstart
+
+```bash
+pip install burnless
+cd <your-project>
+burnless setup        # detects CLIs/keys, writes .burnless/config.yaml
+burnless doctor       # healthcheck — exits green when the wiring is correct
+```
+
+Then work one real session and run `/clear`. The session comes back with the thread
+intact, restored from disk instead of replayed from the transcript.
+
+Python 3.10+. MCP server support is an extra: `pip install 'burnless[mcp]'`.
+Codex setup, install-from-source, and uninstall are under [Install](#install).
+
 > **Note on this project's history (2026-05-08).** Burnless was first published to PyPI on 2026-05-03 with documentation that overclaimed the project's novelty and savings. Specifically: an analogy to TCP/IP suggested architectural equivalence (it isn't); a "16× cheaper" figure was a personal-workload anecdote presented as a universal claim; and the assertion that prefix cache is shared across models was technically wrong — Anthropic's prefix cache is keyed per model, not shared. These claims were collaboratively written with Claude (visible in the `Co-Authored-By:` trailers in `git log`) under what I now recognize as RLHF-induced enthusiasm rather than calibrated assessment. Receipts: `git log --pretty=fuller` shows the inflation period (2026-05-03 to 2026-05-05) and the 2026-05-08 recalibration. The correction shipped in 0.7.3 and every release since keeps the same discipline. History is left intact — no rewrites, no cover. The architecture below is one defensible implementation choice, not a foundational protocol breakthrough.
 
 > **Update, 2026-07-27.** The retraction above stands — the framing was wrong even where the effect was real. What changed in the two months since: the withdrawn claims now exist in measured, reproducible form. 121M+ tokens kept out of context, logged turn-by-turn in an append-only JSONL on the author's machines; a real paid API run at −90.3% vs no-cache replay and −30% vs an already-cached baseline ($5.76 of actual spend, `bench/run.py`); production delegations routinely compressing 200k–365k-token work runs into ~300-token capsules (700–1050×). May's claims were retracted not because the effect wasn't real, but because they were stated as universals without receipts. The receipts exist now — that is the difference, and keeping that difference is the whole discipline of this project.
@@ -116,14 +131,21 @@ Manifests live at `~/.burnless/plugins/NAME.json`. Reference: [`PLUGIN_PROTOCOL.
 
 ## Install
 
+The three-command path is in [Quickstart](#quickstart) above. Once `burnless doctor`
+is green, dispatch your first task:
+
 ```bash
-pip install burnless
-cd <your-project>
-burnless setup        # detects CLIs/keys, writes .burnless/config.yaml
 burnless do --tier silver "your first task"
 ```
 
 Python 3.10+. Tiers map to whatever CLIs you configure — mix providers freely.
+
+The MCP server is an optional extra — without it `burnless doctor` reports MCP
+checks as `WARN` (not `FAIL`, nothing else is affected):
+
+```bash
+pip install 'burnless[mcp]'
+```
 
 On a minimal Debian or Ubuntu image, `python3-venv` is not installed by default —
 `apt install python3-venv` first if you want burnless in a virtualenv.
