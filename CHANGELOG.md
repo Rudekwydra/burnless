@@ -6,11 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.9.6] — 2026-07-23
+## [0.9.6] — 2026-07-28
 
 Repairs the 0.9.5 wheel, which could not run. Both defects were invisible from a
 source checkout and only showed up in a cold install from a clean tarball into a
 fresh venv — the way a first-time user arrives.
+
+### Added
+
+- **`burnless ask --output PATH` / `--output-dir DIR`.** Writes the completion
+  to disk as markdown and prints only a pointer line to stdout, so LLM callers
+  keep the response out of their context (the saving survives the next
+  `/clear`). Default stdout behavior unchanged.
+- **Economy footer on epoch restore.** The restore render now ends with a short
+  token-savings note and an explicit "/clear is safe — context persists in
+  epochs" line. Surfaces via SessionStart on both Claude and Codex hosts.
+- **Richer `no_burnless_root` hint.** Now lists up to 3 known project roots
+  derived from the global metrics log, alongside the `burnless init` suggestion.
 
 ### Fixed
 
