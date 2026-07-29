@@ -317,7 +317,7 @@ try:
     def approx_tokens(text: str) -> int:
         return max(1, len(_enc.encode(text)))
     _TOKEN_MODE = "tiktoken (cl100k_base)"
-except ImportError:
+except Exception:  # ImportError, or network failure fetching the encoding (e.g. 503)
     def approx_tokens(text: str) -> int:
         return max(1, len(text) // 4)  # heuristic fallback — char/4
     _TOKEN_MODE = "heuristic (char/4) — install tiktoken for real counts"
