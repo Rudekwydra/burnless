@@ -144,6 +144,7 @@ DEFAULT_CONFIG: dict = {
         "watermark_alarm_gap": 5,        # doctor C8 warns only when gap >= this
         "hook_error_tail": 5,            # doctor C9 shows last N lines
         "hook_error_window_h": 24,       # doctor C9 only warns about errors newer than this (0 = disable window)
+        "mcp_list_timeout_s": 10,        # doctor D3: timeout for `claude mcp list` health probe
     },
     "display": {
         "progress_detail": "brief",  # minimal | brief | full

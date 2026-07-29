@@ -99,7 +99,7 @@ def _collect(*, home: Path, cwd: Path | None, prefix_file: str | None = None,
     _check_a(checks)
     _check_b(checks, cwd=cwd)
     _check_c(checks, home=home, cwd=cwd)
-    _check_d(checks)
+    _check_d(checks, cwd=cwd)
     _check_e(checks, cwd=cwd)
     _check_f(checks)
     if prefix_file:
@@ -555,7 +555,10 @@ def _check_c(checks: list[Check], home: Path | None = None, cwd: Path | None = N
 
 # ── Band D: MCP (only D2 auto-fixable) ────────────────────────────────────────
 
-def _check_d(checks: list[Check]) -> None:
+def _check_d(checks: list[Check], cwd: Path | None = None) -> None:
+    from . import paths as paths_mod
+    from . import config as config_mod
+
     # D1: mcp_server module importable (not auto-fixable — needs pip install)
     try:
         import importlib
@@ -590,11 +593,20 @@ def _check_d(checks: list[Check]) -> None:
     except Exception as e:
         checks.append(Check("D2", "D", "WARN", f"mcp_server --check error: {e}"))
 
-    # D3: claude mcp list (timeout 3s, fail-open to WARN; not auto-fixable)
+    # D3: claude mcp list (configurable timeout, fail-open to WARN; not auto-fixable)
+    mcp_list_timeout = 10
+    try:
+        bl_root = paths_mod.find_root(start=cwd or Path.cwd())
+        if bl_root is not None:
+            cfg = config_mod.load(bl_root / "config.yaml")
+            mcp_list_timeout = int(cfg.get("epochs", {}).get("mcp_list_timeout_s", 10))
+    except Exception:
+        mcp_list_timeout = 10
+
     try:
         r = subprocess.run(
             ["claude", "mcp", "list"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True, text=True, timeout=mcp_list_timeout,
         )
         if r.returncode == 0:
             checks.append(Check("D3", "D", "PASS", "claude mcp list: ok"))
@@ -607,7 +619,7 @@ def _check_d(checks: list[Check]) -> None:
                             "claude CLI not found in PATH",
                             "install claude CLI"))
     except subprocess.TimeoutExpired:
-        checks.append(Check("D3", "D", "WARN", "claude mcp list timed out (3s)"))
+        checks.append(Check("D3", "D", "WARN", f"claude mcp list timed out ({mcp_list_timeout}s)"))
     except Exception as e:
         checks.append(Check("D3", "D", "WARN", f"claude mcp list error: {e}"))
 
