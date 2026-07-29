@@ -213,7 +213,7 @@ def test_pilot_report_summarizes_session_log(tmp_path, monkeypatch, capsys):
         },
     )
 
-    monkeypatch.setattr("burnless.cli.paths_mod.require_root", lambda: burnless_root)
+    monkeypatch.setattr("burnless.cli.paths_mod.find_root", lambda *a, **kw: burnless_root)
     monkeypatch.setattr("burnless.cli.pilot_discover_hosts", lambda: [])
     monkeypatch.setattr(
         "burnless.cli.pilot_build_report",
@@ -251,7 +251,7 @@ def test_pilot_report_shows_run_state(tmp_path, monkeypatch, capsys):
         {"event": "turn", "host": "claude", "host_session_id": "old-1", "process_instance_id": "proc-1"},
     )
 
-    monkeypatch.setattr("burnless.cli.paths_mod.require_root", lambda: burnless_root)
+    monkeypatch.setattr("burnless.cli.paths_mod.find_root", lambda *a, **kw: burnless_root)
     monkeypatch.setattr("burnless.cli.pilot_discover_hosts", lambda: [])
     monkeypatch.setattr("burnless.cli.pilot_summarize_session_log", lambda root: {"count": 0, "last": None})
     monkeypatch.setattr(

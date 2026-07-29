@@ -3396,9 +3396,17 @@ def _pilot_fork_enabled(project_root: Path) -> bool:
 
 
 def cmd_pilot(args: argparse.Namespace) -> int:
-    root = paths_mod.require_root()
-    project_root = root.parent if root.name == ".burnless" else root
-    cfg = config_mod.load(root / "config.yaml")
+    # doctor/report are diagnostics: they must work outside an initialized
+    # project (clean clone, CI, stranger's machine) — same fail-open stance
+    # as `burnless doctor` D3. Everything else still requires a root.
+    diagnostic = bool(getattr(args, "doctor", False) or getattr(args, "report", False))
+    root = paths_mod.find_root() if diagnostic else paths_mod.require_root()
+    if root is None:
+        project_root = Path.cwd()
+        cfg = {}
+    else:
+        project_root = root.parent if root.name == ".burnless" else root
+        cfg = config_mod.load(root / "config.yaml")
     pilot_cfg = cfg.get("pilot", {}) if isinstance(cfg, dict) else {}
 
     def _get(obj, key, default=None):
