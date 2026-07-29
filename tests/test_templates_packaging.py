@@ -3,7 +3,9 @@
 Without them `init --claude-code` wires nothing, which is the whole
 Claude Code integration. This is the regression that shipped in 0.9.5.
 """
-import tomllib
+import pytest
+
+tomllib = pytest.importorskip("tomllib")  # stdlib so no 3.11+; CI ainda roda 3.10
 from pathlib import Path
 
 from burnless import init_claude_code
