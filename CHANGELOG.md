@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.7] — 2026-07-29
+
+Every fix in this release was found by our own fleet on day 2 of the open
+beta — a session dogfooding the restore caught the budget overrun, and a CI
+run on a clean clone caught what only shows up on a stranger's machine.
+
+### Fixed
+
+- **The restore footer was concatenated outside the budget.** `render_restore`
+  built and truncated the context to fit `restore_budget_tokens`, then appended
+  the "/clear is safe" footer afterwards — so every dense session shipped over
+  budget (footer + separator, 133 chars today), quietly breaking the promise
+  that a restore fits in roughly 2k tokens. The footer's size is now reserved
+  before truncation; context plus footer land inside the budget.
+- **`burnless pilot --doctor` / `--report` crashed outside an initialized
+  project.** The diagnostic paths required a `.burnless/` root and died with
+  `SystemExit` on a clean clone — the first thing a new user might run. They
+  now fail open with defaults, same stance as `burnless doctor`; everything
+  else still requires an initialized root.
+- **`burnless doctor` C9 warned forever about old hook errors.** The check
+  flagged any line in the hook error log with no time window, so a hiccup from
+  a week ago kept the doctor yellow until the log was deleted. It now only
+  warns about errors within a configurable window (default 24h).
+- **`burnless doctor` D3 timed out on healthy setups.** The `claude mcp list`
+  probe had a hardcoded 3s timeout, but the command legitimately takes ~6s with
+  a dozen MCP servers configured. The timeout is now configurable and defaults
+  to 10s, and the WARN message reports the value actually used.
+
+### Tests
+
+- The test suite no longer fails to collect on Python 3.10: `tomllib`-dependent
+  tests are skipped there (`tomllib` ships with 3.11+). This was the source of
+  the red CI matrix — and of the failure e-mails.
+
 ## [0.9.6] — 2026-07-28
 
 Repairs the 0.9.5 wheel, which could not run. Both defects were invisible from a
