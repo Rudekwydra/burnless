@@ -143,6 +143,7 @@ DEFAULT_CONFIG: dict = {
         "startup_budget_tokens": 2000,   # SessionStart source=startup (seed)
         "watermark_alarm_gap": 5,        # doctor C8 warns only when gap >= this
         "hook_error_tail": 5,            # doctor C9 shows last N lines
+        "hook_error_window_h": 24,       # doctor C9 only warns about errors newer than this (0 = disable window)
     },
     "display": {
         "progress_detail": "brief",  # minimal | brief | full

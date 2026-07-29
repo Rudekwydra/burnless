@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
+from datetime import datetime, timezone
 
 from burnless import recovery, doctor
 from burnless.doctor import run_checks
@@ -162,9 +163,10 @@ def test_doctor_c9_hook_error_visibility(tmp_project, tmp_home, monkeypatch):
     state_dir.mkdir(parents=True, exist_ok=True)
     log_path = state_dir / "hook_errors.log"
 
+    recent_ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     hook_error = {
         "schema": 1,
-        "ts": "2026-07-06T00:00:00Z",
+        "ts": recent_ts,
         "hook": "UserPromptSubmit",
         "host": "test_host",
         "error": "test error for C9"
@@ -197,11 +199,12 @@ def test_doctor_c9_shows_multiple_tail_lines(tmp_project, tmp_home, monkeypatch)
     state_dir.mkdir(parents=True, exist_ok=True)
     log_path = state_dir / "hook_errors.log"
 
+    recent_ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     lines = []
     for i in range(7):
         error = {
             "schema": 1,
-            "ts": "2026-07-06T00:00:00Z",
+            "ts": recent_ts,
             "hook": "UserPromptSubmit",
             "host": "test_host",
             "error": f"error_{i}"
