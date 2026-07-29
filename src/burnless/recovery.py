@@ -2753,6 +2753,11 @@ def render_restore(
 
     checkpoint_chars = len(living_md.strip())
     max_chars = max(800, int(budget_tokens) * 4)
+
+    footer = epochs.build_restore_clear_footer()
+    footer_overhead = (len(footer) + 2) if footer else 0
+    adjusted_max_chars = max_chars - footer_overhead
+
     selected_checkpoint_path = _latest_checkpoint_path(root_path, host, checkpoint_session_id)
     if selected_checkpoint_path is None:
         for cp in _checkpoint_paths(root_path, host, checkpoint_session_id):
@@ -2791,7 +2796,7 @@ def render_restore(
     truncated = False
     pending_whole = len(pending_sorted)
     pending_summarized = 0
-    if len(full_context) <= max_chars:
+    if len(full_context) <= adjusted_max_chars:
         # Small payload: single-pass render, everything whole (plus manifest).
         context = full_context
     else:
@@ -2802,7 +2807,7 @@ def render_restore(
             manifest,
             living_md,
             pending_sorted,
-            max_chars,
+            adjusted_max_chars,
             live_handoff,
             handoff_header,
             restore_lang,
@@ -2831,7 +2836,6 @@ def render_restore(
             "verified_claims": _extract_verified_claims(live_handoff),
         },
     )
-    footer = epochs.build_restore_clear_footer()
     context_with_footer = context + "\n\n" + footer if context and footer else context
     return {
         "hookSpecificOutput": {
