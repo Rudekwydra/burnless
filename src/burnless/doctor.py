@@ -477,26 +477,67 @@ def _check_c(checks: list[Check], home: Path | None = None, cwd: Path | None = N
     from . import config as config_mod
     hook_error_log = home / ".burnless" / "state" / "hook_errors.log"
 
-    # Read tail limit from config
+    # Read tail limit and time window from config
     try:
         project_root_for_cfg = paths_mod.find_root(start=cwd or Path.cwd())
         if project_root_for_cfg is not None:
             cfg = config_mod.load(project_root_for_cfg / ".burnless" / "config.yaml")
             tail_limit = int(cfg.get("epochs", {}).get("hook_error_tail", 5))
+            window_h = int(cfg.get("epochs", {}).get("hook_error_window_h", 24))
         else:
             tail_limit = 5
+            window_h = 24
     except Exception:
         tail_limit = 5
+        window_h = 24
 
     if hook_error_log.exists():
         try:
             text = hook_error_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
-            last_lines = text[-tail_limit:] if text else []
-            if last_lines:
-                detail = " ".join(l[:180] for l in last_lines)
-                checks.append(Check("C9", "C", "WARN", f"hook errors recorded: {detail}"))
-            else:
+            if not text:
                 checks.append(Check("C9", "C", "PASS", "hook error log present but empty"))
+            else:
+                # Parse JSON lines and filter by time window
+                import json
+                from datetime import datetime, timedelta, timezone
+
+                now_utc = datetime.now(timezone.utc)
+                cutoff = now_utc - timedelta(hours=window_h) if window_h > 0 else None
+
+                recent_lines = []
+                old_count = 0
+
+                for line in text:
+                    try:
+                        entry = json.loads(line)
+                        ts_str = entry.get("ts", "")
+                        if ts_str:
+                            # Parse ISO format timestamp ending in Z (e.g. "2026-07-28T20:39:38Z")
+                            try:
+                                ts = datetime.fromisoformat(ts_str.rstrip("Z") + "+00:00")
+                                if cutoff is None or ts >= cutoff:
+                                    recent_lines.append(line)
+                                else:
+                                    old_count += 1
+                            except (ValueError, TypeError):
+                                # Invalid timestamp: treat as recent (fail-safe)
+                                recent_lines.append(line)
+                        else:
+                            # No timestamp: treat as recent (fail-safe)
+                            recent_lines.append(line)
+                    except (json.JSONDecodeError, ValueError):
+                        # Unparseable JSON: treat as recent (fail-safe)
+                        recent_lines.append(line)
+
+                if recent_lines:
+                    # Show WARN with tail of recent lines
+                    last_recent = recent_lines[-tail_limit:] if recent_lines else []
+                    detail = " ".join(l[:180] for l in last_recent)
+                    checks.append(Check("C9", "C", "WARN", f"hook errors recorded: {detail}"))
+                else:
+                    # All lines are old; show PASS with info about ignored entries
+                    msg = f"no hook errors in the last {window_h}h ({old_count} older entries ignored)"
+                    checks.append(Check("C9", "C", "PASS", msg))
         except Exception as e:
             checks.append(Check("C9", "C", "WARN", f"hook error log unreadable: {e}"))
     else:
