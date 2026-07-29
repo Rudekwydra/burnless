@@ -3,10 +3,13 @@ import json
 import os
 import stat
 import subprocess
-import tomllib
 from pathlib import Path
 
 from burnless.cli import _cmd_setup_codex
+
+import pytest
+
+tomllib = pytest.importorskip("tomllib")  # stdlib so no 3.11+; CI ainda roda 3.10
 
 
 def _run_setup(home: Path, monkeypatch, *, dry_run: bool = False) -> int:
