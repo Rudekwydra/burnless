@@ -63,6 +63,10 @@ That is the whole product. Everything else in this README is configuration, exam
 - Not a magic cost eliminator. It does not change the asymptotic shape of every workload. Whether it saves you money depends on session length, model mix, and how aggressively your existing setup already caches.
 - Not benchmarked against every alternative. The numbers below are measured against a specific naive baseline (full-history replay, no cache) and against the author's own personal workload. Treat them as "what I observed", not as universal claims.
 
+## Doesn't compressing history lose nuance?
+
+That's the standard objection, and the design answers it structurally: **pure surfaces, semantic history** — modeled on how human memory works (after saying something once, you repeat the idea, never the exact words). The model always receives the current prompt in full; the human always receives the response in full; only the *carried history* is semantic. And nothing is destroyed: full transcripts stay on disk, indexed, retrievable verbatim with `burnless read/log/capsule <id>`. Refs are pointers, not replayed payload. The worst case for a missed nuance is one retrieval away — the same trade human memory makes, with a better index.
+
 ## Why you might want it anyway
 
 For long multi-turn sessions where you'd otherwise replay a growing transcript every turn, capsules + a hot prefix cache materially reduce input tokens. In the author's day-to-day, this produced a noticeable cut in API spend over a multi-day workload. Your mileage will vary — see the **Numbers** section below for what was actually measured and under what conditions.
