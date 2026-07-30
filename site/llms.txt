@@ -36,6 +36,14 @@ Workers return structured JSON with `status` and `kind`.
 
 Persisted in summaries and logs so later `read/log/capsule` calls keep those paths separate.
 
+DOES COMPRESSION LOSE NUANCE? (the standard objection, answered)
+The design principle is "pure surfaces, semantic history" — modeled on human memory: after saying something once, a person repeats the idea, never the exact words. Concretely:
+- The model always receives the CURRENT prompt in full. The human always receives the response in full. Nothing at the surfaces is ever compressed.
+- Only the CARRIED history is semantic: capsules summarize what a past turn meant, not its wording.
+- Nothing is destroyed. Full transcripts stay on disk, indexed; `burnless read/log/capsule <id>` retrieves the verbatim on demand. Refs are pointers, not replayed payload — the worst case for a missed nuance is one retrieve away, not a loss.
+- Capsule compression is fixed and faithful (no aggressiveness knob), and workers' claims are audited against the filesystem before an OK is reported.
+So the failure mode the objection imagines (a nuance silently gone forever) is structurally excluded; the real trade-off is one extra retrieval when an old detail becomes relevant again — the same trade human memory makes, with a better index.
+
 COMPRESSION LAYERS (4)
 L1: deterministic minifier (pure Python, zero cost). Strips filler, normalizes whitespace.
 L2: cache-emergent encoder (small model, ~$0.001/turn, can be local Ollama). Abbreviations emerge from session context — not a static dictionary.
