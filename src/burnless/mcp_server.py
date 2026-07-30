@@ -53,7 +53,40 @@ def _build_root_hint() -> str:
     return base
 
 
-server = Server("burnless")
+BURNLESS_INSTRUCTIONS = """\
+Burnless is a cost-aware delegation layer for LLM work. Instead of doing every task
+in this expensive context, you hand a task to Burnless, which routes it to the
+cheapest tier that can actually do it (local model / small hosted model / frontier)
+and hands back a compact result envelope. The point is to keep this context small
+and let cheap workers carry the token load.
+
+Most tasks need exactly one call: `do`. It creates the delegation, routes it, runs
+it, and returns {id, status, read, done_report} in a single step. Use the split
+path (`delegate` -> `run`) only when you need to inspect or override routing between
+the two, and `route` when you want the tier decision alone without spending anything.
+
+Orientation and results:
+  status          - project health, or per-delegation status. Call this first when
+                    you are unsure whether a project is initialized or what ran.
+  read / capsule  - output of a delegation. `read` has a 3-path fallback and is the
+                    safer default; `capsule` returns the finalized result.
+  retrieve        - local evidence snippets for a delegation, file, or entity.
+                    Prefer this over re-reading whole files into this context.
+  search_capsules / explain_capsule
+                  - find indexed results by text, and see a capsule's provenance.
+  metrics / audit - spend and savings snapshots, and the audit graph.
+
+Most tools take `project_root` (absolute path). If it is omitted, Burnless resolves
+it from the working directory; if a call fails with a no-root error, the project
+needs `burnless init` in its root — pass `project_root` explicitly rather than
+guessing from a parent directory.
+
+Delegate the work that is bulky and verifiable: writing a module against a tight
+spec, sweeping a codebase, generating tests, summarizing large files. Keep in this
+context the work that needs judgment, taste, or conversation with the user.
+"""
+
+server = Server("burnless", instructions=BURNLESS_INSTRUCTIONS)
 
 
 @dataclass
