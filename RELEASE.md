@@ -127,13 +127,35 @@ cp -r site/. "$DEPLOY_DIR/"
 sed -i '' "s|const SUPABASE_URL = '';|const SUPABASE_URL = '$SUPABASE_URL';|" "$DEPLOY_DIR/index.html"
 sed -i '' "s|const SUPABASE_ANON_KEY = '';|const SUPABASE_ANON_KEY = '$SUPABASE_KEY';|" "$DEPLOY_DIR/index.html"
 
-# 3. Deploy
+# 3. Guard — abort if either credential is still blank
+grep -q "SUPABASE_URL = 'https://" "$DEPLOY_DIR/index.html" || { echo "ABORT: SUPABASE_URL blank"; exit 1; }
+grep -q "SUPABASE_ANON_KEY = 'sb_" "$DEPLOY_DIR/index.html" || { echo "ABORT: SUPABASE_ANON_KEY blank"; exit 1; }
+
+# 4. Deploy — --branch main is REQUIRED
 CLOUDFLARE_API_TOKEN="$CF_TOKEN" npx wrangler pages deploy "$DEPLOY_DIR" \
   --project-name "$CF_PROJECT" \
+  --branch main \
   --commit-dirty=true
 
-# 4. Verify
+# 5. Verify
 curl -s https://free.burnless.pro | grep "SUPABASE_URL"
+```
+
+### `--branch main` is not optional
+
+The Pages project's production branch is `main`. Without `--branch`, wrangler infers
+the branch from the local git checkout — so deploying from any feature branch
+(`v0.9-agent-arch`, etc.) publishes a **preview** at
+`<branch>.burnless.pages.dev` and leaves `free.burnless.pro` untouched. The deploy
+reports "Deployment complete!" either way, so the failure is silent.
+
+Confirm the target after deploying:
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/pages/projects/$CF_PROJECT" \
+  -H "Authorization: Bearer $CF_TOKEN" | python3 -c \
+  "import sys,json; d=json.load(sys.stdin)['result']['latest_deployment']; print(d['environment'])"
+# Must print: production
 ```
 
 ### Why credentials are blanked in git
