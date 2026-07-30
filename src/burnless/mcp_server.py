@@ -65,6 +65,12 @@ it, and returns {id, status, read, done_report} in a single step. Use the split
 path (`delegate` -> `run`) only when you need to inspect or override routing between
 the two, and `route` when you want the tier decision alone without spending anything.
 
+When the work is not a task but a judgement — classify this, score that, extract these
+fields, does X still match Y — use `ask` instead. It is a pure completion on a chosen
+tier: text in, text out, no tools and no delegation created. Default it to bronze, pin
+the output shape with `system`, and bound it with `max_output_tokens`; that is how a
+call stays cheap enough to make routinely rather than sparingly.
+
 Orientation and results:
   status          - project health, or per-delegation status. Call this first when
                     you are unsure whether a project is initialized or what ran.
@@ -270,6 +276,63 @@ async def handle_route(text: str, project_root: Optional[str] = None) -> dict:
         }
     except Exception as e:
         return {"error": "config_error", "hint": str(e)}
+
+
+async def handle_ask(
+    text: str,
+    tier: str = "bronze",
+    system: Optional[str] = None,
+    max_output_tokens: Optional[int] = None,
+    timeout: Optional[int] = None,
+    dry_run: bool = False,
+    project_root: Optional[str] = None,
+) -> dict:
+    """Pure completion. Delegates to `burnless ask --output-format json` so the
+    budget preflight, telemetry events and envelope shape stay single-sourced in
+    the CLI path instead of being reimplemented (and drifting) here."""
+    if not text or not text.strip():
+        return {"error": "invalid_input", "hint": "text must be non-empty"}
+
+    burnless_root = _resolve_root(project_root)
+    if burnless_root is None:
+        return {"error": "no_burnless_root", "hint": _build_root_hint()}
+
+    cmd = [sys.executable, "-m", "burnless", "ask", "--output-format", "json", "--tier", tier]
+    if system:
+        cmd += ["--system", system]
+    if max_output_tokens is not None:
+        cmd += ["--max-output-tokens", str(max_output_tokens)]
+    if timeout is not None:
+        cmd += ["--timeout", str(timeout)]
+    if dry_run:
+        cmd.append("--dry-run")
+    cmd.append(text)
+
+    wall_timeout = (timeout + 30) if timeout else 600
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            cwd=str(burnless_root.parent),
+            capture_output=True,
+            text=True,
+            timeout=wall_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"error": "timeout", "hint": f"burnless ask exceeded {wall_timeout}s"}
+    except OSError as exc:
+        return {"error": "spawn_failed", "hint": str(exc)}
+
+    try:
+        return json.loads(proc.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return {
+            "error": "bad_envelope",
+            "hint": "burnless ask did not return parseable JSON",
+            "returncode": proc.returncode,
+            "stdout": proc.stdout[-2000:],
+            "stderr": proc.stderr[-2000:],
+        }
 
 
 async def handle_run(id: str, background: bool = False, project_root: Optional[str] = None) -> dict:
@@ -699,6 +762,29 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="ask",
+            description=(
+                "Pure LLM completion on a chosen tier: text in, text out. No tools, no filesystem, "
+                "no agency, no delegation created. Use it to push cheap, bounded, repetitive judgement "
+                "off this context — classification, extraction, scoring, drift checks, yes/no calls. "
+                "Pair `system` with a strict output shape and `max_output_tokens` to keep a cheap call cheap. "
+                "This is NOT do/delegate/run: reach for those when the work needs tools or writes files."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "The prompt"},
+                    "tier": {"type": "string", "description": "bronze (default, cheapest/local), silver, gold, diamond"},
+                    "system": {"type": ["string", "null"], "description": "System prompt override — use it to force a strict output shape"},
+                    "max_output_tokens": {"type": ["integer", "null"], "description": "Cap the answer size; keeps a cheap call cheap"},
+                    "timeout": {"type": ["integer", "null"], "description": "Seconds before the provider call is abandoned"},
+                    "dry_run": {"type": "boolean", "description": "Resolve tier/provider/model and return the plan without spending (default false)"},
+                    "project_root": {"type": ["string", "null"], "description": "Abs path to project root"},
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
             name="run",
             description="Execute a delegation (sync or background)",
             inputSchema={
@@ -820,6 +906,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "do": handle_do,
         "delegate": handle_delegate,
         "route": handle_route,
+        "ask": handle_ask,
         "run": handle_run,
         "capsule": handle_capsule,
         "read": handle_read,
