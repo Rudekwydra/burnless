@@ -6,6 +6,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.8] — 2026-07-31
+
+Two of these were found the same way: by running Burnless on Burnless and
+watching what the tooling itself lost. The rolling-memory collision only shows
+up when you keep more than one window open in the same directory, which is
+exactly how this repo gets worked on.
+
+### Added
+
+- **`ask` is now an MCP tool.** It existed only in the CLI, so an MCP client
+  could delegate tasks (`do`/`delegate`/`run`) but had no way to make a cheap,
+  bounded judgement call without creating a delegation — pushing
+  classification, extraction and scoring back into the expensive caller
+  context. The handler shells out to `burnless ask --output-format json`
+  rather than reimplementing the flow, so budget preflight, telemetry and the
+  envelope shape stay single-sourced and cannot drift. Tools go 12 → 13.
+- **The MCP server serves its own operating instructions** at initialization.
+  Exposing tools without saying when to reach for them leaves them as
+  undiscoverable as they were in the CLI.
+
+### Fixed
+
+- **Parallel sessions no longer overwrite each other's handoff.** The rolling
+  root is derived from the cwd, so every session open in the same directory
+  shared one `live_handoff.md` — while `chains/` and `handoffs/` were already
+  keyed per session. Two windows writing a distillate meant one of them
+  vanished with no error at all, and the loss is only discoverable weeks later,
+  when context nobody remembers writing turns out to be missing. The live
+  handoff is now session-scoped (`handoffs/<session>.live.md`); the restore
+  merges every fresh own-root handoff, newest first and capped at three,
+  instead of serving one and dropping the rest. `burnless epoch handoff-path`
+  takes `--session-id` and stays the single source of truth for writers, so
+  write-location == read-location by construction. Writers that pass no session
+  id still land on the legacy shared path, which the restore keeps reading.
+- **`ask` returned the provider's transport wrapper instead of the answer.**
+  `build_ask_envelope` put raw provider stdout into `content`: for anthropic
+  with `--output-format json` that was the claude CLI envelope with the reply
+  buried in `.result`; for codex it was the whole JSONL event stream, in every
+  output mode. Only ollama was unaffected, which is why this survived — the
+  tier people reach for first happens to return bare text. `extract_text` is
+  now part of the AskAdapter contract.
+- **A missing target file no longer aborts the dispatch as a malformed check.**
+  `_preflight_verify_block` treated `rc=127` as malformed unconditionally,
+  though its own docstring declared "No such file or directory" expected before
+  the change. A legitimate check against a file the worker is about to create
+  killed the whole dispatch, forcing hand-written stubs. The two meanings of
+  127 are now separated: command-not-found stays malformed, missing target file
+  does not.
+- Test collection tolerates a failed tiktoken encoding fetch, which only shows
+  up on a machine that cannot reach the network during collection.
+
+### Docs
+
+- **Spec-authoring Rule 7 — relational properties need relational checks.**
+  Rules 1–3 govern a check's *syntax*; this one governs its *coverage*, which
+  is where a green Verify still ships a wrong result. `grep -q` cannot answer
+  order, uniqueness, count, or correspondence between two distant points of a
+  file, and that is precisely the class a cheap worker gets wrong: it executes
+  the instruction locally without executing the consequence globally. Field
+  case: a spec that stated section order in prose passed 17/17 — all 17 checks
+  correct and green, all 17 presence greps — and shipped a page whose rendered
+  order contradicted its own numbering. Prose is not a gate. Ships with two
+  one-line primitives (`awk` for order, `uniq -d` for uniqueness).
+- README answers the nuance-loss objection directly: pure surfaces, semantic
+  history — the current prompt and the response are never compressed, only the
+  carried history is, and full transcripts stay retrievable on disk.
+- `RELEASE.md`: `--branch main` is mandatory on the site deploy, plus a
+  pre-deploy guard that aborts when the injected credentials are still blank.
+  The waitlist form had shipped with empty placeholders and posted into
+  nowhere.
+
 ## [0.9.7] — 2026-07-29
 
 Every fix in this release was found by our own fleet on day 2 of the open
