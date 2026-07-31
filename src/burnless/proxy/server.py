@@ -1,7 +1,8 @@
 """Minimal Anthropic-compatible reverse proxy carrying the capsule spine.
 
 Point ANTHROPIC_BASE_URL at it. Only POST …/v1/messages is rewritten (the
-spine transform); every other request is forwarded untouched. Responses —
+spine transform) and GET /spine/<hash> is answered locally (loopback-only
+capsule recovery); every other request is forwarded untouched. Responses —
 including SSE streams — are passed through byte by byte. Any failure inside
 the transform forwards the original request: the proxy must never be the
 reason a conversation breaks.
@@ -20,7 +21,7 @@ import httpx
 
 from . import spine
 from .compressor import CompressorThread
-from .store import CapsuleStore
+from .store import CapsuleStore, resolve_ref
 
 _HOP_HEADERS = {
     "host", "content-length", "connection", "keep-alive", "proxy-authenticate",
@@ -122,7 +123,37 @@ def _make_handler(proxy: SpineProxy):
                 except Exception:
                     pass
 
+        def _send_json(self, status: int, payload: dict) -> None:
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+            except Exception:
+                pass
+
+        def _spine(self) -> None:
+            """Loopback-only recovery: GET /spine/<hash> → capsule + verbatim.
+
+            The exchanges on disk are the raw conversation; only the local
+            operator (127.0.0.1/::1) may read them back through the wire.
+            """
+            host = (self.client_address or ("",))[0]
+            if host not in ("127.0.0.1", "::1"):
+                self._send_json(403, {"error": {"type": "burnless_spine_forbidden", "message": "loopback only"}})
+                return
+            h = self.path[len("/spine/"):].split("?", 1)[0].strip("/")
+            record = resolve_ref(proxy.root, h)
+            if record is None:
+                self._send_json(404, {"error": {"type": "burnless_spine_not_found", "message": h}})
+                return
+            self._send_json(200, record)
+
         def _handle(self) -> None:
+            if self.path.startswith("/spine/"):
+                self._spine()
+                return
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else None
             if self.command == "POST" and body:

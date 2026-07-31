@@ -77,6 +77,36 @@ class CapsuleStore:
             return []
 
 
+def resolve_ref(root: Path, ref: str) -> dict | None:
+    """Recover one absorbed exchange by its capsule ref.
+
+    ``ref`` is the hash a capsule ends with, accepted with or without the
+    ``ref:`` prefix. Reads straight from disk (no directory creation — a
+    lookup must not scaffold state). Returns ``{"ref", "capsule",
+    "exchange"}`` with whatever half exists (the other is None), or None
+    when nothing is on disk for that hash. Never raises.
+    """
+    h = str(ref or "").strip()
+    if h.startswith("ref:"):
+        h = h[4:]
+    if not CapsuleStore._safe(h):
+        return None
+    root = Path(root)
+    capsule = None
+    try:
+        capsule = (root / "capsules" / f"{h}.txt").read_text(encoding="utf-8").strip() or None
+    except Exception:
+        pass
+    exchange = None
+    try:
+        exchange = json.loads((root / "exchanges" / f"{h}.json").read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    if capsule is None and exchange is None:
+        return None
+    return {"ref": h, "capsule": capsule, "exchange": exchange}
+
+
 def _atomic_write(path: Path, text: str) -> None:
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-")
     try:

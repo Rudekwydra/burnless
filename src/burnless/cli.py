@@ -2409,12 +2409,37 @@ def cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _proxy_state_dir() -> Path:
+    """Proxy state root: <project>/.burnless/proxy (same resolution as serve)."""
+    root = paths_mod.find_root()
+    return (root or (Path.cwd() / paths_mod.ROOT_DIR)) / "proxy"
+
+
+def cmd_proxy_show(args: argparse.Namespace) -> int:
+    """Recovery side of the spine: ref → frozen capsule + verbatim exchange."""
+    from .proxy.store import resolve_ref
+
+    base = _proxy_state_dir()
+    record = resolve_ref(base, args.ref)
+    if record is None:
+        print(f"burnless: no spine record for '{args.ref}' under {base}", file=sys.stderr)
+        return 1
+    print(record["capsule"] or "(no capsule frozen yet for this ref)")
+    print()
+    if record["exchange"] is None:
+        print("(no verbatim exchange on disk for this ref)")
+    else:
+        print(json.dumps(record["exchange"], indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_proxy(args: argparse.Namespace) -> int:
-    from . import paths as paths_mod
     from .proxy.server import serve
 
+    if getattr(args, "proxy_cmd", None) == "show":
+        return cmd_proxy_show(args)
     root = paths_mod.find_root()
-    base = (root or (Path.cwd() / paths_mod.ROOT_DIR)) / "proxy"
+    base = _proxy_state_dir()
     cfg = config_mod.load(paths_mod.paths_for(root)["config"]) if root else dict(config_mod.DEFAULT_CONFIG)
     pcfg = cfg.get("proxy") or {}
     serve(
@@ -2784,6 +2809,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=None, help="listen port (default: config proxy.port / 8787)")
     sp.add_argument("--upstream", default=None, help="upstream API base (default: https://api.anthropic.com)")
     sp.set_defaults(func=cmd_proxy)
+    proxy_sub = sp.add_subparsers(dest="proxy_cmd")
+    psp = proxy_sub.add_parser("show", help="print the frozen capsule and verbatim exchange for a spine ref")
+    psp.add_argument("ref", help="capsule ref hash, with or without the 'ref:' prefix")
+    psp.set_defaults(func=cmd_proxy, proxy_cmd="show")
 
     sp = sub.add_parser("profile", help="manage named profiles (~/.burnless/profiles/)")
     sp.set_defaults(func=cmd_profile, _parser=sp)
