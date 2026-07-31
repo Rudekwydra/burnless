@@ -50,3 +50,21 @@ def test_rc_127_command_not_found_always_malformed():
         cmd = "sh -c 'exit 127'"
         complaints = _preflight_verify_block([cmd], cwd=tmp_cwd, timeout=30)
         assert len(complaints) > 0
+
+
+def test_rc_127_missing_target_file_not_malformed():
+    """rc=127 with 'No such file or directory' is NOT malformed (expected pre-change)."""
+    with tempfile.TemporaryDirectory() as tmp_cwd:
+        # Simulate bash trying to execute a script that doesn't exist yet
+        nonexistent_script = os.path.join(tmp_cwd, "newscript.sh")
+        cmd = f"bash {nonexistent_script}"
+        complaints = _preflight_verify_block([cmd], cwd=tmp_cwd, timeout=30)
+        assert complaints == [], f"Expected no complaints but got: {complaints}"
+
+
+def test_rc_127_command_not_found_malformed():
+    """rc=127 with 'command not found' is malformed."""
+    with tempfile.TemporaryDirectory() as tmp_cwd:
+        cmd = "nonexistent_binary_xyz arg1 arg2"
+        complaints = _preflight_verify_block([cmd], cwd=tmp_cwd, timeout=30)
+        assert len(complaints) > 0, "Expected complaints for 'command not found'"

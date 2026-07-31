@@ -431,7 +431,9 @@ def _preflight_verify_block(verify_cmds, *, cwd, timeout=30):
     an empty list means every check is well-formed. A clean exit-1 (the
     desired state simply does not hold yet, pre-change) is NOT malformed.
     File-not-yet-created ('No such file or directory') is expected pre-change
-    and is deliberately ignored.
+    and is deliberately ignored. Distinguishes rc=127 "No such file or
+    directory" (expected, not malformed) from rc=127 "command not found"
+    (malformed).
     """
     _CRASH_SIGS = (
         "command not found",
@@ -456,9 +458,14 @@ def _preflight_verify_block(verify_cmds, *, cwd, timeout=30):
         out_lower = out.lower()
         if any(phrase in out_lower for phrase in _SAFE_PHRASES):
             continue
-        malformed = r.returncode in (126, 127) or (
-            r.returncode != 0 and any(s in out for s in _CRASH_SIGS)
-        )
+        if r.returncode == 127:
+            if "no such file or directory" in out_lower and "command not found" not in out_lower:
+                continue
+            malformed = True
+        elif r.returncode == 126:
+            malformed = True
+        else:
+            malformed = r.returncode != 0 and any(s in out for s in _CRASH_SIGS)
         if malformed:
             complaints.append(f"{cmd} (rc={r.returncode}): {out.strip()[:200]}")
     return complaints
