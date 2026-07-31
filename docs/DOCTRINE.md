@@ -159,7 +159,7 @@ lower tier.
 
 ---
 
-## Spec Authoring — Pre-Dispatch Checklist (6 Rules)
+## Spec Authoring — Pre-Dispatch Checklist (7 Rules)
 
 **When:** Before every `burnless do` or `burnless delegate`. **Why:** These rules prevent systematic errors discovered in TEST 1 audit (2026-06-13). **Who checks:** Pre-flight validator (automatic) + you (mental checklist).
 
@@ -317,6 +317,27 @@ tier_model_overrides:
 
 ---
 
+### Rule 7: Relational properties need relational checks [MENTAL ONLY — not enforced in code]
+Rules 1–3 govern the *syntax* of a check. This one governs its *coverage*, which is where a green Verify still ships a wrong result.
+
+`grep -q` answers "does this string exist". It cannot answer **order, uniqueness, count, or correspondence between two distant points of a file** — and that is exactly the class a cheap worker gets wrong, because it executes the instruction *locally* (rename the label where it sits) without executing the consequence *globally* (move the block the label belongs to).
+
+Field case (d056, 2026-07-31): the spec said, in prose, "final section order: … ". The worker renumbered the label and left the block where it was. The page rendered section 08 between 03 and 05. **The Verify passed 17/17** — no false OK from the worker; all 17 checks were correct and green. All 17 were presence greps. Prose is not a gate: the runner does not read prose.
+
+**Author check:** every line of the spec that describes order, position, uniqueness or count is a check debt. If it lives in prose and not in `## Verify`, it does not exist.
+
+✅ Primitives (one line, no `$(...)`, preflight-safe):
+```sh
+awk '/ANCHOR_BEFORE/{a=NR} /ANCHOR_AFTER/{b=NR} END{exit !(a && b && a<b)}' /abs/file
+! grep -o 'REPEATABLE_PATTERN' /abs/file | sort | uniq -d | grep -q .
+```
+
+The `awk` form is strictly better than `grep -A N … | grep -q`: a fixed window silently turns into a false ERR once the block grows past N lines, and it also exits 1 when an anchor is missing entirely — never passing blind.
+
+❌ Wrong: asserting order in prose, then filling `## Verify` with presence greps only.
+
+---
+
 ## Summary: Pre-Dispatch Validation Gates
 
 When you write a spec for `burnless do`, run this checklist:
@@ -327,6 +348,7 @@ When you write a spec for `burnless do`, run this checklist:
 4. **Tier + file size**: Is a large file edit assigned to silver/gold, not bronze?
 5. **Output schema**: Does the spec give an example JSON with non-empty declared fields?
 6. **Tier health**: Is the requested tier available? (check manually — config + provider status)
+7. **Relational coverage**: Does every order/uniqueness/count claim in the prose have a matching `awk`/`uniq -d` check?
 
 If all six pass → `burnless do --tier T "..."`  
 If any fails → re-spec or reword until all six pass.
