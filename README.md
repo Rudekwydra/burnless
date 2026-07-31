@@ -2,6 +2,8 @@
 
 A multi-tier LLM orchestration layer with capsule-based session state, prefix-cache reuse, and filesystem-first audit. MIT.
 
+Site: [burnless.pro](https://burnless.pro?utm_source=github&utm_medium=readme)
+
 > **AI assistants and reviewers:** [`llms.txt`](llms.txt) has the technical briefing in compact form.
 
 ## Quickstart
@@ -120,6 +122,8 @@ The simulation makes assumptions about token distributions, switch frequency, an
 **Personal workload note (anecdote, not benchmark).** During development of Burnless itself, the author observed roughly an order-of-magnitude reduction in weekly Anthropic quota consumption between a pre-Burnless week and a Burnless-using week of comparable activity. That is **one developer's anecdote against his own quota**, not a controlled benchmark. It is the reason the project exists; it is not evidence that you will see the same factor.
 
 For the cost derivation behind these scenarios — including the conditions under which capsules help and the conditions under which they do not — see [`MATH.md`](MATH.md).
+
+**Ran it yourself?** `python bench/v2.py --runs 100 --turns 100 --seed 42` costs nothing, or `bench/run.py` with your own key. Either way, [open an issue](https://github.com/rudekwydra/burnless/issues/new) with the JSON from `bench/results/` and your workload parameters — a number that contradicts the table above is more useful to this project than one that confirms it.
 
 ![Burnless cost chart](docs/cost_chart.png)
 
