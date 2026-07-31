@@ -399,6 +399,30 @@ $ burnless run d002
   const btn = document.getElementById('waitlistBtn');
   const msg = document.getElementById('waitlistMsg');
 
+  // Channel attribution. The waitlist table has no utm_* columns, so the tags
+  // ride inside `source` as a compact query string: 'landing?utm_source=tabnews'.
+  // Persisted in sessionStorage because the UTM only exists on the first hit —
+  // an anchor jump or in-page navigation would otherwise wipe it before signup.
+  function attribution() {
+    const KEY = 'bl_attr';
+    try {
+      const params = new URLSearchParams(location.search);
+      const tags = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'ref']
+        .map(function (k) { return [k, params.get(k)]; })
+        .filter(function (kv) { return kv[1]; });
+      if (tags.length) {
+        const val = 'landing?' + tags.map(function (kv) {
+          return kv[0] + '=' + encodeURIComponent(kv[1]);
+        }).join('&');
+        sessionStorage.setItem(KEY, val);
+        return val;
+      }
+      return sessionStorage.getItem(KEY) || 'landing';
+    } catch (err) {
+      return 'landing';
+    }
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = form.email.value.trim();
@@ -416,7 +440,7 @@ $ burnless run d002
         },
         body: JSON.stringify({
           email,
-          source: 'landing',
+          source: attribution(),
           referrer: document.referrer || null,
           user_agent: navigator.userAgent || null,
         }),
