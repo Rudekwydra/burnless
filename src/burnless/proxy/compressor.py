@@ -20,6 +20,8 @@ import threading
 import urllib.request
 from typing import Any
 
+from .spine import approx_tokens as _approx_tokens
+
 _WS = re.compile(r"\s+")
 _SALIENT = re.compile(
     r"(error|fail|traceback|exception|fix|decid|because|instead|must|nunca|sempre|"
@@ -54,10 +56,10 @@ def _texts(exchange: list) -> tuple[list[str], list[str], list[str]]:
                 (users if role == "user" else assistants).append(block["text"])
             elif btype == "tool_use":
                 tools.append(str(block.get("name", "tool")))
-            elif btype == "tool_result":
-                pass  # bulk by definition; the verbatim lives on disk
-            elif btype == "image":
-                tools.append("image")
+            elif btype in ("tool_result", "thinking", "redacted_thinking"):
+                pass  # bulk / private by definition; the verbatim lives on disk
+            elif btype in ("image", "document"):
+                tools.append(btype)
     return users, assistants, tools
 
 
@@ -86,7 +88,11 @@ def compress_exchange(exchange: list, h: str, *, max_chars: int = 700, codec: st
         side = max(120, (max_chars - 60) // 2)
         user_gist, asst_gist = _gist(users, side), _gist(assistants, side)
         if not user_gist and not asst_gist:
-            return None  # nothing to retell; the exchange stays verbatim
+            if not tools:
+                return None  # nothing to retell at all; the exchange stays verbatim
+            # Non-text exchange (image/document/tool loop): the promised
+            # placeholder, so one such exchange can never stall the spine.
+            user_gist, asst_gist = "[non-text exchange]", "[see ref]"
         extractive = f"U: {user_gist} :: A: {asst_gist}"
         if tools:
             uniq = sorted(set(tools))
@@ -99,8 +105,11 @@ def compress_exchange(exchange: list, h: str, *, max_chars: int = 700, codec: st
         capsule = _WS.sub(" ", capsule).strip()
         if len(capsule) > max_chars:
             capsule = capsule[: max_chars - 1] + "…"
-        original_chars = len(json.dumps(exchange, ensure_ascii=True))
-        if not capsule or len(capsule) >= original_chars:
+        # Both sides in the same units (approx tokens over the same
+        # serialization) — raw len() vs escaped JSON once inverted this gate
+        # for non-ASCII conversations.
+        original = json.dumps(exchange, ensure_ascii=False, separators=(",", ":"))
+        if not capsule or _approx_tokens(capsule) >= _approx_tokens(original):
             return None
         return f"{capsule} [ref:{h}]"
     except Exception:
@@ -136,6 +145,7 @@ class CompressorThread:
         self.max_chars = max_chars
         self._q: queue.Queue[str] = queue.Queue()
         self._queued: set[str] = set()
+        self._failed: set[str] = set()  # negative cache: a doomed exchange is retried once, not every turn
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, daemon=True, name="burnless-spine-compressor")
 
@@ -145,7 +155,7 @@ class CompressorThread:
     def enqueue(self, hashes: list[str]) -> None:
         with self._lock:
             for h in hashes:
-                if h not in self._queued:
+                if h not in self._queued and h not in self._failed:
                     self._queued.add(h)
                     self._q.put(h)
 
@@ -161,6 +171,9 @@ class CompressorThread:
                 capsule = compress_exchange(exchange, h, max_chars=self.max_chars, codec=self.codec)
                 if capsule:
                     self.store.put_capsule(h, capsule)
+                else:
+                    with self._lock:
+                        self._failed.add(h)
             except Exception:
                 pass  # fail-open; the exchange simply stays verbatim
             finally:

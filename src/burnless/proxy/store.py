@@ -2,26 +2,38 @@
 
 Filesystem-first, no TTL: the verbatim of every absorbed exchange lives at
 .burnless/proxy/exchanges/<hash>.json for as long as the project does, and
-the frozen capsule at .burnless/proxy/capsules/<hash>.txt. Writes are atomic
-(tmp + rename); reads and writes fail open.
+the frozen capsule at .burnless/proxy/capsules/<hash>.txt. First write wins
+at the kernel level (link(2), not check-then-replace) — a frozen capsule can
+never change under a request that already shipped it. Reads and writes fail
+open.
+
+privacy.raw_retention: none is honored: originals then live only in a
+bounded in-process buffer (enough for the async compressor to do its job)
+and nothing verbatim ever touches disk.
 """
 from __future__ import annotations
 
 import json
 import os
 import tempfile
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 _HASH_OK = frozenset("0123456789abcdef")
+_MEM_ORIGINALS_MAX = 512
 
 
 class CapsuleStore:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, raw_retention: str = "plain"):
         self.root = Path(root)
+        self.raw_retention = raw_retention
         self.exchanges = self.root / "exchanges"
         self.capsules = self.root / "capsules"
         self.exchanges.mkdir(parents=True, exist_ok=True)
         self.capsules.mkdir(parents=True, exist_ok=True)
+        self._mem: OrderedDict[str, list] = OrderedDict()
+        self._mem_lock = threading.Lock()
 
     @staticmethod
     def _safe(h: str) -> bool:
@@ -31,11 +43,15 @@ class CapsuleStore:
         """Persist the verbatim exchange. Idempotent; never raises."""
         if not self._safe(h):
             return
-        path = self.exchanges / f"{h}.json"
-        if path.exists():
+        if self.raw_retention == "none":
+            with self._mem_lock:
+                self._mem[h] = exchange
+                self._mem.move_to_end(h)
+                while len(self._mem) > _MEM_ORIGINALS_MAX:
+                    self._mem.popitem(last=False)
             return
         try:
-            _atomic_write(path, json.dumps(exchange, ensure_ascii=False, indent=1))
+            _create_exclusive(self.exchanges / f"{h}.json", json.dumps(exchange, ensure_ascii=False, indent=1))
         except Exception:
             pass
 
@@ -45,17 +61,16 @@ class CapsuleStore:
         try:
             return json.loads((self.exchanges / f"{h}.json").read_text(encoding="utf-8"))
         except Exception:
-            return None
+            with self._mem_lock:
+                return self._mem.get(h)
 
     def put_capsule(self, h: str, text: str) -> None:
-        """Freeze a capsule. First write wins — a capsule is never rewritten."""
+        """Freeze a capsule. First write wins — enforced by link(2), so two
+        processes sharing the root can never rewrite a shipped capsule."""
         if not self._safe(h) or not isinstance(text, str) or not text.strip():
             return
-        path = self.capsules / f"{h}.txt"
-        if path.exists():
-            return
         try:
-            _atomic_write(path, text.strip())
+            _create_exclusive(self.capsules / f"{h}.txt", text.strip())
         except Exception:
             pass
 
@@ -69,7 +84,8 @@ class CapsuleStore:
             return None
 
     def pending(self) -> list[str]:
-        """Hashes with a stored original but no capsule yet."""
+        """Hashes with a stored original but no capsule yet — the restart
+        backlog the server drains into the compressor on startup."""
         try:
             have = {p.stem for p in self.capsules.glob("*.txt")}
             return sorted(p.stem for p in self.exchanges.glob("*.json") if p.stem not in have)
@@ -107,15 +123,19 @@ def resolve_ref(root: Path, ref: str) -> dict | None:
     return {"ref": h, "capsule": capsule, "exchange": exchange}
 
 
-def _atomic_write(path: Path, text: str) -> None:
+def _create_exclusive(path: Path, text: str) -> None:
+    """Atomic create-if-absent: write a temp file, link(2) it into place.
+    EEXIST means someone else won the race — their write stands."""
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.replace(tmp, path)
-    except Exception:
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            pass
+    finally:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        raise

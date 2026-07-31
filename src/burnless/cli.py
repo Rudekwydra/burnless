@@ -2442,15 +2442,24 @@ def cmd_proxy(args: argparse.Namespace) -> int:
     base = _proxy_state_dir()
     cfg = config_mod.load(paths_mod.paths_for(root)["config"]) if root else dict(config_mod.DEFAULT_CONFIG)
     pcfg = cfg.get("proxy") or {}
+
+    def opt(key, default, cast):
+        # a typo'd YAML value falls back to the default instead of crashing serve
+        try:
+            return cast(pcfg.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
     serve(
-        port=args.port or int(pcfg.get("port", 8787)),
+        port=args.port or opt("port", 8787, int),
         root=base,
         upstream=args.upstream or str(pcfg.get("upstream", "https://api.anthropic.com")),
-        keep_tail_exchanges=int(pcfg.get("keep_tail_exchanges", 1)),
-        min_exchanges=int(pcfg.get("min_exchanges", 3)),
+        keep_tail_exchanges=opt("keep_tail_exchanges", 1, int),
+        min_exchanges=opt("min_exchanges", 3, int),
         codec=str(pcfg.get("codec", "extractive")),
-        max_capsule_chars=int(pcfg.get("max_capsule_chars", 700)),
+        max_capsule_chars=opt("max_capsule_chars", 700, int),
         cache_breakpoint=bool(pcfg.get("cache_breakpoint", True)),
+        raw_retention=str((cfg.get("privacy") or {}).get("raw_retention", "plain")),
     )
     return 0
 

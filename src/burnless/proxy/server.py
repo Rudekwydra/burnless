@@ -40,22 +40,25 @@ class SpineProxy:
         codec: str = "extractive",
         max_capsule_chars: int = 700,
         cache_breakpoint: bool = True,
+        raw_retention: str = "plain",
     ):
         self.upstream = upstream.rstrip("/")
         self.root = Path(root)
-        self.store = CapsuleStore(self.root)
+        self.store = CapsuleStore(self.root, raw_retention=raw_retention)
         self.ledger = self.root / "ledger.jsonl"
         self.keep_tail_exchanges = keep_tail_exchanges
         self.min_exchanges = min_exchanges
         self.cache_breakpoint = cache_breakpoint
         self.compressor = CompressorThread(self.store, codec=codec, max_chars=max_capsule_chars)
         self.compressor.start()
+        self.compressor.enqueue(self.store.pending())  # drain the restart backlog
         self.client = httpx.Client(timeout=httpx.Timeout(600.0, connect=15.0))
         self._ledger_lock = threading.Lock()
 
     def rewrite(self, path: str, body: bytes) -> tuple[bytes, dict]:
         """Apply the spine transform when the request is a messages call."""
-        if not path.rstrip("/").endswith("/v1/messages"):
+        route = path.split("?", 1)[0].rstrip("/")  # SDKs post /v1/messages?beta=true
+        if not route.endswith("/v1/messages"):
             return body, {"applied": False, "reason": "not_messages"}
         try:
             parsed = json.loads(body)
@@ -70,10 +73,11 @@ class SpineProxy:
         )
         if pending:
             self.compressor.enqueue(pending)
+        stats["bytes_in"] = len(body)  # every ledger row carries the baseline
         if not stats.get("applied"):
             return body, stats
-        out = json.dumps(new_body, ensure_ascii=False).encode("utf-8")
-        stats["bytes_in"], stats["bytes_out"] = len(body), len(out)
+        out = json.dumps(new_body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        stats["bytes_out"] = len(out)
         return out, stats
 
     def record(self, stats: dict) -> None:
@@ -97,11 +101,13 @@ def _make_handler(proxy: SpineProxy):
                 k: v for k, v in self.headers.items() if k.lower() not in _HOP_HEADERS
             }
             url = proxy.upstream + self.path
+            sent_headers = False
             try:
                 with proxy.client.stream(
                     self.command, url, headers=headers, content=body
                 ) as upstream:
                     self.send_response(upstream.status_code)
+                    sent_headers = True
                     for k, v in upstream.headers.items():
                         if k.lower() not in _HOP_HEADERS | {"content-encoding"}:
                             self.send_header(k, v)
@@ -110,9 +116,11 @@ def _make_handler(proxy: SpineProxy):
                     for chunk in upstream.iter_bytes():
                         self.wfile.write(chunk)
                         self.wfile.flush()
-            except BrokenPipeError:
-                pass  # client went away mid-stream
+            except ConnectionError:
+                pass  # client went away mid-stream (BrokenPipe, reset, abort)
             except Exception as exc:
+                if sent_headers:
+                    return  # never splice an error payload into a stream already underway
                 try:
                     self.send_response(502)
                     self.send_header("Content-Type", "application/json")
@@ -150,12 +158,34 @@ def _make_handler(proxy: SpineProxy):
                 return
             self._send_json(200, record)
 
+        def _read_body(self) -> bytes | None:
+            """Read the request body whichever way the client framed it —
+            dropping a chunked body would forward an empty POST upstream."""
+            if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+                chunks = []
+                while True:
+                    line = self.rfile.readline()
+                    try:
+                        size = int(line.split(b";", 1)[0].strip(), 16)
+                    except ValueError:
+                        return None
+                    if size == 0:
+                        self.rfile.readline()  # trailing CRLF; trailers ignored
+                        break
+                    chunks.append(self.rfile.read(size))
+                    self.rfile.readline()
+                return b"".join(chunks)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except (TypeError, ValueError):
+                length = 0
+            return self.rfile.read(length) if length > 0 else None
+
         def _handle(self) -> None:
             if self.path.startswith("/spine/"):
                 self._spine()
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            body = self.rfile.read(length) if length else None
+            body = self._read_body()
             if self.command == "POST" and body:
                 rewritten, stats = proxy.rewrite(self.path, body)
                 if stats.get("applied") or stats.get("reason") not in ("not_messages",):
@@ -188,6 +218,7 @@ def serve(
     codec: str = "extractive",
     max_capsule_chars: int = 700,
     cache_breakpoint: bool = True,
+    raw_retention: str = "plain",
 ) -> None:
     proxy = SpineProxy(
         root,
@@ -197,6 +228,7 @@ def serve(
         codec=codec,
         max_capsule_chars=max_capsule_chars,
         cache_breakpoint=cache_breakpoint,
+        raw_retention=raw_retention,
     )
     server = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(proxy))
     print(f"burnless spine proxy on http://127.0.0.1:{port} → {proxy.upstream}")
