@@ -38,6 +38,7 @@ class SpineProxy:
         min_exchanges: int = 3,
         codec: str = "extractive",
         max_capsule_chars: int = 700,
+        cache_breakpoint: bool = True,
     ):
         self.upstream = upstream.rstrip("/")
         self.root = Path(root)
@@ -45,6 +46,7 @@ class SpineProxy:
         self.ledger = self.root / "ledger.jsonl"
         self.keep_tail_exchanges = keep_tail_exchanges
         self.min_exchanges = min_exchanges
+        self.cache_breakpoint = cache_breakpoint
         self.compressor = CompressorThread(self.store, codec=codec, max_chars=max_capsule_chars)
         self.compressor.start()
         self.client = httpx.Client(timeout=httpx.Timeout(600.0, connect=15.0))
@@ -63,6 +65,7 @@ class SpineProxy:
             self.store,
             keep_tail_exchanges=self.keep_tail_exchanges,
             min_exchanges=self.min_exchanges,
+            cache_breakpoint=self.cache_breakpoint,
         )
         if pending:
             self.compressor.enqueue(pending)
@@ -153,6 +156,7 @@ def serve(
     min_exchanges: int = 3,
     codec: str = "extractive",
     max_capsule_chars: int = 700,
+    cache_breakpoint: bool = True,
 ) -> None:
     proxy = SpineProxy(
         root,
@@ -161,6 +165,7 @@ def serve(
         min_exchanges=min_exchanges,
         codec=codec,
         max_capsule_chars=max_capsule_chars,
+        cache_breakpoint=cache_breakpoint,
     )
     server = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(proxy))
     print(f"burnless spine proxy on http://127.0.0.1:{port} → {proxy.upstream}")

@@ -134,6 +134,7 @@ DEFAULT_CONFIG: dict = {
         "min_exchanges": 3,         # regime guard: short sessions never engage the spine
         "codec": "extractive",      # extractive | ollama (fallback is always extractive)
         "max_capsule_chars": 700,
+        "cache_breakpoint": True,   # ephemeral marker on the last spine block (skipped if client already uses 4)
     },
     "privacy": {
         "mode": "cost",       # cost | redact | audit | opaque

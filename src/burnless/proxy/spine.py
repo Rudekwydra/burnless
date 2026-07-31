@@ -83,6 +83,7 @@ def transform(
     *,
     keep_tail_exchanges: int = 1,
     min_exchanges: int = 3,
+    cache_breakpoint: bool = True,
 ) -> tuple[dict, list[str], dict]:
     """Rewrite body["messages"] around the capsule spine.
 
@@ -92,12 +93,26 @@ def transform(
     original body comes back untouched (stats["applied"] is False).
     """
     try:
-        return _transform(body, store, keep_tail_exchanges, min_exchanges)
+        return _transform(body, store, keep_tail_exchanges, min_exchanges, cache_breakpoint)
     except Exception as exc:  # fail-open: the proxy must never break a conversation
         return body, [], {"applied": False, "reason": f"error:{type(exc).__name__}"}
 
 
-def _transform(body: dict, store: Any, keep_tail: int, min_exchanges: int):
+def _count_cache_controls(body: dict) -> int:
+    n = 0
+    for part in (body.get("system"), body.get("tools"), body.get("messages")):
+        if isinstance(part, list):
+            for item in part:
+                if isinstance(item, dict):
+                    if item.get("cache_control"):
+                        n += 1
+                    content = item.get("content")
+                    if isinstance(content, list):
+                        n += sum(1 for b in content if isinstance(b, dict) and b.get("cache_control"))
+    return n
+
+
+def _transform(body: dict, store: Any, keep_tail: int, min_exchanges: int, cache_breakpoint: bool):
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
         return body, [], {"applied": False, "reason": "no_messages"}
@@ -138,16 +153,28 @@ def _transform(body: dict, store: Any, keep_tail: int, min_exchanges: int):
     if not absorbed:
         return body, pending, {"applied": False, "reason": "no_capsules_yet"}
 
-    spine_text = SPINE_HEADER + "\n".join(absorbed)
     span = compressible[:absorbed_count]
-    saved = _span_chars(span) - len(spine_text) - _INJECT_OVERHEAD
+    spine_chars = len(SPINE_HEADER) + sum(len(c) + 1 for c in absorbed)
+    saved = _span_chars(span) - spine_chars - _INJECT_OVERHEAD
     if saved <= 0:
         return body, pending, {"applied": False, "reason": "not_smaller"}
+
+    # One content block per capsule, appended in order. Earlier blocks stay
+    # byte-identical across turns, so the provider's breakpoint from the
+    # previous request still hits and only the delta is cache-written. The
+    # ephemeral marker rides the LAST capsule block (metadata, not content —
+    # moving it does not invalidate the matched prefix).
+    spine_blocks: list[dict] = [{"type": "text", "text": SPINE_HEADER}]
+    spine_blocks += [{"type": "text", "text": line} for line in absorbed]
+    marked = False
+    if cache_breakpoint and _count_cache_controls(body) < 4:
+        spine_blocks[-1] = dict(spine_blocks[-1], cache_control={"type": "ephemeral"})
+        marked = True
 
     remaining = [m for ex in completed[absorbed_count:] for m in ex]
     new_messages = (
         [
-            {"role": "user", "content": spine_text},
+            {"role": "user", "content": spine_blocks},
             {"role": "assistant", "content": SPINE_ACK},
         ]
         + remaining
@@ -160,5 +187,6 @@ def _transform(body: dict, store: Any, keep_tail: int, min_exchanges: int):
         "absorbed": absorbed_count,
         "verbatim_exchanges": len(completed) - absorbed_count,
         "chars_saved": saved,
+        "cache_breakpoint": marked,
     }
     return new_body, pending, stats

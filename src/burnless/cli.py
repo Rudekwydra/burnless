@@ -2425,6 +2425,7 @@ def cmd_proxy(args: argparse.Namespace) -> int:
         min_exchanges=int(pcfg.get("min_exchanges", 3)),
         codec=str(pcfg.get("codec", "extractive")),
         max_capsule_chars=int(pcfg.get("max_capsule_chars", 700)),
+        cache_breakpoint=bool(pcfg.get("cache_breakpoint", True)),
     )
     return 0
 

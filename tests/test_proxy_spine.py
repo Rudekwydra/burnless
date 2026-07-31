@@ -124,16 +124,19 @@ def test_substitution_with_capsules_present():
     out = new_body["messages"]
     # spine user + ack + last completed exchange verbatim (2 msgs) + tail (1)
     assert len(out) == 5
-    assert out[0]["role"] == "user" and out[0]["content"].startswith(spine.SPINE_HEADER)
+    blocks = out[0]["content"]
+    assert out[0]["role"] == "user" and isinstance(blocks, list)
+    assert blocks[0]["text"] == spine.SPINE_HEADER
+    assert len(blocks) == 4  # header + one block per absorbed capsule
     assert out[1] == {"role": "assistant", "content": spine.SPINE_ACK}
     assert out[2:] == msgs[6:]  # tail region untouched, byte-identical
     # untouched request fields survive
     assert new_body["system"] == "SYSTEM" and new_body["max_tokens"] == 5
     # it actually shrank
     assert len(json.dumps(new_body)) < len(json.dumps(body))
-    # every absorbed capsule carries its ref
-    for ex in spine.split_exchanges(msgs)[0][:3]:
-        assert f"[ref:{spine.exchange_hash(ex)}]" in out[0]["content"]
+    # every absorbed capsule carries its ref, one block each
+    for ex, block in zip(spine.split_exchanges(msgs)[0][:3], blocks[1:]):
+        assert f"[ref:{spine.exchange_hash(ex)}]" in block["text"]
 
 
 def test_spine_prefix_is_byte_stable_across_turns():
@@ -145,11 +148,53 @@ def test_spine_prefix_is_byte_stable_across_turns():
     body_n, _, stats_n = spine.transform({"model": "m", "messages": msgs_n}, store)
     body_n1, _, stats_n1 = spine.transform({"model": "m", "messages": msgs_n1}, store)
     assert stats_n["applied"] and stats_n1["applied"]
-    spine_n = body_n["messages"][0]["content"]
-    spine_n1 = body_n1["messages"][0]["content"]
-    # append-only: the turn-N spine is a strict prefix of the turn-N+1 spine
-    assert spine_n1.startswith(spine_n)
-    assert len(spine_n1) > len(spine_n)
+
+    def content_blocks(body):
+        return [
+            {k: v for k, v in b.items() if k != "cache_control"}
+            for b in body["messages"][0]["content"]
+        ]
+
+    blocks_n, blocks_n1 = content_blocks(body_n), content_blocks(body_n1)
+    # append-only: turn-N blocks are a strict, byte-identical prefix of turn N+1
+    assert len(blocks_n1) == len(blocks_n) + 1
+    assert blocks_n1[: len(blocks_n)] == blocks_n
+
+
+def test_cache_breakpoint_rides_the_last_capsule_block():
+    store = MemStore()
+    msgs = convo(4)
+    fill_capsules(store, msgs)
+    new_body, _, stats = spine.transform({"model": "m", "messages": msgs}, store)
+    blocks = new_body["messages"][0]["content"]
+    assert stats["cache_breakpoint"] is True
+    assert blocks[-1].get("cache_control") == {"type": "ephemeral"}
+    assert all("cache_control" not in b for b in blocks[:-1])
+
+
+def test_cache_breakpoint_respects_client_budget_of_four():
+    store = MemStore()
+    msgs = convo(4)
+    fill_capsules(store, msgs)
+    body = {
+        "model": "m",
+        "messages": msgs,
+        "system": [
+            {"type": "text", "text": f"s{i}", "cache_control": {"type": "ephemeral"}} for i in range(4)
+        ],
+    }
+    new_body, _, stats = spine.transform(body, store)
+    assert stats["applied"] and stats["cache_breakpoint"] is False
+    assert all("cache_control" not in b for b in new_body["messages"][0]["content"])
+
+
+def test_cache_breakpoint_can_be_disabled():
+    store = MemStore()
+    msgs = convo(4)
+    fill_capsules(store, msgs)
+    new_body, _, stats = spine.transform({"model": "m", "messages": msgs}, store, cache_breakpoint=False)
+    assert stats["applied"] and stats["cache_breakpoint"] is False
+    assert all("cache_control" not in b for b in new_body["messages"][0]["content"])
 
 
 def test_missing_middle_capsule_stops_absorption_preserving_order():
