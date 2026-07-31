@@ -2409,6 +2409,26 @@ def cmd_explain(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_proxy(args: argparse.Namespace) -> int:
+    from . import paths as paths_mod
+    from .proxy.server import serve
+
+    root = paths_mod.find_root()
+    base = (root or (Path.cwd() / paths_mod.ROOT_DIR)) / "proxy"
+    cfg = config_mod.load(paths_mod.paths_for(root)["config"]) if root else dict(config_mod.DEFAULT_CONFIG)
+    pcfg = cfg.get("proxy") or {}
+    serve(
+        port=args.port or int(pcfg.get("port", 8787)),
+        root=base,
+        upstream=args.upstream or str(pcfg.get("upstream", "https://api.anthropic.com")),
+        keep_tail_exchanges=int(pcfg.get("keep_tail_exchanges", 1)),
+        min_exchanges=int(pcfg.get("min_exchanges", 3)),
+        codec=str(pcfg.get("codec", "extractive")),
+        max_capsule_chars=int(pcfg.get("max_capsule_chars", 700)),
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="burnless", description=TAGLINE)
     p.add_argument("--version", action="version", version=f"burnless {__version__}")
@@ -2755,6 +2775,14 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_sub.add_parser("status", help="show daemon PID + last log lines")
     daemon_sub.add_parser("run-fg", help="run daemon in foreground (debug)")
     wdp.set_defaults(func=cmd_warm_daemon)
+
+    sp = sub.add_parser(
+        "proxy",
+        help="run the spine proxy (rolling memory on the live model path) — point ANTHROPIC_BASE_URL at it",
+    )
+    sp.add_argument("--port", type=int, default=None, help="listen port (default: config proxy.port / 8787)")
+    sp.add_argument("--upstream", default=None, help="upstream API base (default: https://api.anthropic.com)")
+    sp.set_defaults(func=cmd_proxy)
 
     sp = sub.add_parser("profile", help="manage named profiles (~/.burnless/profiles/)")
     sp.set_defaults(func=cmd_profile, _parser=sp)

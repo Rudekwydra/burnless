@@ -126,6 +126,15 @@ DEFAULT_CONFIG: dict = {
         "compaction_cost_tokens": 4000,     # M: input-token-equiv cost of one compaction call (capsule is OUTPUT tokens ~5x)
         "keep_tail_turns": 4,   # turns kept VERBATIM in the window across a rewind (anti-whiplash)
     },
+    "proxy": {
+        # Spine proxy (rolling memory on the live path) — _design/SPINE_PROXY_2026-07-31.md
+        "port": 8787,
+        "upstream": "https://api.anthropic.com",
+        "keep_tail_exchanges": 1,   # completed exchanges kept VERBATIM (continuity reserve)
+        "min_exchanges": 3,         # regime guard: short sessions never engage the spine
+        "codec": "extractive",      # extractive | ollama (fallback is always extractive)
+        "max_capsule_chars": 700,
+    },
     "privacy": {
         "mode": "cost",       # cost | redact | audit | opaque
         "raw_retention": "plain",  # current default: plain | none | encrypted (planned)
