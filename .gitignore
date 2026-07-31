@@ -114,3 +114,6 @@ GPT_REAUDIT_REPORT.md
 
 # Internal planning docs — never in the public repo
 docs/plans/
+
+# operational telemetry — local only, not for the public repo
+_ops/
