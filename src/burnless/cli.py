@@ -1584,6 +1584,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         return 1
 
     usage = adapter.parse_usage(result, target)
+    answer_text = adapter.extract_text(result, target)
 
     actual_total_tokens = usage.input_tokens + usage.output_tokens
     over_output = (
@@ -1628,6 +1629,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         cache_key=request.cache_key,
         dry_run=False,
         warnings=tuple(warn_list),
+        content_text=answer_text,
     )
 
     if request.explain:
@@ -1646,7 +1648,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if args.output_format == "json":
         response = envelope
     else:
-        response = result.stdout
+        response = answer_text
 
     if args.output or args.output_dir:
         import datetime
@@ -1678,7 +1680,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if result.returncode != 0:
         print(result.stderr, file=sys.stderr)
         return result.returncode
-    print(result.stdout.strip())
+    print(answer_text.strip())
     return 0
 
 

@@ -194,10 +194,10 @@ class AskResult:
 
 
 # ---------------------------------------------------------------------------
-# Adapter interface — the 6 fixed methods (CODEX_NATIVE Fase 2). A concrete
+# Adapter interface — the 7 fixed methods (CODEX_NATIVE Fase 2). A concrete
 # adapter is stateless and text-only; it reuses the resolved target rather than
 # re-selecting provider/model/cache. Names are FIXED: resolve / explain /
-# invoke_text / parse_usage / capabilities / cancel.
+# invoke_text / extract_text / parse_usage / capabilities / cancel.
 # ---------------------------------------------------------------------------
 @runtime_checkable
 class AskAdapter(Protocol):
@@ -226,6 +226,17 @@ class AskAdapter(Protocol):
 
         `prefix_content`, when present, is appended to the effective system
         prompt (sec 14 decision 1) — never to `request.prompt`."""
+        ...
+
+    def extract_text(self, result: ProviderResult, target: ResolvedAskTarget) -> str:
+        """Pull the assistant's answer out of the raw transport stdout.
+
+        `invoke_text` returns the provider's native transport format, which for
+        some CLIs is a JSON envelope or a JSONL event stream rather than the
+        text itself. The ask envelope's `content` must be the answer, never the
+        transport wrapper — otherwise every caller has to know each provider's
+        stream format to read a reply. Adapters whose stdout is already the
+        answer return it unchanged."""
         ...
 
     def parse_usage(self, result: ProviderResult, target: ResolvedAskTarget) -> UsageRecord:
