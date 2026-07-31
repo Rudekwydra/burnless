@@ -173,6 +173,10 @@ checks as `WARN` (not `FAIL`, nothing else is affected):
 pip install 'burnless[mcp]'
 ```
 
+It exposes the delegation commands plus `ask` — a pure completion on a chosen
+tier, no delegation created — so classification, extraction and scoring calls
+stay out of the expensive caller's context.
+
 On a minimal Debian or Ubuntu image, `python3-venv` is not installed by default —
 `apt install python3-venv` first if you want burnless in a virtualenv.
 
