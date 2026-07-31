@@ -1914,8 +1914,11 @@ def cmd_epoch(args: argparse.Namespace) -> int:
         # Canonical emitter: the EXACT live_handoff.md path the restore will
         # read for the resolved root. Writer-side instructions (clear-hint
         # hook, docs) must source the path from here, never rebuild it — this
-        # keeps write-location == read-location by construction.
-        print(str(recovery_mod.live_handoff_path_for(root_path)))
+        # keeps write-location == read-location by construction. With a session
+        # id the path is per-session, so parallel windows in one cwd stop
+        # silently overwriting each other's distillate.
+        _sid = getattr(args, "host_session_id", None) or getattr(args, "session_id", None)
+        print(str(recovery_mod.live_handoff_path_for(root_path, _sid)))
         return 0
 
     elif epoch_cmd == "resume":

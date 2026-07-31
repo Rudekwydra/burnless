@@ -2062,15 +2062,65 @@ def _resolve_budget_tokens(root_path: Path, source: str) -> int:
         return fallback
 
 
+MAX_MERGED_LIVE_HANDOFFS = 3
+
+
 def _live_handoff_path(root_path: Path) -> Path:
     return root_path / "epochs" / "_rolling" / "live_handoff.md"
 
 
-def live_handoff_path_for(root) -> Path:
+def _session_live_handoff_path(root_path: Path, session_id: str) -> Path:
+    """Per-session live handoff, stored next to the session-scoped
+    ``handoffs/<session>.json``.
+
+    The rolling root is derived from the cwd, so every session open in the same
+    directory shares it. ``chains/`` and ``handoffs/`` were already keyed per
+    session; the live handoff was the one piece left shared, and two windows
+    writing it concurrently lose one distillate with no error at all."""
+    return _rolling_root(root_path) / "handoffs" / f"{_safe_part(session_id)}.live.md"
+
+
+def _session_live_handoffs(root_path: Path) -> list[Path]:
+    """Every per-session live handoff under this root, any session, any age."""
+    try:
+        return sorted((_rolling_root(root_path) / "handoffs").glob("*.live.md"))
+    except OSError:
+        return []
+
+
+def _newest_own_handoff_mtime(root_path: Path) -> float | None:
+    """Freshest own-root live handoff mtime: legacy shared file plus per-session
+    files. Used by the cross-root divergence warning, which would otherwise
+    compare a sibling against a path this root may no longer write."""
+    best: float | None = None
+    for path in [_live_handoff_path(root_path), *_session_live_handoffs(root_path)]:
+        try:
+            if not path.exists():
+                continue
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if best is None or mtime > best:
+            best = mtime
+    return best
+
+
+def live_handoff_path_for(root, session_id: str | None = None) -> Path:
     """Canonical absolute path of the live handoff the restore WILL read for
     ``root``. Single source of truth for writer-side instructions (hooks/docs)
-    so write-location == read-location by construction."""
-    return _live_handoff_path(_root_path(root))
+    so write-location == read-location by construction. With ``session_id`` the
+    path is session-scoped, which is what parallel windows in one cwd need;
+    without it the legacy shared path is returned, so older writers still land
+    somewhere the restore reads."""
+    root_path = _root_path(root)
+    if session_id and str(session_id).strip():
+        path = _session_live_handoff_path(root_path, str(session_id).strip())
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        return path
+    return _live_handoff_path(root_path)
 
 
 def _handoff_text_valid(text: str | None) -> bool:
@@ -2102,55 +2152,86 @@ def _child_project_handoffs(root_path: Path) -> list[Path]:
     return found
 
 
+def _merge_handoff_blocks(blocks: list[tuple[float, str, Path]], now: float) -> str:
+    """Concatenate parallel-session distillates, newest first, each labelled.
+
+    A single block is returned verbatim: labelling one handoff would add noise
+    to the common case and change what every existing writer reads back."""
+    if len(blocks) == 1:
+        return blocks[0][1]
+    parts: list[str] = []
+    for mtime, text, path in blocks:
+        age = _humanize_handoff_age(max(0, int(now - mtime)), "en")
+        name = path.name
+        label = name[: -len(".live.md")] if name.endswith(".live.md") else name
+        parts.append(f"<!-- parallel session handoff: {label} ({age} old) -->\n\n{text}")
+    return "\n\n---\n\n".join(parts)
+
+
 def _consume_live_handoff(root_path: Path, ttl_s: int = 21600) -> tuple[str, int] | None:
     """Pick the freshest VALID live handoff for this restore, deterministically.
 
-    Candidates: this root's own handoff plus immediate child projects' handoffs
-    (the writer may have worked in a subproject while the session was launched
-    from the parent/workspace root). Ranking is content-validity FIRST, then
-    mtime — an empty or malformed handoff is never preferred over a fresh
-    non-empty one. The chosen file and the own file are consumed (unlinked);
+    Candidates: this root's own handoffs -- the legacy shared file plus one file
+    per session -- and immediate child projects' handoffs (the writer may have
+    worked in a subproject while the session was launched from the parent root).
+    Ranking is content-validity FIRST, then mtime: an empty or malformed handoff
+    is never preferred over a fresh non-empty one.
+
+    When the freshest belongs to this root, every other fresh own-root handoff is
+    merged into it, newest first and capped, instead of being dropped. That is
+    the parallel-session case: two windows in the same cwd each wrote a real
+    distillate and only one used to survive. Consumed files are unlinked;
     unchosen child handoffs are left for their own roots' restores."""
     own = _live_handoff_path(root_path)
+    own_paths = [own, *_session_live_handoffs(root_path)]
     now = time.time()
+    fresh_own: list[tuple[float, str, Path]] = []
     best: tuple[float, str, Path] | None = None
+    spend: set[Path] = set()
     try:
-        for path in [own, *_child_project_handoffs(root_path)]:
+        for path in [*own_paths, *_child_project_handoffs(root_path)]:
+            is_own = path in own_paths
             try:
                 if not path.exists():
                     continue
                 mtime = path.stat().st_mtime
                 if now - mtime > ttl_s:
-                    if path == own:
-                        try:
-                            path.unlink()
-                        except OSError:
-                            pass
+                    if is_own:
+                        spend.add(path)
                     continue
                 text = path.read_text(encoding="utf-8", errors="replace")
                 if not _handoff_text_valid(text):
                     # consume-once: an empty own handoff is still spent
-                    if path == own:
-                        try:
-                            path.unlink()
-                        except OSError:
-                            pass
+                    if is_own:
+                        spend.add(path)
                     continue
+                if is_own:
+                    fresh_own.append((mtime, text.strip(), path))
                 if best is None or mtime > best[0]:
                     best = (mtime, text.strip(), path)
             except OSError:
                 continue
+        for stale in spend:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
         if best is None:
             return None
-        mtime, text, chosen = best
-        # Consume the chosen handoff; also spend the own one (superseded) so a
-        # later restore cannot resurrect older state after newer was served.
-        for spent in {chosen, own}:
+        if best[2] in own_paths:
+            fresh_own.sort(key=lambda item: item[0], reverse=True)
+            blocks = fresh_own[:MAX_MERGED_LIVE_HANDOFFS]
+        else:
+            blocks = [best]
+        # Consume what was served, and spend every fresh own handoff -- merged or
+        # capped out -- so a later restore cannot resurrect older state after
+        # newer state was already served.
+        for spent in {block[2] for block in blocks} | {item[2] for item in fresh_own}:
             try:
                 spent.unlink()
             except OSError:
                 pass
-        return (text, max(0, int(now - mtime)))
+        return (_merge_handoff_blocks(blocks, now), max(0, int(now - best[0])))
     except Exception:
         return None
 
@@ -2657,11 +2738,7 @@ def render_restore(
     lang = _config_lang(root_path)
     restore_lang = _restore_lang()
     en = _format_en_markers(root_path)
-    _own_hp = _live_handoff_path(root_path)
-    try:
-        _own_mtime = _own_hp.stat().st_mtime if _own_hp.exists() else None
-    except OSError:
-        _own_mtime = None
+    _own_mtime = _newest_own_handoff_mtime(root_path)
     divergence_line = _restore_divergence_warning(root_path, _own_mtime, lang)
     live_handoff_result = _consume_live_handoff(root_path)
 
