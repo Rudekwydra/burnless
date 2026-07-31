@@ -114,6 +114,21 @@ class AnthropicAdapter:
             duration_ms=duration_ms,
         )
 
+    def extract_text(self, result: ProviderResult, target: ResolvedAskTarget) -> str:
+        """`claude -p --output-format json` prints an envelope whose `result`
+        field holds the answer; with `--output-format text` stdout already is
+        the answer. Unwrap the first case, pass the second through."""
+        stdout = result.stdout or ""
+        if not stdout.strip():
+            return stdout
+        try:
+            data = json.loads(stdout)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return stdout
+        if isinstance(data, dict) and isinstance(data.get("result"), str):
+            return data["result"]
+        return stdout
+
     def parse_usage(self, result: ProviderResult, target: ResolvedAskTarget) -> UsageRecord:
         if result.stdout:
             try:

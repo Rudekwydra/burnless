@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import os
 import shlex
 import shutil
@@ -153,6 +154,29 @@ class CodexAdapter:
             stderr=result.stderr,
             duration_ms=duration_ms,
         )
+
+    def extract_text(self, result: ProviderResult, target: ResolvedAskTarget) -> str:
+        """`codex exec --json` emits a JSONL event stream; the answer is the
+        text of the last completed `agent_message` item. `--json` is always
+        passed (see invoke_text), so stdout is never the bare answer."""
+        stdout = result.stdout or ""
+        answer = None
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(event, dict) or event.get("type") != "item.completed":
+                continue
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text")
+                if isinstance(text, str):
+                    answer = text
+        return answer if answer is not None else stdout
 
     def parse_usage(self, result: ProviderResult, target: ResolvedAskTarget) -> UsageRecord:
         usage = _parse_codex_usage(result.stdout or "")

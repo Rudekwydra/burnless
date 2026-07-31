@@ -82,6 +82,11 @@ class OllamaAdapter:
         )
         return ProviderResult(returncode=rc, stdout=stdout, stderr=stderr)
 
+    def extract_text(self, result: ProviderResult, target: ResolvedAskTarget) -> str:
+        """The local HTTP call already yields the completion text — nothing to
+        unwrap."""
+        return result.stdout or ""
+
     def parse_usage(self, result: ProviderResult, target: ResolvedAskTarget) -> UsageRecord:
         return UsageRecord(basis="estimate")
 

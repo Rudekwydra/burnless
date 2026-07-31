@@ -410,6 +410,7 @@ def build_ask_envelope(
     cache_key: str | None = None,
     dry_run: bool = False,
     warnings: tuple[str, ...] = (),
+    content_text: str | None = None,
 ) -> dict:
     """Build the burnless.ask/v1 envelope (doc Sol sec 8) from a raw provider
     transport result. Never receives/holds the prompt; content/error_message
@@ -417,7 +418,12 @@ def build_ask_envelope(
     populated depending on status."""
     error_kind, error_message = normalize_ask_error(returncode, stdout, stderr, timed_out, signal)
     status = "ok" if error_kind is None else "error"
-    content = stdout.strip() if status == "ok" else None
+    # `content` must be the answer, not the provider's transport wrapper.
+    # Callers pass `content_text` from AskAdapter.extract_text; error
+    # normalization keeps reading raw stdout, where the transport's own error
+    # fields live.
+    answer = stdout if content_text is None else content_text
+    content = answer.strip() if status == "ok" else None
 
     result = AskResult(
         request_id=request_id,

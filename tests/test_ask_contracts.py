@@ -105,6 +105,9 @@ class _DummyAdapter:
     def parse_usage(self, result: ProviderResult, target: ResolvedAskTarget) -> UsageRecord:
         return UsageRecord()
 
+    def extract_text(self, result: ProviderResult, target: ResolvedAskTarget) -> str:
+        return result.stdout or ""
+
     def capabilities(self, target: ResolvedAskTarget) -> ProviderCapabilities:
         return ProviderCapabilities()
 
@@ -112,9 +115,10 @@ class _DummyAdapter:
         return True
 
 
-def test_adapter_has_six_fixed_methods():
+def test_adapter_has_seven_fixed_methods():
     adapter = _DummyAdapter()
-    for name in ("resolve", "explain", "invoke_text", "parse_usage", "capabilities", "cancel"):
+    for name in ("resolve", "explain", "invoke_text", "extract_text",
+                 "parse_usage", "capabilities", "cancel"):
         assert callable(getattr(adapter, name)), name
 
     # runtime_checkable Protocol: the dummy satisfies AskAdapter structurally.
