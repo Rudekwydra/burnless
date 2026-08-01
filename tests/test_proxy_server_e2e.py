@@ -157,12 +157,15 @@ def test_sse_streaming_passthrough_byte_fidelity(tmp_path):
 # ---------------------------------------------------------------- b. rolling cycle
 
 
-def test_rolling_cycle_over_six_turns(tmp_path):
+def test_rolling_cycle_absorbs_in_batches(tmp_path):
     """Client resends full verbatim history each turn, like Claude Code does.
 
-    Turns 1-3 are passthrough (below regime / capsules not absorbed yet); from
-    turn 4 on the spine engages and the upstream-received message count stops
-    growing while the client history keeps growing.
+    The spine engages on batch boundaries, not every turn: absorbing one
+    capsule per turn measurably costs more against a real provider, because
+    the capsule lands before the verbatim tail and forces the whole tail to be
+    cache-written again. So the shape to assert is a staircase — the upstream
+    count drops when a batch lands, and between batches the request only
+    grows by the new exchange (pure append, cache-friendly).
     """
 
     def respond(handler, body):
@@ -184,7 +187,7 @@ def test_rolling_cycle_over_six_turns(tmp_path):
         history: list = []
         client_counts: list[int] = []
         upstream_counts: list[int] = []
-        for turn in range(1, 7):
+        for turn in range(1, 13):
             history.append({"role": "user", "content": f"question {turn}: " + FILLER_Q})
             client_counts.append(len(history))
             r = httpx.post(
@@ -197,12 +200,19 @@ def test_rolling_cycle_over_six_turns(tmp_path):
             upstream_counts.append(len(json.loads(seen[-1]["body"])["messages"]))
             wait_idle(proxy)  # think time: the compressor freezes this turn's capsule
 
-        # first turns: pure passthrough, upstream sees exactly what the client sent
-        assert client_counts == [1, 3, 5, 7, 9, 11]
+        # early turns: pure passthrough, upstream sees exactly what the client sent
         assert upstream_counts[:3] == client_counts[:3]
-        # from turn 4: substituted, and the upstream count stops growing
-        assert upstream_counts[3:] == [7, 7, 7]
-        assert client_counts[5] > upstream_counts[5]
+        # a batch landed: at least once the upstream count DROPPED while the
+        # client's history kept growing — that is the spine absorbing
+        drops = [i for i in range(1, len(upstream_counts))
+                 if upstream_counts[i] < upstream_counts[i - 1]]
+        assert drops, (client_counts, upstream_counts)
+        # and it stays ahead: the client carries more than the model receives
+        assert client_counts[-1] > upstream_counts[-1]
+        # between batches the request grows by exactly one exchange (append only)
+        after = drops[-1]
+        for i in range(after + 1, len(upstream_counts)):
+            assert upstream_counts[i] - upstream_counts[i - 1] == 2, upstream_counts
 
         # the spine user message is a block list; cache_control rides the LAST block
         last = json.loads(seen[-1]["body"])["messages"]
