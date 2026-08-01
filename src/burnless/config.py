@@ -135,6 +135,8 @@ DEFAULT_CONFIG: dict = {
         "codec": "extractive",      # extractive | ollama (fallback is always extractive)
         "max_capsule_chars": 700,
         "cache_breakpoint": True,   # ephemeral marker on the last spine block (skipped if client already uses 4)
+        "absorb_batch": 4,          # spine grows in blocks of N capsules: between blocks the
+                                    # request is pure append, so the tail is not re-cached every turn
     },
     "privacy": {
         "mode": "cost",       # cost | redact | audit | opaque

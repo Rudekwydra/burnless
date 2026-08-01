@@ -2433,11 +2433,27 @@ def cmd_proxy_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_proxy_stats(args: argparse.Namespace) -> int:
+    """What the rolling memory actually did — including the provider's own
+    cache-read numbers, which is the only honest proof the spine stays warm."""
+    from .proxy import ledger as ledger_mod
+
+    base = _proxy_state_dir()
+    summary = ledger_mod.summarize(base / "ledger.jsonl")
+    if getattr(args, "json", False):
+        print(json.dumps(summary, ensure_ascii=False))
+    else:
+        print(ledger_mod.render(summary))
+    return 0
+
+
 def cmd_proxy(args: argparse.Namespace) -> int:
     from .proxy.server import serve
 
     if getattr(args, "proxy_cmd", None) == "show":
         return cmd_proxy_show(args)
+    if getattr(args, "proxy_cmd", None) == "stats":
+        return cmd_proxy_stats(args)
     root = paths_mod.find_root()
     base = _proxy_state_dir()
     cfg = config_mod.load(paths_mod.paths_for(root)["config"]) if root else dict(config_mod.DEFAULT_CONFIG)
@@ -2459,6 +2475,7 @@ def cmd_proxy(args: argparse.Namespace) -> int:
         codec=str(pcfg.get("codec", "extractive")),
         max_capsule_chars=opt("max_capsule_chars", 700, int),
         cache_breakpoint=bool(pcfg.get("cache_breakpoint", True)),
+        absorb_batch=opt("absorb_batch", 4, int),
         raw_retention=str((cfg.get("privacy") or {}).get("raw_retention", "plain")),
     )
     return 0
@@ -2822,6 +2839,9 @@ def build_parser() -> argparse.ArgumentParser:
     psp = proxy_sub.add_parser("show", help="print the frozen capsule and verbatim exchange for a spine ref")
     psp.add_argument("ref", help="capsule ref hash, with or without the 'ref:' prefix")
     psp.set_defaults(func=cmd_proxy, proxy_cmd="show")
+    psp = proxy_sub.add_parser("stats", help="report what the rolling memory did, with the provider's own cache numbers")
+    psp.add_argument("--json", action="store_true", dest="json")
+    psp.set_defaults(func=cmd_proxy, proxy_cmd="stats")
 
     sp = sub.add_parser("profile", help="manage named profiles (~/.burnless/profiles/)")
     sp.set_defaults(func=cmd_profile, _parser=sp)

@@ -12,6 +12,7 @@ httpx is guaranteed present (hard dependency of the anthropic SDK).
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,54 @@ _HOP_HEADERS = {
     "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade",
 }
 
+_USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+
+
+class UsageSniffer:
+    """Read the provider's own usage numbers out of a response in flight.
+
+    The synthetic curve says how much smaller the request got; only the
+    provider says how much of it was a cache READ. Bytes are never held up
+    or altered — they are teed into a bounded buffer (head for
+    message_start, tail for the final message_delta) and parsed after the
+    stream closes. Regex over bytes, so a malformed or unexpected body
+    yields nothing instead of raising.
+    """
+
+    _HEAD, _TAIL = 65536, 16384
+
+    def __init__(self) -> None:
+        self._head = bytearray()
+        self._tail = bytearray()
+
+    def feed(self, chunk: bytes) -> None:
+        try:
+            if len(self._head) < self._HEAD:
+                self._head += chunk[: self._HEAD - len(self._head)]
+            self._tail += chunk
+            if len(self._tail) > self._TAIL:
+                del self._tail[: len(self._tail) - self._TAIL]
+        except Exception:
+            pass
+
+    def usage(self) -> dict:
+        out: dict = {}
+        try:
+            blob = bytes(self._head) + b"\n" + bytes(self._tail)
+            for field in _USAGE_FIELDS:
+                found = re.findall(rb'"%s"\s*:\s*(\d+)' % field.encode(), blob)
+                if found:
+                    # streaming repeats usage; the largest value is the final one
+                    out[field] = max(int(v) for v in found)
+        except Exception:
+            return {}
+        return out
+
 
 class SpineProxy:
     def __init__(
@@ -41,6 +90,7 @@ class SpineProxy:
         max_capsule_chars: int = 700,
         cache_breakpoint: bool = True,
         raw_retention: str = "plain",
+        absorb_batch: int = 4,
     ):
         self.upstream = upstream.rstrip("/")
         self.root = Path(root)
@@ -49,16 +99,21 @@ class SpineProxy:
         self.keep_tail_exchanges = keep_tail_exchanges
         self.min_exchanges = min_exchanges
         self.cache_breakpoint = cache_breakpoint
+        self.absorb_batch = absorb_batch
         self.compressor = CompressorThread(self.store, codec=codec, max_chars=max_capsule_chars)
         self.compressor.start()
         self.compressor.enqueue(self.store.pending())  # drain the restart backlog
         self.client = httpx.Client(timeout=httpx.Timeout(600.0, connect=15.0))
         self._ledger_lock = threading.Lock()
 
+    @staticmethod
+    def is_messages(path: str) -> bool:
+        # SDKs post /v1/messages?beta=true — strip the query before matching
+        return path.split("?", 1)[0].rstrip("/").endswith("/v1/messages")
+
     def rewrite(self, path: str, body: bytes) -> tuple[bytes, dict]:
         """Apply the spine transform when the request is a messages call."""
-        route = path.split("?", 1)[0].rstrip("/")  # SDKs post /v1/messages?beta=true
-        if not route.endswith("/v1/messages"):
+        if not self.is_messages(path):
             return body, {"applied": False, "reason": "not_messages"}
         try:
             parsed = json.loads(body)
@@ -70,6 +125,7 @@ class SpineProxy:
             keep_tail_exchanges=self.keep_tail_exchanges,
             min_exchanges=self.min_exchanges,
             cache_breakpoint=self.cache_breakpoint,
+            absorb_batch=self.absorb_batch,
         )
         if pending:
             self.compressor.enqueue(pending)
@@ -102,6 +158,7 @@ def _make_handler(proxy: SpineProxy):
             }
             url = proxy.upstream + self.path
             sent_headers = False
+            sniffer = UsageSniffer() if proxy.is_messages(self.path) else None
             try:
                 with proxy.client.stream(
                     self.command, url, headers=headers, content=body
@@ -116,6 +173,8 @@ def _make_handler(proxy: SpineProxy):
                     for chunk in upstream.iter_bytes():
                         self.wfile.write(chunk)
                         self.wfile.flush()
+                        if sniffer is not None:
+                            sniffer.feed(chunk)
             except ConnectionError:
                 pass  # client went away mid-stream (BrokenPipe, reset, abort)
             except Exception as exc:
@@ -130,6 +189,11 @@ def _make_handler(proxy: SpineProxy):
                     )
                 except Exception:
                     pass
+            finally:
+                if sniffer is not None:
+                    usage = sniffer.usage()
+                    if usage:
+                        proxy.record({"kind": "usage", "path": self.path, **usage})
 
         def _send_json(self, status: int, payload: dict) -> None:
             try:
@@ -189,7 +253,7 @@ def _make_handler(proxy: SpineProxy):
             if self.command == "POST" and body:
                 rewritten, stats = proxy.rewrite(self.path, body)
                 if stats.get("applied") or stats.get("reason") not in ("not_messages",):
-                    proxy.record({"path": self.path, **stats})
+                    proxy.record({"kind": "request", "path": self.path, **stats})
                 body = rewritten
             self._forward(body)
 
@@ -219,6 +283,7 @@ def serve(
     max_capsule_chars: int = 700,
     cache_breakpoint: bool = True,
     raw_retention: str = "plain",
+    absorb_batch: int = 4,
 ) -> None:
     proxy = SpineProxy(
         root,
@@ -229,6 +294,7 @@ def serve(
         max_capsule_chars=max_capsule_chars,
         cache_breakpoint=cache_breakpoint,
         raw_retention=raw_retention,
+        absorb_batch=absorb_batch,
     )
     server = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(proxy))
     print(f"burnless spine proxy on http://127.0.0.1:{port} → {proxy.upstream}")

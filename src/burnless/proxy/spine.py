@@ -117,6 +117,7 @@ def transform(
     keep_tail_exchanges: int = 1,
     min_exchanges: int = 3,
     cache_breakpoint: bool = True,
+    absorb_batch: int = 4,
 ) -> tuple[dict, list[str], dict]:
     """Rewrite body["messages"] around the capsule spine.
 
@@ -126,12 +127,21 @@ def transform(
     original body comes back untouched (stats["applied"] is False).
     """
     try:
-        return _transform(body, store, keep_tail_exchanges, min_exchanges, cache_breakpoint)
+        return _transform(
+            body, store, keep_tail_exchanges, min_exchanges, cache_breakpoint, absorb_batch
+        )
     except Exception as exc:  # fail-open: the proxy must never break a conversation
         return body, [], {"applied": False, "reason": f"error:{type(exc).__name__}"}
 
 
-def _transform(body: dict, store: Any, keep_tail: int, min_exchanges: int, cache_breakpoint: bool):
+def _transform(
+    body: dict,
+    store: Any,
+    keep_tail: int,
+    min_exchanges: int,
+    cache_breakpoint: bool,
+    absorb_batch: int = 4,
+):
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
         return body, [], {"applied": False, "reason": "no_messages"}
@@ -176,8 +186,22 @@ def _transform(body: dict, store: Any, keep_tail: int, min_exchanges: int, cache
         absorbed.append(line)
         absorbed_count += 1
 
+    # Batched absorption. Growing the spine by one capsule per turn is a
+    # measured loss: the capsule lands BEFORE the verbatim tail, so the whole
+    # tail is cache-written again every turn, while a plain client only ever
+    # appends its delta. Quantizing the spine to multiples of `absorb_batch`
+    # keeps the request byte-identical between batches — pure append, same
+    # write behavior as the baseline — and pays the prefix rewrite once per
+    # batch instead of once per turn. Deterministic in the history alone, so
+    # the depth never depends on which capsule happened to finish first.
     if not absorbed:
         return body, pending, {"applied": False, "reason": "no_capsules_yet"}
+
+    batch = max(1, int(absorb_batch))
+    absorbed_count = (absorbed_count // batch) * batch
+    absorbed = absorbed[:absorbed_count]
+    if not absorbed:
+        return body, pending, {"applied": False, "reason": "batch_not_full"}
 
     span = compressible[:absorbed_count]
     spine_text = SPINE_HEADER + "\n".join(absorbed)

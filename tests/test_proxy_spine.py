@@ -34,6 +34,13 @@ def convo(n_exchanges: int, *, tail_prompt: str = "next question", mult: int = 4
     return msgs
 
 
+def xform(body, store, **kw):
+    """Existing invariants are about per-capsule behavior, so these tests pin
+    absorb_batch=1; the batching quantum has its own tests."""
+    kw.setdefault("absorb_batch", 1)
+    return spine.transform(body, store, **kw)
+
+
 class MemStore:
     def __init__(self):
         self.capsules: dict[str, str] = {}
@@ -97,7 +104,7 @@ def test_split_fails_open_on_weird_shapes():
 def test_turn_one_is_pure_passthrough():
     store = MemStore()
     body = {"model": "m", "messages": [user("hello world")]}
-    new_body, pending, stats = spine.transform(body, store)
+    new_body, pending, stats = xform(body, store)
     assert new_body is body
     assert not stats["applied"]
     assert pending == []
@@ -106,7 +113,7 @@ def test_turn_one_is_pure_passthrough():
 def test_below_regime_passthrough_but_precomputes_pending():
     store = MemStore()
     body = {"model": "m", "messages": convo(2)}
-    new_body, pending, stats = spine.transform(body, store, min_exchanges=3)
+    new_body, pending, stats = xform(body, store, min_exchanges=3)
     assert not stats["applied"]
     # exchange 0 left the tail (keep_tail=1) → original persisted, queued
     assert len(pending) == 1
@@ -118,7 +125,7 @@ def test_substitution_with_capsules_present():
     msgs = convo(4)
     fill_capsules(store, msgs)
     body = {"model": "m", "messages": msgs, "system": "SYSTEM", "max_tokens": 5}
-    new_body, pending, stats = spine.transform(body, store)
+    new_body, pending, stats = xform(body, store)
     assert stats["applied"] and stats["absorbed"] == 3
     assert pending == []
     out = new_body["messages"]
@@ -145,8 +152,8 @@ def test_spine_prefix_is_byte_stable_across_turns():
     # turn N+1 = same history + the tail answered + a new prompt
     msgs_n1 = msgs_n + [assistant("tail answer: " + "x " * 40), user("new prompt")]
     fill_capsules(store, msgs_n1)
-    body_n, _, stats_n = spine.transform({"model": "m", "messages": msgs_n}, store)
-    body_n1, _, stats_n1 = spine.transform({"model": "m", "messages": msgs_n1}, store)
+    body_n, _, stats_n = xform({"model": "m", "messages": msgs_n}, store)
+    body_n1, _, stats_n1 = xform({"model": "m", "messages": msgs_n1}, store)
     assert stats_n["applied"] and stats_n1["applied"]
 
     def content_blocks(body):
@@ -165,7 +172,7 @@ def test_cache_breakpoint_rides_the_last_capsule_block():
     store = MemStore()
     msgs = convo(4)
     fill_capsules(store, msgs)
-    new_body, _, stats = spine.transform({"model": "m", "messages": msgs}, store)
+    new_body, _, stats = xform({"model": "m", "messages": msgs}, store)
     blocks = new_body["messages"][0]["content"]
     assert stats["cache_breakpoint"] is True
     assert blocks[-1].get("cache_control") == {"type": "ephemeral"}
@@ -183,7 +190,7 @@ def test_cache_breakpoint_respects_client_budget_of_four():
             {"type": "text", "text": f"s{i}", "cache_control": {"type": "ephemeral"}} for i in range(4)
         ],
     }
-    new_body, _, stats = spine.transform(body, store)
+    new_body, _, stats = xform(body, store)
     assert stats["applied"] and stats["cache_breakpoint"] is False
     assert all("cache_control" not in b for b in new_body["messages"][0]["content"])
 
@@ -192,7 +199,7 @@ def test_cache_breakpoint_can_be_disabled():
     store = MemStore()
     msgs = convo(4)
     fill_capsules(store, msgs)
-    new_body, _, stats = spine.transform({"model": "m", "messages": msgs}, store, cache_breakpoint=False)
+    new_body, _, stats = xform({"model": "m", "messages": msgs}, store, cache_breakpoint=False)
     assert stats["applied"] and stats["cache_breakpoint"] is False
     assert all("cache_control" not in b for b in new_body["messages"][0]["content"])
 
@@ -207,7 +214,7 @@ def test_missing_middle_capsule_stops_absorption_preserving_order():
             continue  # capsule for exchange 1 not ready yet
         h = spine.exchange_hash(ex)
         store.put_capsule(h, compress_exchange(ex, h))
-    new_body, pending, stats = spine.transform({"model": "m", "messages": msgs}, store)
+    new_body, pending, stats = xform({"model": "m", "messages": msgs}, store)
     assert stats["applied"] and stats["absorbed"] == 1
     out = new_body["messages"]
     # exchange 1 onward stays verbatim, in order, right after the ack
@@ -218,7 +225,7 @@ def test_missing_middle_capsule_stops_absorption_preserving_order():
 def test_no_capsules_yet_is_passthrough():
     store = MemStore()
     body = {"model": "m", "messages": convo(4)}
-    new_body, pending, stats = spine.transform(body, store)
+    new_body, pending, stats = xform(body, store)
     assert not stats["applied"] and stats["reason"] == "no_capsules_yet"
     assert new_body is body
     assert len(pending) == 3
@@ -227,7 +234,7 @@ def test_no_capsules_yet_is_passthrough():
 def test_fail_open_on_garbage():
     store = MemStore()
     for body in ({}, {"messages": "nope"}, {"messages": [{"role": 7}]}, {"messages": [None]}):
-        new_body, pending, stats = spine.transform(body, store)
+        new_body, pending, stats = xform(body, store)
         assert new_body is body
         assert not stats["applied"]
 
@@ -239,7 +246,7 @@ def test_oversized_capsule_is_not_substituted():
     for ex in completed[:-1]:
         h = spine.exchange_hash(ex)
         store.put_capsule(h, "waffle " * 500 + f"[ref:{h}]")
-    _, _, stats = spine.transform({"model": "m", "messages": msgs}, store)
+    _, _, stats = xform({"model": "m", "messages": msgs}, store)
     assert not stats["applied"] and stats["reason"] == "not_smaller"
 
 
@@ -374,7 +381,7 @@ def test_non_ascii_shrink_gate_is_honest():
     for ex in completed[:-1]:
         h = spine.exchange_hash(ex)
         store.put_capsule(h, "U: 質問への長い長い要約 " * 12 + f"[ref:{h}]")
-    _, _, stats = spine.transform({"model": "m", "messages": msgs}, store)
+    _, _, stats = xform({"model": "m", "messages": msgs}, store)
     assert not stats["applied"] and stats["reason"] == "not_smaller"
 
 
@@ -402,7 +409,7 @@ def test_absorption_requires_recoverable_original():
     for ex in completed[:-1]:
         h = spine.exchange_hash(ex)
         store.put_capsule(h, compress_exchange(ex, h))
-    _, _, stats = spine.transform({"model": "m", "messages": msgs}, store)
+    _, _, stats = xform({"model": "m", "messages": msgs}, store)
     # capsules exist but no verbatim can be persisted → nothing is absorbed
     assert not stats["applied"] and stats["reason"] == "no_capsules_yet"
 
@@ -419,7 +426,7 @@ def test_raw_retention_none_keeps_verbatim_off_disk(tmp_path):
     for e in spine.split_exchanges(msgs)[0][:-1]:
         hh = spine.exchange_hash(e)
         store.put_capsule(hh, compress_exchange(e, hh))
-    _, _, stats = spine.transform({"model": "m", "messages": msgs}, store)
+    _, _, stats = xform({"model": "m", "messages": msgs}, store)
     assert stats["applied"]
 
 
@@ -461,3 +468,51 @@ def test_server_rewrite_only_touches_messages_path(tmp_path):
     out, stats = proxy.rewrite("/v1/messages?beta=true", raw)
     assert stats["reason"] != "not_messages"
     assert "bytes_in" in stats  # every messages row carries the baseline
+
+
+# ------------------------------------------------- batched absorption (cache economics)
+
+
+def test_spine_grows_in_batches_so_the_tail_is_not_recached_every_turn():
+    """Measured on the real API: growing the spine one capsule per turn puts a
+    new block BEFORE the verbatim tail, so the provider re-writes the whole
+    tail every turn while a plain client only appends its delta. Quantizing to
+    multiples of absorb_batch keeps the request byte-identical between batches."""
+    store = MemStore()
+    msgs = convo(9, mult=150)
+    fill_capsules(store, msgs)
+    depths = []
+    for n in range(3, 10):  # conversations of increasing length
+        sub = msgs[: 2 * n] + [user("current prompt")]
+        _, _, stats = spine.transform({"model": "m", "messages": sub}, store, absorb_batch=4)
+        depths.append(stats.get("absorbed", 0) if stats["applied"] else 0)
+    # depth only ever moves in steps of 4, and never shrinks
+    assert all(d % 4 == 0 for d in depths), depths
+    assert depths == sorted(depths), depths
+    assert max(depths) >= 4
+
+
+def test_batch_not_full_is_passthrough_not_an_error():
+    store = MemStore()
+    msgs = convo(4, mult=150)
+    fill_capsules(store, msgs)
+    body = {"model": "m", "messages": msgs}
+    new_body, _, stats = spine.transform(body, store, absorb_batch=8)
+    assert not stats["applied"] and stats["reason"] == "batch_not_full"
+    assert new_body is body
+
+
+def test_between_batches_the_request_is_pure_append():
+    """The economics claim, asserted structurally: while the spine is on a
+    plateau, turn N+1's messages are turn N's plus the new exchange."""
+    store = MemStore()
+    msgs = convo(9, mult=150)
+    fill_capsules(store, msgs)
+
+    def shipped(n):
+        sub = msgs[: 2 * n] + [user("current prompt")]
+        body, _, _ = spine.transform({"model": "m", "messages": sub}, store, absorb_batch=4)
+        return json.dumps(body["messages"][:-1], sort_keys=True)  # drop the moving prompt
+
+    a, b = shipped(5), shipped(6)  # both inside the depth-4 plateau
+    assert b.startswith(a[: len(a) - 1])  # a's serialized prefix survives verbatim in b
