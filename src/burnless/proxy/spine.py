@@ -18,9 +18,10 @@ from typing import Any
 
 SPINE_HEADER = (
     "[burnless spine] Earlier conversation, already processed by both sides, "
-    "carried as one frozen capsule per exchange. Full verbatim of any capsule "
-    "is on disk at .burnless/proxy/exchanges/<ref>.json — ask the operator to "
-    "retrieve a ref only if a capsule is genuinely insufficient.\n"
+    "carried as one frozen capsule per exchange. The full verbatim of any "
+    "capsule is on disk — recover it with `burnless retrieve <ref>` (or "
+    "`burnless proxy show <ref>`) only if a capsule is genuinely "
+    "insufficient.\n"
 )
 SPINE_ACK = "[burnless spine] Acknowledged. Continuing with full awareness of the exchanges above."
 

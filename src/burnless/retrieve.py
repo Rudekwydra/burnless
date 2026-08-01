@@ -131,6 +131,86 @@ def read_index(root: pathlib.Path | str) -> list[dict]:
     return records
 
 
+def _looks_like_spine_ref(value: str | None) -> str | None:
+    """A spine ref is the 12-hex hash a capsule ends with, accepted bare or
+    with a ref:/spine: prefix. Returns the bare hash, or None."""
+    if not value:
+        return None
+    v = value.strip().lower()
+    for prefix in ("spine:", "ref:"):
+        if v.startswith(prefix):
+            v = v[len(prefix):]
+    if 8 <= len(v) <= 64 and all(c in "0123456789abcdef" for c in v):
+        return v
+    return None
+
+
+def _spine_records(
+    root: pathlib.Path | str,
+    *,
+    query: str | None = None,
+    file: str | None = None,
+    entity: str | None = None,
+    ref: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Frozen spine capsules (proxy rolling memory) as retrieve records.
+
+    Live conversation history answers the same question delegation evidence
+    does — one search covers both. Reads .burnless/proxy/ directly; no proxy
+    dir means no rolling memory, and that is an empty result, not an error.
+    """
+    proxy_dir = Path(root) / "proxy"
+    capsules_dir = proxy_dir / "capsules"
+    if not capsules_dir.is_dir():
+        return []
+    from .proxy.store import resolve_ref
+
+    def as_record(h: str, capsule: str, path: Path | None) -> dict:
+        exchange_path = proxy_dir / "exchanges" / f"{h}.json"
+        try:
+            created = datetime.datetime.fromtimestamp(
+                path.stat().st_mtime, timezone.utc
+            ).isoformat() if path else None
+        except OSError:
+            created = None
+        return {
+            "schema_version": 1,
+            "ref_id": f"spine:{h}",
+            "kind": "spine",
+            "status": "frozen",
+            "raw_ref": str(exchange_path) if exchange_path.exists() else None,
+            "capsule_ref": str(capsules_dir / f"{h}.txt"),
+            "entities": [],
+            "files": [],
+            "created_at": created,
+            "token_estimate": len(capsule) // 4,
+        }
+
+    try:
+        if ref:
+            rec = resolve_ref(proxy_dir, ref)
+            if rec is None or rec["capsule"] is None:
+                return []
+            return [as_record(rec["ref"], rec["capsule"], capsules_dir / f"{rec['ref']}.txt")]
+        needles = [n.lower() for n in (query, file, entity) if n]
+        out: list[dict] = []
+        for path in sorted(capsules_dir.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            haystack = text.lower()
+            if needles and not all(n in haystack for n in needles):
+                continue
+            out.append(as_record(path.stem, text, path))
+            if len(out) >= limit:
+                break
+        return out
+    except Exception:
+        return []  # fail-open: spine search must never break delegation retrieve
+
+
 def search(
     root: pathlib.Path | str,
     *,
@@ -180,7 +260,17 @@ def search(
 
         records = filtered
 
-    return list(reversed(records))
+    results = list(reversed(records))
+
+    # Rolling memory answers the same question — merge spine capsules in.
+    # A ref-shaped id/query resolves directly; otherwise text-match capsules.
+    spine_ref = _looks_like_spine_ref(delegation_id) or _looks_like_spine_ref(query)
+    if spine_ref:
+        results += _spine_records(root, ref=spine_ref)
+    elif delegation_id is None and (query or file or entity):
+        results += _spine_records(root, query=query, file=file, entity=entity)
+
+    return results
 
 
 def snippet(
@@ -190,6 +280,17 @@ def snippet(
     max_chars: int = 4000,
     full: bool = False,
 ) -> str:
+    if ref_id.startswith("spine:"):
+        from .proxy.store import resolve_ref
+
+        rec = resolve_ref(Path(root) / "proxy", ref_id[len("spine:"):])
+        if rec is None:
+            return ""
+        text = rec["capsule"] or ""
+        if full and rec["exchange"] is not None:
+            text += "\n\n" + json.dumps(rec["exchange"], indent=2, ensure_ascii=False)
+        return text if full else text[:max_chars]
+
     snippets_path = _snippets_dir(root)
 
     snippet_filename = ref_id.replace(":", "_").replace("/", "_") + ".txt"

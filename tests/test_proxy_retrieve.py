@@ -142,3 +142,56 @@ def test_spine_endpoint_refuses_non_loopback(tmp_path):
     raw = handler.wfile.getvalue().decode("utf-8", "replace")
     assert raw.startswith("HTTP/1.0 403")
     assert "burnless_spine_forbidden" in raw
+
+
+# ------------------------------------------------- unified retrieve (spine-aware)
+
+
+from burnless import retrieve as retrieve_mod
+
+
+def seed_bl(tmp_path):
+    """A .burnless root whose proxy dir holds one frozen capsule + verbatim."""
+    bl_root = tmp_path / ".burnless"
+    store = CapsuleStore(bl_root / "proxy")
+    ex = [user("fix the scoring bug in routing.py please"), assistant("done, sum not max")]
+    h = spine.exchange_hash(ex)
+    store.put_original(h, ex)
+    store.put_capsule(h, f"U: fix scoring bug routing.py :: A: done, sum not max [ref:{h}]")
+    return bl_root, h, ex
+
+
+def test_search_finds_spine_capsules_by_text(tmp_path):
+    bl_root, h, _ = seed_bl(tmp_path)
+    results = retrieve_mod.search(bl_root, query="routing.py")
+    assert any(r["ref_id"] == f"spine:{h}" and r["kind"] == "spine" for r in results)
+
+
+def test_search_resolves_ref_shaped_queries_directly(tmp_path):
+    bl_root, h, _ = seed_bl(tmp_path)
+    for form in (h, f"ref:{h}", f"spine:{h}"):
+        results = retrieve_mod.search(bl_root, query=form)
+        assert [r["ref_id"] for r in results] == [f"spine:{h}"]
+    assert retrieve_mod.search(bl_root, query="deadbeef0000") == []
+
+
+def test_snippet_serves_spine_capsule_and_full_verbatim(tmp_path):
+    bl_root, h, ex = seed_bl(tmp_path)
+    short = retrieve_mod.snippet(bl_root, f"spine:{h}")
+    assert f"[ref:{h}]" in short and "routing.py" in short
+    full = retrieve_mod.snippet(bl_root, f"spine:{h}", full=True)
+    assert json.dumps(ex[0]["content"], ensure_ascii=False)[1:-1] in full  # verbatim included
+    assert retrieve_mod.snippet(bl_root, "spine:deadbeef0000") == ""
+
+
+def test_search_without_proxy_dir_is_silent(tmp_path):
+    bl_root = tmp_path / ".burnless"
+    bl_root.mkdir()
+    assert retrieve_mod.search(bl_root, query="anything") == []
+
+
+def test_spine_records_do_not_pollute_capsule_kind_filter(tmp_path):
+    bl_root, h, _ = seed_bl(tmp_path)
+    results = retrieve_mod.search(bl_root, query="routing.py")
+    assert all(r["kind"] != "capsule" for r in results if r["ref_id"].startswith("spine:"))
+    assert all(r["raw_ref"] for r in results if r["kind"] == "spine")  # verbatim pointer present
