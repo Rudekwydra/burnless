@@ -50,6 +50,11 @@ soul.md
 _design/evidence_rubrica.md
 _design/warm_cache_measurement.md
 
+# Whole _design/ tree made private 2026-08-03 — internal roadmap/benchmarks/client
+# names were public since v0.3.0 initial release; blanket-ignored now (lines above
+# kept for history, now redundant)
+_design/
+
 # Internal launch / marketing notes
 LAUNCH_PACKAGE.md
 PITCH_PT.md
